@@ -1,0 +1,2 @@
+#define IDK
+#define SUS

@@ -1,0 +1,9 @@
+[package]
+name = "radiance-util"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+radiance-graph = { path = "../graph" }
+
+ash = "0.37.2"

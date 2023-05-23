@@ -1,0 +1,18 @@
+[package]
+name = "radiance-shader-compiler"
+version = "0.0.0"
+edition = "2021"
+
+[features]
+runtime = ["ash"]
+compile = ["dep:hassle-rs", "dep:serde", "dep:serde_json"]
+build-script = ["compile"]
+
+[dependencies]
+ash = { version = "0.37.2", optional = true }
+hassle-rs = { path = "../../../hassle-rs", optional = true }
+rspirv = "0.11.0"
+rustc-hash = "1.1.0"
+serde = { version = "1.0.160", features = ["derive"], optional = true }
+serde_json = { version = "1.0.96", optional = true }
+walkdir = "2.3.3"
