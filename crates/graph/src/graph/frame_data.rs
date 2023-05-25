@@ -2,15 +2,9 @@ use ash::{
 	vk,
 	vk::{
 		CommandBuffer,
-		CommandBufferAllocateInfo,
 		CommandBufferBeginInfo,
-		CommandBufferLevel,
 		CommandBufferSubmitInfo,
 		CommandBufferUsageFlags,
-		CommandPool,
-		CommandPoolCreateFlags,
-		CommandPoolCreateInfo,
-		CommandPoolResetFlags,
 		DependencyInfoBuilder,
 		Fence,
 		PipelineStageFlags2,
@@ -26,7 +20,7 @@ use ash::{
 
 use crate::{
 	arena::{Arena, IteratorAlloc},
-	device::Device,
+	device::{cmd::CommandPool, Device},
 	graph::compile::{DependencyInfo, EventInfo, QueueSync, Sync},
 	Result,
 };
@@ -90,26 +84,13 @@ impl TimelineSemaphore {
 pub struct FrameData {
 	pub semaphore: TimelineSemaphore,
 	pool: CommandPool,
-	bufs: Vec<CommandBuffer>,
-	buf_cursor: usize,
 }
 
 impl FrameData {
 	pub fn new(device: &Device) -> Result<Self> {
-		let pool = unsafe {
-			device.device().create_command_pool(
-				&CommandPoolCreateInfo::builder()
-					.queue_family_index(*device.queue_families().graphics())
-					.flags(CommandPoolCreateFlags::TRANSIENT),
-				None,
-			)
-		}?;
-
 		Ok(Self {
-			pool,
+			pool: CommandPool::new(device, *device.queue_families().graphics())?,
 			semaphore: TimelineSemaphore::new(device)?,
-			bufs: Vec::new(),
-			buf_cursor: 0,
 		})
 	}
 
@@ -117,40 +98,16 @@ impl FrameData {
 		unsafe {
 			// Let GPU finish this frame before doing anything else.
 			self.semaphore.wait(device)?;
-
-			device
-				.device()
-				.reset_command_pool(self.pool, CommandPoolResetFlags::empty())?;
-			self.buf_cursor = 0; // We can now hand out the first buffer again.
+			self.pool.reset(device)?;
 
 			Ok(())
 		}
 	}
 
-	pub fn cmd_buf(&mut self, device: &Device) -> Result<CommandBuffer> {
-		if let Some(buf) = self.bufs.get(self.buf_cursor) {
-			self.buf_cursor += 1;
-			Ok(*buf)
-		} else {
-			let buf = unsafe {
-				device.device().allocate_command_buffers(
-					&CommandBufferAllocateInfo::builder()
-						.command_pool(self.pool)
-						.level(CommandBufferLevel::PRIMARY)
-						.command_buffer_count(1),
-				)
-			}?[0];
-
-			self.bufs.push(buf);
-
-			Ok(buf)
-		}
-	}
-
-	pub fn destroy(self, device: &Device) {
+	pub unsafe fn destroy(self, device: &Device) {
 		unsafe {
 			self.semaphore.destroy(device);
-			device.device().destroy_command_pool(self.pool, None);
+			self.pool.destroy(device);
 		}
 	}
 }
@@ -290,15 +247,17 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 
 	fn submit_inner(&mut self, device: &Device, signal: &[SemaphoreSubmitInfo]) -> Result<()> {
 		unsafe {
-			device.device().end_command_buffer(self.buf)?;
-			device.submit_graphics(
-				&[SubmitInfo2::builder()
-					.wait_semaphore_infos(&self.cached_wait)
-					.command_buffer_infos(&[CommandBufferSubmitInfo::builder().command_buffer(self.buf).build()])
-					.signal_semaphore_infos(&signal)
-					.build()],
-				Fence::null(),
-			)?;
+			if self.buf != CommandBuffer::null() {
+				device.device().end_command_buffer(self.buf)?;
+				device.submit_graphics(
+					&[SubmitInfo2::builder()
+						.wait_semaphore_infos(&self.cached_wait)
+						.command_buffer_infos(&[CommandBufferSubmitInfo::builder().command_buffer(self.buf).build()])
+						.signal_semaphore_infos(&signal)
+						.build()],
+					Fence::null(),
+				)?;
+			}
 
 			Ok(())
 		}
@@ -307,7 +266,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 	fn start_buf(&mut self, device: &Device) -> Result<()> {
 		unsafe {
 			if self.buf == CommandBuffer::null() {
-				self.buf = self.data.cmd_buf(device)?;
+				self.buf = self.data.pool.next(device)?;
 				device.device().begin_command_buffer(
 					self.buf,
 					&CommandBufferBeginInfo::builder().flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT),
@@ -338,7 +297,9 @@ fn emit_queue_sync(device: &Device, arena: &Arena, buf: CommandBuffer, sync: &Qu
 
 fn emit_barriers(device: &Device, buf: CommandBuffer, info: &DependencyInfo) {
 	unsafe {
-		device.device().cmd_pipeline_barrier2(buf, &dependency_info(info));
+		if !info.barriers.is_empty() || !info.image_barriers.is_empty() {
+			device.device().cmd_pipeline_barrier2(buf, &dependency_info(info));
+		}
 	}
 }
 

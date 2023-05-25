@@ -90,6 +90,9 @@ pub struct ExternalSync<U> {
 	pub value: u64,
 	/// The related usage of the resource.
 	pub usage: U,
+	/// Other queue. Ownership will be transferred to the graphics queue if it is a `wait`, or transferred to this
+	/// queue if it is a `signal`.
+	pub queue: Option<u32>,
 }
 
 impl<U> ExternalSync<U> {
@@ -101,6 +104,7 @@ impl<U> ExternalSync<U> {
 			semaphore: self.semaphore,
 			value: self.value,
 			usage: f(&self.usage),
+			queue: self.queue,
 		}
 	}
 }
@@ -113,17 +117,16 @@ pub struct ExternalBuffer<'a> {
 	/// The handle to the buffer. This is passed as-is to the render pass.
 	pub handle: GpuBufferHandle,
 	/// The external usage of the buffer before the render pass is executed.
-	pub prev_usage: ExternalSync<&'a [BufferUsageType]>,
-	/// The external usage of the buffer after the render pass is executed. This is usually not required, so set it to
-	/// `ExternalSync::default()`.
-	pub next_usage: ExternalSync<&'a [BufferUsageType]>,
+	pub prev_usage: Option<ExternalSync<&'a [BufferUsageType]>>,
+	/// The external usage of the buffer after the render pass is executed. This is usually not required.
+	pub next_usage: Option<ExternalSync<&'a [BufferUsageType]>>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ExternalBufferOwned<'graph> {
 	pub handle: GpuBufferHandle,
-	pub prev_usage: ExternalSync<Vec<BufferUsageType, &'graph Arena>>,
-	pub next_usage: ExternalSync<Vec<BufferUsageType, &'graph Arena>>,
+	pub prev_usage: Option<ExternalSync<Vec<BufferUsageType, &'graph Arena>>>,
+	pub next_usage: Option<ExternalSync<Vec<BufferUsageType, &'graph Arena>>>,
 }
 
 /// An image external to the render graph.
@@ -134,17 +137,16 @@ pub struct ExternalImage<'a> {
 	/// The image. Image views are created to this image.
 	pub handle: ash::vk::Image,
 	/// The external usage of the image before the render pass is executed.
-	pub prev_usage: ExternalSync<&'a [ImageUsageType]>,
-	/// The external usage of the image after the render pass is executed. This is usually not required, so set it to
-	/// `ExternalSync::default()`.
-	pub next_usage: ExternalSync<&'a [ImageUsageType]>,
+	pub prev_usage: Option<ExternalSync<&'a [ImageUsageType]>>,
+	/// The external usage of the image after the render pass is executed. This is usually not required.
+	pub next_usage: Option<ExternalSync<&'a [ImageUsageType]>>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ExternalImageOwned<'graph> {
 	pub handle: ash::vk::Image,
-	pub prev_usage: ExternalSync<Vec<ImageUsageType, &'graph Arena>>,
-	pub next_usage: ExternalSync<Vec<ImageUsageType, &'graph Arena>>,
+	pub prev_usage: Option<ExternalSync<Vec<ImageUsageType, &'graph Arena>>>,
+	pub next_usage: Option<ExternalSync<Vec<ImageUsageType, &'graph Arena>>>,
 }
 
 pub trait ToOwnedArena {
@@ -191,25 +193,13 @@ impl ToOwnedArena for ImageUsage<'_> {
 impl ToOwnedArena for ExternalSync<&'_ [BufferUsageType]> {
 	type Owned<'a> = ExternalSync<Vec<BufferUsageType, &'a Arena>>;
 
-	fn to_owned_arena<'a>(&self, arena: &'a Arena) -> Self::Owned<'a> {
-		ExternalSync {
-			semaphore: self.semaphore,
-			value: self.value,
-			usage: self.usage.to_owned_arena(arena),
-		}
-	}
+	fn to_owned_arena<'a>(&self, arena: &'a Arena) -> Self::Owned<'a> { self.map(|usage| usage.to_owned_arena(arena)) }
 }
 
 impl ToOwnedArena for ExternalSync<&'_ [ImageUsageType]> {
 	type Owned<'a> = ExternalSync<Vec<ImageUsageType, &'a Arena>>;
 
-	fn to_owned_arena<'a>(&self, arena: &'a Arena) -> Self::Owned<'a> {
-		ExternalSync {
-			semaphore: self.semaphore,
-			value: self.value,
-			usage: self.usage.to_owned_arena(arena),
-		}
-	}
+	fn to_owned_arena<'a>(&self, arena: &'a Arena) -> Self::Owned<'a> { self.map(|usage| usage.to_owned_arena(arena)) }
 }
 
 impl ToOwnedArena for ExternalBuffer<'_> {
@@ -218,8 +208,8 @@ impl ToOwnedArena for ExternalBuffer<'_> {
 	fn to_owned_arena<'a>(&self, arena: &'a Arena) -> Self::Owned<'a> {
 		ExternalBufferOwned {
 			handle: self.handle,
-			prev_usage: self.prev_usage.to_owned_arena(arena),
-			next_usage: self.next_usage.to_owned_arena(arena),
+			prev_usage: self.prev_usage.map(|x| x.to_owned_arena(arena)),
+			next_usage: self.next_usage.map(|x| x.to_owned_arena(arena)),
 		}
 	}
 }
@@ -230,8 +220,8 @@ impl ToOwnedArena for ExternalImage<'_> {
 	fn to_owned_arena<'a>(&self, arena: &'a Arena) -> Self::Owned<'a> {
 		ExternalImageOwned {
 			handle: self.handle,
-			prev_usage: self.prev_usage.to_owned_arena(arena),
-			next_usage: self.next_usage.to_owned_arena(arena),
+			prev_usage: self.prev_usage.map(|x| x.to_owned_arena(arena)),
+			next_usage: self.next_usage.map(|x| x.to_owned_arena(arena)),
 		}
 	}
 }

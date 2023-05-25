@@ -21,6 +21,7 @@ use ash::{
 use radiance_graph::{
 	device::Device,
 	graph::{ExecutionSnapshot, ExternalImage, ExternalSync, ImageUsageType, RenderGraph},
+	Result,
 };
 
 struct OldSwapchain {
@@ -41,7 +42,7 @@ pub struct Window {
 }
 
 impl Window {
-	pub fn new(device: &Device, window: winit::window::Window, surface: SurfaceKHR) -> Self {
+	pub fn new(device: &Device, window: winit::window::Window, surface: SurfaceKHR) -> Result<Self> {
 		let swapchain_ext = khr::Swapchain::new(device.instance(), device.device());
 		let mut this = Self {
 			window,
@@ -57,38 +58,37 @@ impl Window {
 			rendered: semaphore(device),
 			format: Format::UNDEFINED,
 		};
-		this.make(device);
-		this
+		this.make(device)?;
+		Ok(this)
 	}
 
 	pub fn request_redraw(&self) { self.window.request_redraw(); }
 
-	pub fn acquire(&self) -> (ExternalImage, u32) {
+	pub fn acquire(&self) -> Result<(ExternalImage, u32)> {
 		unsafe {
-			let (id, _) = self
-				.swapchain_ext
-				.acquire_next_image(self.swapchain, u64::MAX, self.available, Fence::null())
-				.unwrap();
-			(
+			let (id, _) =
+				self.swapchain_ext
+					.acquire_next_image(self.swapchain, u64::MAX, self.available, Fence::null())?;
+			Ok((
 				ExternalImage {
 					handle: self.images[id as usize],
-					prev_usage: ExternalSync {
+					prev_usage: Some(ExternalSync {
 						semaphore: self.available,
-						value: 0,
 						usage: &[ImageUsageType::Present],
-					},
-					next_usage: ExternalSync {
+						..Default::default()
+					}),
+					next_usage: Some(ExternalSync {
 						semaphore: self.rendered,
-						value: 0,
 						usage: &[ImageUsageType::Present],
-					},
+						..Default::default()
+					}),
 				},
 				id,
-			)
+			))
 		}
 	}
 
-	pub fn present(&mut self, device: &Device, id: u32, graph: &RenderGraph) {
+	pub fn present(&mut self, device: &Device, id: u32, graph: &RenderGraph) -> Result<()> {
 		unsafe {
 			if let Some(snapshot) = self.old_swapchain.snapshot.take() {
 				if snapshot.is_complete(graph) {
@@ -100,31 +100,39 @@ impl Window {
 				}
 			}
 
-			self.swapchain_ext
-				.queue_present(
-					*device.graphics_queue(),
-					&PresentInfoKHR::builder()
-						.wait_semaphores(&[self.rendered])
-						.swapchains(&[self.swapchain])
-						.image_indices(&[id])
-						.build(),
-				)
-				.unwrap();
+			self.swapchain_ext.queue_present(
+				*device.graphics_queue(),
+				&PresentInfoKHR::builder()
+					.wait_semaphores(&[self.rendered])
+					.swapchains(&[self.swapchain])
+					.image_indices(&[id])
+					.build(),
+			)?;
+
+			Ok(())
 		}
 	}
 
 	pub fn format(&self) -> Format { self.format }
 
-	pub fn resize(&mut self, device: &Device, graph: &RenderGraph) {
+	pub fn resize(&mut self, device: &Device, graph: &RenderGraph) -> Result<()> {
+		if let Some(snapshot) = self.old_swapchain.snapshot.take() {
+			snapshot.wait(device)?;
+			unsafe {
+				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
+			}
+		}
+
 		self.old_swapchain = OldSwapchain {
 			swapchain: self.swapchain,
 			snapshot: Some(graph.snapshot()),
 		};
-		self.make(device);
+		self.make(device)
 	}
 
 	pub fn destroy(&mut self, device: &Device) {
 		unsafe {
+			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			self.swapchain_ext.destroy_swapchain(self.swapchain, None);
 			device.surface_ext().unwrap().destroy_surface(self.surface, None);
 			device.device().destroy_semaphore(self.available, None);
@@ -132,15 +140,12 @@ impl Window {
 		}
 	}
 
-	fn make(&mut self, device: &Device) {
+	fn make(&mut self, device: &Device) -> Result<()> {
 		unsafe {
 			let surface_ext = device.surface_ext().unwrap();
-			let capabilities = surface_ext
-				.get_physical_device_surface_capabilities(device.physical_device(), self.surface)
-				.unwrap();
-			let formats = surface_ext
-				.get_physical_device_surface_formats(device.physical_device(), self.surface)
-				.unwrap();
+			let capabilities =
+				surface_ext.get_physical_device_surface_capabilities(device.physical_device(), self.surface)?;
+			let formats = surface_ext.get_physical_device_surface_formats(device.physical_device(), self.surface)?;
 
 			let (format, color_space) = formats
 				.iter()
@@ -176,6 +181,8 @@ impl Window {
 			self.images = self.swapchain_ext.get_swapchain_images(self.swapchain).unwrap();
 			self.format = format;
 		}
+
+		Ok(())
 	}
 }
 

@@ -15,6 +15,7 @@ use gpu_allocator::vulkan::Allocator;
 
 use crate::{device::descriptor::Descriptors, Result};
 
+pub mod cmd;
 pub mod descriptor;
 mod init;
 
@@ -109,6 +110,13 @@ impl Device {
 	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.allocator.lock().unwrap() }
 
 	pub fn base_descriptors(&self) -> &Descriptors { &self.descriptors }
+
+	pub fn needs_queue_ownership_transfer(&self) -> bool {
+		match self.queues {
+			Queues::Separate { .. } => true,
+			Queues::Single(_) => false,
+		}
+	}
 
 	/// # Safety
 	/// Thread-safety is handled, nothing else is.

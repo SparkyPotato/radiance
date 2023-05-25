@@ -1,3 +1,3 @@
 use radiance_shader_compiler::compile::ShaderModuleBuilder;
 
-fn main() { ShaderModuleBuilder::build("radiance-test"); }
+fn main() { ShaderModuleBuilder::build("radiance-egui"); }

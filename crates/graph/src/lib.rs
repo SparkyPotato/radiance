@@ -12,7 +12,6 @@ pub mod arena;
 pub mod device;
 pub mod graph;
 pub mod resource;
-pub mod staging;
 pub mod sync;
 
 #[derive(Clone)]

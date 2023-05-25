@@ -6,7 +6,7 @@ use std::{
 	marker::PhantomData,
 };
 
-use ash::vk::{CommandBuffer, PipelineStageFlags2};
+use ash::vk::{CommandBuffer, PipelineStageFlags2, Semaphore, SemaphoreSubmitInfo, SemaphoreWaitInfo};
 use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 use tracing::{span, Level};
@@ -25,6 +25,8 @@ pub use crate::graph::{
 		ImageUsageType,
 		Shader,
 		UploadBufferDesc,
+		VirtualResourceDesc,
+		VirtualResourceType,
 	},
 };
 use crate::{
@@ -34,13 +36,7 @@ use crate::{
 		cache::{ResourceCache, ResourceList, UniqueCache},
 		compile::{CompiledFrame, DataState, ResourceMap},
 		frame_data::{FrameData, Submitter},
-		virtual_resource::{
-			ResourceLifetime,
-			VirtualResource,
-			VirtualResourceData,
-			VirtualResourceDesc,
-			VirtualResourceType,
-		},
+		virtual_resource::{ResourceLifetime, VirtualResource, VirtualResourceData},
 	},
 	resource::{Event, GpuBuffer, GpuBufferHandle, Image, ImageView, UploadBuffer, UploadBufferHandle},
 	Result,
@@ -54,7 +50,9 @@ mod virtual_resource;
 const FRAMES_IN_FLIGHT: usize = 2;
 
 /// A snapshot of the GPU execution state of the render graph.
+#[derive(Default)]
 pub struct ExecutionSnapshot {
+	semaphores: [Semaphore; FRAMES_IN_FLIGHT],
 	values: [u64; FRAMES_IN_FLIGHT],
 }
 
@@ -65,6 +63,33 @@ impl ExecutionSnapshot {
 			.iter()
 			.zip(self.values)
 			.all(|(frame, value)| frame.semaphore.value() > value)
+	}
+
+	pub fn wait(&self, device: &Device) -> Result<()> {
+		unsafe {
+			device.device().wait_semaphores(
+				&SemaphoreWaitInfo::builder()
+					.semaphores(&self.semaphores)
+					.values(&self.values),
+				u64::MAX,
+			)?;
+
+			Ok(())
+		}
+	}
+
+	pub fn as_submit_info<'a>(&self) -> [SemaphoreSubmitInfo; FRAMES_IN_FLIGHT] {
+		let mut out = [SemaphoreSubmitInfo::default(); FRAMES_IN_FLIGHT];
+
+		for (i, (&sem, &value)) in self.semaphores.iter().zip(self.values.iter()).enumerate() {
+			out[i] = SemaphoreSubmitInfo::builder()
+				.semaphore(sem)
+				.value(value)
+				.stage_mask(PipelineStageFlags2::ALL_COMMANDS)
+				.build();
+		}
+
+		out
 	}
 }
 
@@ -116,6 +141,13 @@ impl RenderGraph {
 
 	pub fn snapshot(&self) -> ExecutionSnapshot {
 		ExecutionSnapshot {
+			semaphores: {
+				let mut x = [Semaphore::null(); FRAMES_IN_FLIGHT];
+				for (x, frame) in x.iter_mut().zip(self.frame_data.iter()) {
+					*x = frame.semaphore.semaphore();
+				}
+				x
+			},
 			values: {
 				let mut x = [0; FRAMES_IN_FLIGHT];
 				for (x, frame) in x.iter_mut().zip(self.frame_data.iter()) {
@@ -126,7 +158,7 @@ impl RenderGraph {
 		}
 	}
 
-	pub fn destroy(self, device: &Device) {
+	pub unsafe fn destroy(self, device: &Device) {
 		for frame_data in self.frame_data {
 			frame_data.destroy(device);
 		}
@@ -153,6 +185,10 @@ pub struct Frame<'pass, 'graph> {
 }
 
 impl<'pass, 'graph> Frame<'pass, 'graph> {
+	pub fn graph(&self) -> &RenderGraph { self.graph }
+
+	pub fn arena(&self) -> &'graph Arena { self.arena }
+
 	/// Build a pass with a name.
 	pub fn pass(&mut self, name: &str) -> PassBuilder<'_, 'pass, 'graph> {
 		let arena = self.arena;

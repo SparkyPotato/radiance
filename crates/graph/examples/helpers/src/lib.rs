@@ -87,7 +87,7 @@ pub fn run<T: App>() -> ! {
 		},
 		Event::WindowEvent { event, .. } => match event {
 			WindowEvent::CloseRequested => *flow = ControlFlow::Exit,
-			WindowEvent::Resized(_) => swapchain.resize(surface, &window, &graph),
+			WindowEvent::Resized(_) => swapchain.resize(&device, &window, &graph),
 			_ => {},
 		},
 		Event::LoopDestroyed => unsafe {

@@ -130,8 +130,8 @@ pub struct GpuResource<'graph, H, U> {
 /// A GPU Resource that is also externally synchronized.
 pub struct SyncedResource<'graph, H, U: Usage> {
 	pub resource: GpuResource<'graph, H, U>,
-	pub prev_usage: ExternalSync<Vec<U::Inner, &'graph Arena>>,
-	pub next_usage: ExternalSync<Vec<U::Inner, &'graph Arena>>,
+	pub prev_usage: Option<ExternalSync<Vec<U::Inner, &'graph Arena>>>,
+	pub next_usage: Option<ExternalSync<Vec<U::Inner, &'graph Arena>>>,
 }
 
 type BufferResource<'graph> = SyncedResource<'graph, GpuBufferHandle, BufferUsageOwned<'graph>>;
@@ -573,16 +573,6 @@ impl<'graph> ResourceAliaser<'graph> {
 
 	fn finish(self, device: &Device, graph: &mut RenderGraph) -> ResourceMap<'graph> {
 		let alloc = *self.resources.allocator();
-		let dummy_buffer_sync = ExternalSync {
-			semaphore: Semaphore::null(),
-			value: 0,
-			usage: Vec::new_in(alloc),
-		};
-		let dummy_image_sync = ExternalSync {
-			semaphore: Semaphore::null(),
-			value: 0,
-			usage: Vec::new_in(alloc),
-		};
 		let mut buffers = Vec::new_in(alloc);
 		let mut images = Vec::new_in(alloc);
 
@@ -604,8 +594,8 @@ impl<'graph> ResourceAliaser<'graph> {
 							.expect("failed to allocate gpu buffer"),
 						usages: desc.usages,
 					},
-					prev_usage: dummy_buffer_sync.clone(),
-					next_usage: dummy_buffer_sync.clone(),
+					prev_usage: None,
+					next_usage: None,
 				})
 			},
 			ResourceDescType::ExternalBuffer(buffer) => {
@@ -623,8 +613,8 @@ impl<'graph> ResourceAliaser<'graph> {
 							.expect("failed to allocate image"),
 						usages: desc.usages,
 					},
-					prev_usage: dummy_image_sync.clone(),
-					next_usage: dummy_image_sync.clone(),
+					prev_usage: None,
+					next_usage: None,
 				})
 			},
 			ResourceDescType::ExternalImage(image) => {
@@ -647,6 +637,7 @@ struct SyncPair<T> {
 struct InProgressImageBarrier {
 	sync: SyncPair<AccessInfo>,
 	aspect: ImageAspectFlags,
+	qfot: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -655,11 +646,17 @@ struct InProgressDependencyInfo<'graph> {
 	image_barriers: ArenaMap<'graph, Image, InProgressImageBarrier>,
 }
 
+#[derive(Clone, Default)]
+struct SemaphoreInfo {
+	value: u64,
+	stage_mask: PipelineStageFlags2,
+}
+
 #[derive(Clone)]
-pub struct InProgressCrossQueueSync<'graph> {
-	signal_semaphores: Vec<SemaphoreSubmitInfo, &'graph Arena>,
+struct InProgressCrossQueueSync<'graph> {
+	signal_semaphores: ArenaMap<'graph, Semaphore, SemaphoreInfo>,
 	signal_barriers: InProgressDependencyInfo<'graph>,
-	wait_semaphores: Vec<SemaphoreSubmitInfo, &'graph Arena>,
+	wait_semaphores: ArenaMap<'graph, Semaphore, SemaphoreInfo>,
 	wait_barriers: InProgressDependencyInfo<'graph>,
 }
 
@@ -669,11 +666,17 @@ struct InProgressSync<'graph> {
 	cross_queue: InProgressCrossQueueSync<'graph>,
 }
 
-impl<'graph> From<InProgressDependencyInfo<'graph>> for DependencyInfo<'graph> {
-	fn from(b: InProgressDependencyInfo<'graph>) -> Self {
-		let arena = *b.barriers.allocator();
-		Self {
-			barriers: b
+enum Qfot {
+	From,
+	To,
+	None,
+}
+
+impl<'graph> InProgressDependencyInfo<'graph> {
+	fn finish(self, device: &Device, qfot: Qfot) -> DependencyInfo<'graph> {
+		let arena = *self.barriers.allocator();
+		DependencyInfo {
+			barriers: self
 				.barriers
 				.into_iter()
 				.map(|(s, a)| {
@@ -692,13 +695,33 @@ impl<'graph> From<InProgressDependencyInfo<'graph>> for DependencyInfo<'graph> {
 					.into()
 				})
 				.collect_in(arena),
-			image_barriers: b
+			image_barriers: self
 				.image_barriers
 				.into_iter()
 				.map(|(i, b)| {
+					let (src_queue_family_index, previous_access, dst_queue_family_index, next_access) = match qfot {
+						_ if !device.needs_queue_ownership_transfer() => (0, b.sync.from, 0, b.sync.to),
+						Qfot::From if b.qfot.is_some() => (
+							b.qfot.unwrap(),
+							AccessInfo::default(),
+							*device.queue_families().graphics(),
+							b.sync.to,
+						),
+						Qfot::To if b.qfot.is_some() => (
+							*device.queue_families().graphics(),
+							b.sync.from,
+							b.qfot.unwrap(),
+							AccessInfo::default(),
+						),
+						Qfot::None => {
+							debug_assert!(b.qfot.is_none(), "QFOT not allowed in main queue sync");
+							(0, b.sync.from, 0, b.sync.to)
+						},
+						_ => (0, b.sync.from, 0, b.sync.to),
+					};
 					ImageBarrierAccess {
-						previous_access: b.sync.from,
-						next_access: b.sync.to,
+						previous_access,
+						next_access,
 						image: i,
 						range: ImageSubresourceRange {
 							aspect_mask: b.aspect,
@@ -707,6 +730,8 @@ impl<'graph> From<InProgressDependencyInfo<'graph>> for DependencyInfo<'graph> {
 							base_mip_level: 0,
 							level_count: REMAINING_MIP_LEVELS,
 						},
+						src_queue_family_index,
+						dst_queue_family_index,
 						..Default::default()
 					}
 					.into()
@@ -716,28 +741,48 @@ impl<'graph> From<InProgressDependencyInfo<'graph>> for DependencyInfo<'graph> {
 	}
 }
 
-impl<'graph> From<InProgressCrossQueueSync<'graph>> for CrossQueueSync<'graph> {
-	fn from(s: InProgressCrossQueueSync<'graph>) -> Self {
-		let arena = *s.signal_semaphores.allocator();
-		Self {
-			signal_semaphores: s.signal_semaphores.into_iter().map(Into::into).collect_in(arena),
-			signal_barriers: s.signal_barriers.into(),
-			wait_semaphores: s.wait_semaphores.into_iter().map(Into::into).collect_in(arena),
-			wait_barriers: s.wait_barriers.into(),
+impl<'graph> InProgressCrossQueueSync<'graph> {
+	fn finish(self, device: &Device) -> CrossQueueSync<'graph> {
+		let arena = *self.signal_semaphores.allocator();
+		CrossQueueSync {
+			signal_semaphores: self
+				.signal_semaphores
+				.into_iter()
+				.map(|(semaphore, info)| {
+					SemaphoreSubmitInfo::builder()
+						.semaphore(semaphore)
+						.value(info.value)
+						.stage_mask(info.stage_mask)
+						.build()
+				})
+				.collect_in(arena),
+			signal_barriers: self.signal_barriers.finish(device, Qfot::To),
+			wait_semaphores: self
+				.wait_semaphores
+				.into_iter()
+				.map(|(semaphore, info)| {
+					SemaphoreSubmitInfo::builder()
+						.semaphore(semaphore)
+						.value(info.value)
+						.stage_mask(info.stage_mask)
+						.build()
+				})
+				.collect_in(arena),
+			wait_barriers: self.wait_barriers.finish(device, Qfot::From),
 		}
 	}
 }
 
-impl<'graph> From<InProgressSync<'graph>> for Sync<'graph> {
-	fn from(s: InProgressSync<'graph>) -> Self {
-		let arena = *s.queue.barriers.allocator();
-		Self {
+impl<'graph> InProgressSync<'graph> {
+	fn finish(self, device: &Device) -> Sync<'graph> {
+		let arena = *self.queue.barriers.allocator();
+		Sync {
 			queue: QueueSync {
-				barriers: s.queue.into(),
+				barriers: self.queue.finish(device, Qfot::None),
 				set_events: Vec::new_in(arena),
 				wait_events: Vec::new_in(arena),
 			},
-			cross_queue: s.cross_queue.into(),
+			cross_queue: self.cross_queue.finish(device),
 		}
 	}
 }
@@ -762,9 +807,9 @@ impl<'graph> SyncBuilder<'graph> {
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
 				cross_queue: InProgressCrossQueueSync {
-					signal_semaphores: Vec::new_in(arena),
+					signal_semaphores: ArenaMap::with_hasher_in(Default::default(), arena),
 					signal_barriers: InProgressDependencyInfo::default(arena),
-					wait_semaphores: Vec::new_in(arena),
+					wait_semaphores: ArenaMap::with_hasher_in(Default::default(), arena),
 					wait_barriers: InProgressDependencyInfo::default(arena),
 				},
 			})
@@ -785,7 +830,7 @@ impl<'graph> SyncBuilder<'graph> {
 		next_access: AccessInfo,
 	) {
 		let dep_info = self.get_dep_info(prev_pass, next_pass);
-		Self::insert_info(dep_info, image, aspect, prev_access, next_access);
+		Self::insert_info(dep_info, image, aspect, prev_access, next_access, None);
 	}
 
 	/// Wait for some external sync.
@@ -798,10 +843,16 @@ impl<'graph> SyncBuilder<'graph> {
 	) {
 		let pass = Self::before_pass(pass);
 		let cross_queue = &mut self.sync[pass as usize].cross_queue;
-		if prev_sync.usage.stage_mask != PipelineStageFlags2::NONE
-			|| prev_sync.usage.access_mask != AccessFlags2::NONE
-			|| prev_sync.usage.image_layout != ImageLayout::UNDEFINED
-			|| next_access.image_layout != ImageLayout::UNDEFINED
+
+		// If there is a semaphore, we don't need a pipeline barrier for buffers - only images.
+		let need_barrier = prev_sync.semaphore != Semaphore::null() && image != Image::null()
+			|| prev_sync.semaphore == Semaphore::null();
+
+		if need_barrier
+			&& (prev_sync.usage.stage_mask != PipelineStageFlags2::NONE
+				|| prev_sync.usage.access_mask != AccessFlags2::NONE
+				|| prev_sync.usage.image_layout != ImageLayout::UNDEFINED
+				|| next_access.image_layout != ImageLayout::UNDEFINED)
 		{
 			Self::insert_info(
 				&mut cross_queue.wait_barriers,
@@ -809,17 +860,14 @@ impl<'graph> SyncBuilder<'graph> {
 				aspect,
 				prev_sync.usage,
 				next_access,
+				prev_sync.queue,
 			);
 		}
 
 		if prev_sync.semaphore != Semaphore::null() {
-			cross_queue.wait_semaphores.push(
-				SemaphoreSubmitInfo::builder()
-					.semaphore(prev_sync.semaphore)
-					.value(prev_sync.value)
-					.stage_mask(next_access.stage_mask)
-					.build(),
-			);
+			let info = cross_queue.wait_semaphores.entry(prev_sync.semaphore).or_default();
+			info.value = info.value.max(prev_sync.value);
+			info.stage_mask |= next_access.stage_mask;
 		}
 	}
 
@@ -833,10 +881,16 @@ impl<'graph> SyncBuilder<'graph> {
 	) {
 		let pass = Self::after_pass(pass);
 		let cross_queue = &mut self.sync[pass as usize].cross_queue;
-		if next_sync.usage.stage_mask != PipelineStageFlags2::NONE
-			|| next_sync.usage.access_mask != AccessFlags2::NONE
-			|| prev_access.image_layout != ImageLayout::UNDEFINED
-			|| next_sync.usage.image_layout != ImageLayout::UNDEFINED
+
+		// If there is a semaphore, we don't need a pipeline barrier for buffers - only images.
+		let need_barrier = next_sync.semaphore != Semaphore::null() && image != Image::null()
+			|| next_sync.semaphore == Semaphore::null();
+
+		if need_barrier
+			&& (next_sync.usage.stage_mask != PipelineStageFlags2::NONE
+				|| next_sync.usage.access_mask != AccessFlags2::NONE
+				|| prev_access.image_layout != ImageLayout::UNDEFINED
+				|| next_sync.usage.image_layout != ImageLayout::UNDEFINED)
 		{
 			Self::insert_info(
 				&mut cross_queue.signal_barriers,
@@ -844,17 +898,14 @@ impl<'graph> SyncBuilder<'graph> {
 				aspect,
 				prev_access,
 				next_sync.usage,
+				next_sync.queue,
 			);
 		}
 
 		if next_sync.semaphore != Semaphore::null() {
-			cross_queue.signal_semaphores.push(
-				SemaphoreSubmitInfo::builder()
-					.semaphore(next_sync.semaphore)
-					.value(next_sync.value)
-					.stage_mask(prev_access.stage_mask)
-					.build(),
-			);
+			let info = cross_queue.signal_semaphores.entry(next_sync.semaphore).or_default();
+			info.value = info.value.max(next_sync.value);
+			info.stage_mask |= prev_access.stage_mask;
 		}
 	}
 
@@ -874,9 +925,10 @@ impl<'graph> SyncBuilder<'graph> {
 		}
 	}
 
+	#[inline]
 	fn insert_info(
 		dep_info: &mut InProgressDependencyInfo<'graph>, image: Image, aspect: ImageAspectFlags,
-		prev_access: AccessInfo, mut next_access: AccessInfo,
+		prev_access: AccessInfo, mut next_access: AccessInfo, qfot: Option<u32>,
 	) {
 		if next_access.stage_mask == PipelineStageFlags2::empty() {
 			// Ensure that the stage masks are valid if no stages were determined
@@ -885,8 +937,8 @@ impl<'graph> SyncBuilder<'graph> {
 
 		// Don't need to check if `image` is null, because `AccessInfo::image_layout` will always be undefined if a
 		// global barrier is required.
-		if prev_access.image_layout == next_access.image_layout {
-			// No transition required, use a global barrier instead.
+		if prev_access.image_layout == next_access.image_layout && qfot.is_none() {
+			// No transition or QFOT required, use a global barrier instead.
 			let access = dep_info
 				.barriers
 				.entry(SyncPair {
@@ -906,6 +958,7 @@ impl<'graph> SyncBuilder<'graph> {
 						to: next_access,
 					},
 					aspect,
+					qfot,
 				},
 			);
 			debug_assert!(old.is_none(), "Multiple transitions for one image in a single pass");
@@ -920,11 +973,11 @@ impl<'graph> SyncBuilder<'graph> {
 		self, device: &Device, event_list: &mut ResourceList<resource::Event>,
 	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
 		let arena = *self.sync.allocator();
-		let mut sync: Vec<Sync, _> = self.sync.into_iter().map(Into::into).collect_in(arena);
+		let mut sync: Vec<Sync, _> = self.sync.into_iter().map(|x| x.finish(device)).collect_in(arena);
 
 		for (pair, info) in self.events {
 			let event = event_list.get_or_create(device, ())?;
-			let info: DependencyInfo = info.into();
+			let info = info.finish(device, Qfot::None);
 
 			sync[pair.from as usize].queue.set_events.push(EventInfo {
 				event,
@@ -999,13 +1052,20 @@ impl<'temp, 'graph> Synchronizer<'temp, 'graph> {
 			let (mut prev_pass, mut prev_access) = {
 				let (&pass, usage) = usages.next().unwrap();
 
-				let prev_sync = buffer.prev_usage.as_prev(false);
-				let next_access = usage.as_next(prev_sync.usage);
-				sync.wait_external_sync(Image::null(), ImageAspectFlags::empty(), pass, prev_sync, next_access);
+				if let Some(prev_usage) = &buffer.prev_usage {
+					let prev_sync = prev_usage.as_prev(false);
+					let next_access = usage.as_next(prev_sync.usage);
+					sync.wait_external_sync(Image::null(), ImageAspectFlags::empty(), pass, prev_sync, next_access);
+				}
 
-				let prev_access = usage.as_prev();
-				let next_sync = buffer.next_usage.as_next(prev_access);
-				sync.signal_external_sync(Image::null(), ImageAspectFlags::empty(), pass, prev_access, next_sync);
+				let prev_access = if let Some(next_usage) = &buffer.next_usage {
+					let prev_access = usage.as_prev();
+					let next_sync = next_usage.as_next(prev_access);
+					sync.signal_external_sync(Image::null(), ImageAspectFlags::empty(), pass, prev_access, next_sync);
+					prev_access
+				} else {
+					AccessInfo::default()
+				};
 
 				debug_assert!(
 					sync.sync[SyncBuilder::after_pass(pass) as usize]
@@ -1071,14 +1131,21 @@ impl<'temp, 'graph> Synchronizer<'temp, 'graph> {
 			let (mut prev_pass, mut prev_access) = {
 				let (&pass, usage) = usages.next().unwrap();
 
-				let (_, is_only_write) = usage.is_write();
-				let prev_sync = image.prev_usage.as_prev(is_only_write);
-				let next_access = usage.as_next(prev_sync.usage);
-				sync.wait_external_sync(image.resource.handle, usage.aspect, pass, prev_sync, next_access);
+				if let Some(prev_usage) = &image.prev_usage {
+					let (_, is_only_write) = usage.is_write();
+					let prev_sync = prev_usage.as_prev(is_only_write);
+					let next_access = usage.as_next(prev_sync.usage);
+					sync.wait_external_sync(image.resource.handle, usage.aspect, pass, prev_sync, next_access);
+				}
 
-				let prev_access = usage.as_prev();
-				let next_sync = image.next_usage.as_next(prev_access);
-				sync.signal_external_sync(image.resource.handle, usage.aspect, pass, prev_access, next_sync);
+				let prev_access = if let Some(next_usage) = &image.next_usage {
+					let prev_access = usage.as_prev();
+					let next_sync = next_usage.as_next(prev_access);
+					sync.signal_external_sync(image.resource.handle, usage.aspect, pass, prev_access, next_sync);
+					prev_access
+				} else {
+					AccessInfo::default()
+				};
 
 				debug_assert!(
 					sync.sync[SyncBuilder::after_pass(pass) as usize]

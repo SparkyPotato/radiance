@@ -110,7 +110,7 @@ impl<T: Resource> ResourceCache<T> {
 		list.get_or_create(device, desc)
 	}
 
-	pub fn destroy(self, device: &Device) {
+	pub unsafe fn destroy(self, device: &Device) {
 		for (_, list) in self.resources {
 			list.destroy(device);
 		}

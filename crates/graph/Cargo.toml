@@ -4,12 +4,7 @@ version = "0.0.0"
 edition = "2021"
 
 [features]
-default = ["staging"]
-
 bytemuck = ["dep:bytemuck"]
-
-# Utilities for managing CPU to GPU staging.
-staging = []
 
 [dependencies]
 ash = "0.37.2"

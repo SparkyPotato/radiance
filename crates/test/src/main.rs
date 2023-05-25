@@ -1,6 +1,6 @@
 use std::{mem::ManuallyDrop, time::Instant};
 
-use radiance_graph::{arena::Arena, device::Device, graph::RenderGraph};
+use radiance_graph::{arena::Arena, device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt, fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
 use winit::{
 	event::{Event, WindowEvent},
@@ -15,6 +15,39 @@ static ALLOC: tracy::alloc::GlobalAllocator = tracy::alloc::GlobalAllocator::new
 
 mod ui_handler;
 mod window;
+
+struct State {
+	device: Device,
+	window: ManuallyDrop<Window>,
+	graph: ManuallyDrop<RenderGraph>,
+	ui: ManuallyDrop<UiHandler>,
+}
+
+impl State {
+	pub fn new(event_loop: &EventLoop<()>, window: winit::window::Window) -> Result<Self> {
+		let (device, surface) = unsafe { Device::with_window(&window, &event_loop)? };
+		let window = ManuallyDrop::new(Window::new(&device, window, surface)?);
+		let graph = ManuallyDrop::new(RenderGraph::new(&device)?);
+		let ui = ManuallyDrop::new(UiHandler::new(&device, &event_loop, &window)?);
+
+		Ok(Self {
+			device,
+			window,
+			graph,
+			ui,
+		})
+	}
+}
+
+impl Drop for State {
+	fn drop(&mut self) {
+		unsafe {
+			ManuallyDrop::take(&mut self.graph).destroy(&self.device);
+			ManuallyDrop::take(&mut self.ui).destroy(&self.device);
+			ManuallyDrop::take(&mut self.window).destroy(&self.device);
+		}
+	}
+}
 
 fn main() {
 	let _ = tracing::subscriber::set_global_default(
@@ -31,46 +64,40 @@ fn main() {
 		.with_title("radiance-test")
 		.build(&event_loop)
 		.unwrap();
-	let mut ui = UiHandler::new(&event_loop);
 
-	let (device, surface) = unsafe { Device::with_window(&window, &event_loop).unwrap() };
-	let mut window = ManuallyDrop::new(Window::new(&device, window, surface));
-	let mut graph = ManuallyDrop::new(RenderGraph::new(&device).unwrap());
+	let mut state = State::new(&event_loop, window).unwrap();
 	let mut arena = Arena::new();
 
 	let mut prev = Instant::now();
 	event_loop.run(move |event, _, flow| match event {
-		Event::MainEventsCleared => window.request_redraw(),
+		Event::MainEventsCleared => state.window.request_redraw(),
 		Event::RedrawRequested(_) => {
 			let dt = prev.elapsed();
 			prev = Instant::now();
 
 			arena.reset();
-			let mut frame = graph.frame(&arena);
-			let (image, id) = window.acquire();
+			let mut frame = state.graph.frame(&arena);
 
-			ui.run(&mut frame, image, &window, |ctx| {
-				egui::Window::new("sus").show(&ctx, |ui| {
-					ui.label("sus");
-				});
-			});
+			let id = state
+				.ui
+				.run(&mut frame, &state.device, &state.window, |ctx| {
+					egui::Window::new("sus").show(&ctx, |ui| {
+						ui.label("sus");
+					});
+				})
+				.unwrap();
 
-			frame.run(&device).unwrap();
-			window.present(&device, id, &graph);
+			frame.run(&state.device).unwrap();
+			state.window.present(&state.device, id, &state.graph).unwrap();
 			tracy::frame!();
 		},
 		Event::WindowEvent { event, .. } => {
-			ui.on_event(&event);
+			state.ui.on_event(&event);
 			match event {
 				WindowEvent::CloseRequested => *flow = ControlFlow::Exit,
-				WindowEvent::Resized(_) => window.resize(&device, &graph),
+				WindowEvent::Resized(_) => state.window.resize(&state.device, &state.graph).unwrap(),
 				_ => {},
 			}
-		},
-		Event::LoopDestroyed => unsafe {
-			ManuallyDrop::take(&mut graph).destroy(&device);
-			ManuallyDrop::take(&mut window).destroy(&device);
-			device.surface_ext().unwrap().destroy_surface(surface, None);
 		},
 		_ => {},
 	})

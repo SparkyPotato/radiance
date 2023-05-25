@@ -125,13 +125,6 @@ impl ShaderModuleBuilder {
 			let short_path = full_path.strip_prefix(&self.vfs.root).unwrap();
 			let output_path = self.vfs.output.join("shaders/").join(short_path.with_extension("spv"));
 
-			eprintln!(
-				"Checking {}: {} -> {}",
-				full_path.display(),
-				short_path.display(),
-				output_path.display()
-			);
-
 			if let Some(meta) = std::fs::metadata(output_path).ok() {
 				if meta.modified().unwrap() < file.metadata().unwrap().modified().unwrap() {
 					compile_queue.push(short_path.to_path_buf());

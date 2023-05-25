@@ -1,5 +1,5 @@
 [package]
-name = "radiance-test"
+name = "radiance-egui"
 version = "0.0.0"
 edition = "2021"
 
@@ -7,16 +7,14 @@ edition = "2021"
 radiance-shader-compiler = { path = "../shader-compiler", features = ["build-script"] }
 
 [dependencies]
-radiance-egui = { path = "../egui" }
 radiance-graph = { path = "../graph", features = ["bytemuck"] }
+radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"] }
+radiance-util = { path = "../util" }
 
 ash = "0.37.2"
 bytemuck = { version = "1.13.1", features = ["derive"] }
 egui = { version = "0.21.0", features = ["bytemuck"] }
-egui-winit = "0.21.1"
 rustc-hash = "1.1.0"
 tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-tracy = { package = "tracy_full", version = "1.4.0", features = ["enable", "tracing"] }
-vek = "0.15.10"
-winit = "0.28.5"
+vek = { version = "0.15.10", features = ["bytemuck"] }
+

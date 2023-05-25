@@ -1,4 +1,5 @@
 use std::{
+	backtrace::Backtrace,
 	ffi::{c_void, CStr},
 	mem::ManuallyDrop,
 	num::NonZeroU64,
@@ -577,8 +578,8 @@ unsafe extern "system" fn debug_callback(
 		},
 		DebugUtilsMessageSeverityFlagsEXT::ERROR => {
 			error!("{}", CStr::from_ptr((*p_callback_data).p_message).to_str().unwrap());
-			// let b = Backtrace::force_capture();
-			// trace!("debug callback occurred at\n{}", b);
+			let b = Backtrace::force_capture();
+			// error!("debug callback occurred at\n{}", b);
 		},
 		_ => {},
 	}

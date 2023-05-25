@@ -32,6 +32,7 @@ struct OldSwapchain {
 }
 
 pub struct Swapchain {
+	surface: SurfaceKHR,
 	swapchain_ext: khr::Swapchain,
 	swapchain: SwapchainKHR,
 	old_swapchain: OldSwapchain,
@@ -44,6 +45,7 @@ impl Swapchain {
 	pub fn new(device: &Device, surface: SurfaceKHR, window: &Window) -> Self {
 		let swapchain_ext = khr::Swapchain::new(device.instance(), device.device());
 		let mut this = Self {
+			surface,
 			swapchain_ext,
 			swapchain: SwapchainKHR::null(),
 			old_swapchain: OldSwapchain {
@@ -54,7 +56,7 @@ impl Swapchain {
 			available: semaphore(device),
 			rendered: semaphore(device),
 		};
-		this.make(surface, window);
+		this.make(window);
 		this
 	}
 
@@ -67,16 +69,16 @@ impl Swapchain {
 			(
 				ExternalImage {
 					handle: self.images[id as usize],
-					prev_usage: ExternalSync {
+					prev_usage: Some(ExternalSync {
 						semaphore: self.available,
-						value: 0,
 						usage: &[ImageUsageType::Present],
-					},
-					next_usage: ExternalSync {
+						..Default::default()
+					}),
+					next_usage: Some(ExternalSync {
 						semaphore: self.rendered,
-						value: 0,
 						usage: &[ImageUsageType::Present],
-					},
+						..Default::default()
+					}),
 				},
 				id,
 			)
@@ -108,24 +110,28 @@ impl Swapchain {
 		}
 	}
 
-	pub fn resize(&mut self, surface: SurfaceKHR, window: &Window, graph: &RenderGraph) {
-		unsafe {
-			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
+	pub fn resize(&mut self, device: &Device, window: &Window, graph: &RenderGraph) {
+		if let Some(snapshot) = self.old_swapchain.snapshot.take() {
+			snapshot.wait(device).unwrap();
+			unsafe {
+				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
+			}
 		}
+
 		self.old_swapchain = OldSwapchain {
 			swapchain: self.swapchain,
 			snapshot: Some(graph.snapshot()),
 		};
-		self.make(surface, window);
+		self.make(window);
 	}
 
-	fn make(&mut self, surface: SurfaceKHR, window: &Window) {
+	fn make(&mut self, window: &Window) {
 		unsafe {
 			self.swapchain = self
 				.swapchain_ext
 				.create_swapchain(
 					&SwapchainCreateInfoKHR::builder()
-						.surface(surface)
+						.surface(self.surface)
 						.min_image_count(2)
 						.image_format(Format::B8G8R8A8_SRGB)
 						.image_color_space(ColorSpaceKHR::SRGB_NONLINEAR)

@@ -3,6 +3,7 @@ use std::{hash::Hash, ops::BitOr, ptr::NonNull};
 use ash::{
 	vk,
 	vk::{
+		BorderColor,
 		BufferCreateInfo,
 		BufferUsageFlags,
 		ComponentMapping,
@@ -10,6 +11,7 @@ use ash::{
 		EventCreateFlags,
 		EventCreateInfo,
 		Extent3D,
+		Filter,
 		Format,
 		ImageAspectFlags,
 		ImageCreateFlags,
@@ -24,6 +26,9 @@ use ash::{
 		MemoryDedicatedRequirements,
 		MemoryRequirements2,
 		SampleCountFlags,
+		SamplerAddressMode,
+		SamplerCreateInfo,
+		SamplerMipmapMode,
 		SharingMode,
 		REMAINING_ARRAY_LAYERS,
 		REMAINING_MIP_LEVELS,
@@ -36,7 +41,7 @@ use gpu_allocator::{
 
 use crate::{
 	device::{
-		descriptor::{BufferId, ImageId, StorageImageId},
+		descriptor::{BufferId, ImageId, SamplerId, StorageImageId},
 		Device,
 		Queues,
 	},
@@ -119,6 +124,19 @@ impl Buffer {
 		})
 	}
 
+	pub fn size(&self) -> u64 { self.alloc.size() }
+
+	pub fn mapped_ptr(&self) -> Option<NonNull<[u8]>> {
+		unsafe {
+			Some(NonNull::new_unchecked(std::ptr::slice_from_raw_parts_mut(
+				self.alloc.mapped_ptr()?.as_ptr() as _,
+				self.alloc.size() as _,
+			)))
+		}
+	}
+
+	pub fn inner(&self) -> vk::Buffer { self.inner }
+
 	pub unsafe fn destroy(self, device: &Device) {
 		if let Some(id) = self.id {
 			device.base_descriptors().return_buffer(id);
@@ -150,12 +168,7 @@ impl Resource for UploadBuffer {
 	fn handle(&self) -> Self::Handle {
 		UploadBufferHandle {
 			buffer: self.inner.inner,
-			data: unsafe {
-				NonNull::new_unchecked(std::ptr::slice_from_raw_parts_mut(
-					self.inner.alloc.mapped_ptr().unwrap().as_ptr() as _,
-					self.inner.alloc.size() as _,
-				))
-			},
+			data: self.inner.mapped_ptr().unwrap(),
 			id: self.inner.id,
 		}
 	}
@@ -202,7 +215,7 @@ impl Resource for GpuBuffer {
 }
 
 /// A description for an image.
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct ImageDesc {
 	pub flags: ImageCreateFlags,
 	pub format: Format,
@@ -396,6 +409,57 @@ impl Resource for ImageView {
 				device.base_descriptors().return_storage_image(id);
 			}
 			device.device().destroy_image_view(self.view, None);
+		}
+	}
+}
+
+/// A description for a sampler.
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
+pub struct SamplerDesc {
+	pub mag_filter: Filter,
+	pub min_filter: Filter,
+	pub mipmap_mode: SamplerMipmapMode,
+	pub address_mode_u: SamplerAddressMode,
+	pub address_mode_v: SamplerAddressMode,
+	pub address_mode_w: SamplerAddressMode,
+	pub border_color: BorderColor,
+}
+
+/// A GPU-side sampler.
+#[derive(Default, Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct Sampler {
+	pub sampler: vk::Sampler,
+	pub id: Option<SamplerId>,
+}
+
+impl Resource for Sampler {
+	type Desc = SamplerDesc;
+	type Handle = Self;
+
+	fn handle(&self) -> Self::Handle { *self }
+
+	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
+		unsafe {
+			let sampler = device.device().create_sampler(
+				&SamplerCreateInfo::builder()
+					.mag_filter(desc.mag_filter)
+					.min_filter(desc.min_filter)
+					.mipmap_mode(desc.mipmap_mode)
+					.address_mode_u(desc.address_mode_u)
+					.address_mode_v(desc.address_mode_v)
+					.address_mode_w(desc.address_mode_w)
+					.border_color(desc.border_color),
+				None,
+			)?;
+			let id = device.base_descriptors().get_sampler(device.device(), sampler);
+			Ok(Self { sampler, id: Some(id) })
+		}
+	}
+
+	unsafe fn destroy(self, device: &Device) {
+		unsafe {
+			device.base_descriptors().return_sampler(self.id.unwrap());
+			device.device().destroy_sampler(self.sampler, None);
 		}
 	}
 }

@@ -12,10 +12,18 @@ use ash::{
 	Device,
 };
 use rustc_hash::FxHashMap;
+
 #[macro_export]
 macro_rules! shader {
 	($name:literal) => {
 		$crate::runtime::ShaderBlob::new($name, include_bytes!(env!(concat!($name, "_OUTPUT_PATH"))))
+	};
+}
+
+#[macro_export]
+macro_rules! c_str {
+	($name:literal) => {
+		unsafe { std::ffi::CStr::from_bytes_with_nul_unchecked(concat!($name, "\0").as_bytes()) }
 	};
 }
 
@@ -54,16 +62,26 @@ impl ShaderRuntime {
 		Self { modules }
 	}
 
+	pub unsafe fn destroy(self, device: &Device) {
+		for module in self.modules.values() {
+			device.destroy_shader_module(*module, None);
+		}
+	}
+
 	pub fn shader<'a>(
-		&'a self, name: &'a CStr, stage: ShaderStageFlags, specialization: &'a SpecializationInfo,
+		&'a self, name: &'a CStr, stage: ShaderStageFlags, specialization: Option<&'a SpecializationInfo>,
 	) -> PipelineShaderStageCreateInfoBuilder {
 		let utf8 = name.to_str().expect("shader module name is not valid utf8");
 		let module = utf8.split('/').next().expect("expected shader module name");
 		let module = self.modules.get(module).expect("shader module not found");
-		PipelineShaderStageCreateInfo::builder()
+		let info = PipelineShaderStageCreateInfo::builder()
 			.stage(stage)
 			.module(*module)
-			.name(name)
-			.specialization_info(specialization)
+			.name(name);
+		if let Some(spec) = specialization {
+			info.specialization_info(spec)
+		} else {
+			info
+		}
 	}
 }
