@@ -2,66 +2,7 @@
 
 use std::io::Write;
 
-use ash::vk::{
-	AccessFlags2,
-	AttachmentLoadOp,
-	AttachmentStoreOp,
-	BlendFactor,
-	BlendOp,
-	ClearColorValue,
-	ClearValue,
-	ColorComponentFlags,
-	CommandBufferBeginInfo,
-	CommandBufferSubmitInfo,
-	CommandBufferUsageFlags,
-	CullModeFlags,
-	DependencyInfo,
-	DynamicState,
-	Extent2D,
-	Extent3D,
-	Fence,
-	Filter,
-	Format,
-	FrontFace,
-	GraphicsPipelineCreateInfo,
-	ImageAspectFlags,
-	ImageLayout,
-	ImageMemoryBarrier2,
-	ImageSubresourceLayers,
-	ImageSubresourceRange,
-	ImageUsageFlags,
-	ImageViewType,
-	IndexType,
-	Offset2D,
-	Offset3D,
-	Pipeline,
-	PipelineBindPoint,
-	PipelineCache,
-	PipelineColorBlendAttachmentState,
-	PipelineColorBlendStateCreateInfo,
-	PipelineDynamicStateCreateInfo,
-	PipelineInputAssemblyStateCreateInfo,
-	PipelineLayout,
-	PipelineLayoutCreateInfo,
-	PipelineMultisampleStateCreateInfo,
-	PipelineRasterizationStateCreateInfo,
-	PipelineRenderingCreateInfo,
-	PipelineStageFlags2,
-	PipelineVertexInputStateCreateInfo,
-	PipelineViewportStateCreateInfo,
-	PolygonMode,
-	PrimitiveTopology,
-	PushConstantRange,
-	Rect2D,
-	RenderingAttachmentInfo,
-	RenderingInfo,
-	SampleCountFlags,
-	SamplerMipmapMode,
-	SemaphoreSubmitInfo,
-	ShaderStageFlags,
-	SubmitInfo2,
-	Viewport,
-};
+use ash::vk;
 use bytemuck::{bytes_of, cast_slice, NoUninit};
 use egui::{
 	epaint::{Primitive, Vertex},
@@ -77,16 +18,14 @@ use egui::{
 use radiance_graph::{
 	arena::{Arena, IteratorAlloc},
 	device::{
-		cmd::CommandPool,
 		descriptor::{BufferId, ImageId, SamplerId},
 		Device,
+		QueueType,
 	},
 	graph::{
 		BufferUsage,
 		BufferUsageType,
 		ExecutionSnapshot,
-		ExternalImage,
-		ExternalSync,
 		Frame,
 		ImageUsage,
 		ImageUsageType,
@@ -96,17 +35,7 @@ use radiance_graph::{
 		VirtualResourceDesc,
 		WriteId,
 	},
-	resource::{
-		Image,
-		ImageDesc,
-		ImageView,
-		ImageViewDesc,
-		ImageViewUsage,
-		Resource,
-		Sampler,
-		SamplerDesc,
-		UploadBufferHandle,
-	},
+	resource::{Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, UploadBufferHandle},
 	Result,
 };
 use radiance_shader_compiler::{
@@ -114,7 +43,7 @@ use radiance_shader_compiler::{
 	runtime::{ShaderBlob, ShaderRuntime},
 	shader,
 };
-use radiance_util::staging::{ImageStage, Staging};
+use radiance_util::staging::{ImageStage, StageTicket, Staging};
 use rustc_hash::FxHashMap;
 use vek::Vec2;
 
@@ -130,13 +59,12 @@ pub struct ScreenDescriptor {
 
 pub struct Renderer {
 	staging: Staging,
-	pool: CommandPool,
 	snapshot: ExecutionSnapshot,
-	images: FxHashMap<TextureId, (Image, ImageView, SamplerId)>,
-	samplers: FxHashMap<TextureOptions, Sampler>,
-	layout: PipelineLayout,
-	pipeline: Pipeline,
-	format: Format,
+	images: FxHashMap<TextureId, (Image, Vec2<u32>, ImageView, SamplerId)>,
+	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
+	layout: vk::PipelineLayout,
+	pipeline: vk::Pipeline,
+	format: vk::Format,
 	vertex_size: usize,
 	index_size: usize,
 }
@@ -162,21 +90,21 @@ struct PushConstantsDynamic {
 }
 
 impl Renderer {
-	pub fn new(device: &Device, output_format: Format) -> Result<Self> {
+	pub fn new(device: &Device, output_format: vk::Format) -> Result<Self> {
 		let (layout, pipeline) = unsafe {
 			let rt = ShaderRuntime::new(device.device(), &[SHADERS]);
 
 			let layout = device.device().create_pipeline_layout(
-				&PipelineLayoutCreateInfo::builder()
-					.set_layouts(&[device.base_descriptors().layout()])
+				&vk::PipelineLayoutCreateInfo::builder()
+					.set_layouts(&[device.descriptors().layout()])
 					.push_constant_ranges(&[
-						PushConstantRange {
-							stage_flags: ShaderStageFlags::VERTEX,
+						vk::PushConstantRange {
+							stage_flags: vk::ShaderStageFlags::VERTEX,
 							offset: 0,
 							size: std::mem::size_of::<PushConstantsStatic>() as u32,
 						},
-						PushConstantRange {
-							stage_flags: ShaderStageFlags::FRAGMENT,
+						vk::PushConstantRange {
+							stage_flags: vk::ShaderStageFlags::FRAGMENT,
 							offset: std::mem::size_of::<PushConstantsStatic>() as u32,
 							size: std::mem::size_of::<PushConstantsDynamic>() as u32,
 						},
@@ -187,59 +115,60 @@ impl Renderer {
 			let pipeline = device
 				.device()
 				.create_graphics_pipelines(
-					PipelineCache::null(),
-					&[GraphicsPipelineCreateInfo::builder()
+					vk::PipelineCache::null(),
+					&[vk::GraphicsPipelineCreateInfo::builder()
 						.stages(&[
-							rt.shader(c_str!("radiance-egui/vertex"), ShaderStageFlags::VERTEX, None)
+							rt.shader(c_str!("radiance-egui/vertex"), vk::ShaderStageFlags::VERTEX, None)
 								.build(),
-							rt.shader(c_str!("radiance-egui/pixel"), ShaderStageFlags::FRAGMENT, None)
+							rt.shader(c_str!("radiance-egui/pixel"), vk::ShaderStageFlags::FRAGMENT, None)
 								.build(),
 						])
-						.vertex_input_state(&PipelineVertexInputStateCreateInfo::builder())
+						.vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::builder())
 						.input_assembly_state(
-							&PipelineInputAssemblyStateCreateInfo::builder().topology(PrimitiveTopology::TRIANGLE_LIST),
+							&vk::PipelineInputAssemblyStateCreateInfo::builder()
+								.topology(vk::PrimitiveTopology::TRIANGLE_LIST),
 						)
 						.viewport_state(
-							&PipelineViewportStateCreateInfo::builder()
-								.viewports(&[Viewport::builder().build()])
-								.scissors(&[Rect2D::builder().build()]),
+							&vk::PipelineViewportStateCreateInfo::builder()
+								.viewports(&[vk::Viewport::builder().build()])
+								.scissors(&[vk::Rect2D::builder().build()]),
 						)
 						.rasterization_state(
-							&PipelineRasterizationStateCreateInfo::builder()
-								.polygon_mode(PolygonMode::FILL)
-								.front_face(FrontFace::COUNTER_CLOCKWISE)
-								.cull_mode(CullModeFlags::NONE)
+							&vk::PipelineRasterizationStateCreateInfo::builder()
+								.polygon_mode(vk::PolygonMode::FILL)
+								.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+								.cull_mode(vk::CullModeFlags::NONE)
 								.line_width(1.0),
 						)
 						.multisample_state(
-							&PipelineMultisampleStateCreateInfo::builder()
-								.rasterization_samples(SampleCountFlags::TYPE_1),
+							&vk::PipelineMultisampleStateCreateInfo::builder()
+								.rasterization_samples(vk::SampleCountFlags::TYPE_1),
 						)
 						.color_blend_state(
-							&PipelineColorBlendStateCreateInfo::builder().attachments(&[
-								PipelineColorBlendAttachmentState::builder()
+							&vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[
+								vk::PipelineColorBlendAttachmentState::builder()
 									.color_write_mask(
-										ColorComponentFlags::R
-											| ColorComponentFlags::G | ColorComponentFlags::B
-											| ColorComponentFlags::A,
+										vk::ColorComponentFlags::R
+											| vk::ColorComponentFlags::G | vk::ColorComponentFlags::B
+											| vk::ColorComponentFlags::A,
 									)
 									.blend_enable(true)
-									.src_color_blend_factor(BlendFactor::ONE)
-									.dst_color_blend_factor(BlendFactor::ONE_MINUS_SRC_ALPHA)
-									.color_blend_op(BlendOp::ADD)
-									.src_alpha_blend_factor(BlendFactor::ONE_MINUS_DST_ALPHA)
-									.dst_alpha_blend_factor(BlendFactor::ONE)
-									.alpha_blend_op(BlendOp::ADD)
+									.src_color_blend_factor(vk::BlendFactor::ONE)
+									.dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+									.color_blend_op(vk::BlendOp::ADD)
+									.src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
+									.dst_alpha_blend_factor(vk::BlendFactor::ONE)
+									.alpha_blend_op(vk::BlendOp::ADD)
 									.build(),
 							]),
 						)
 						.dynamic_state(
-							&PipelineDynamicStateCreateInfo::builder()
-								.dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR]),
+							&vk::PipelineDynamicStateCreateInfo::builder()
+								.dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]),
 						)
 						.layout(layout)
 						.push_next(
-							&mut PipelineRenderingCreateInfo::builder().color_attachment_formats(&[output_format]),
+							&mut vk::PipelineRenderingCreateInfo::builder().color_attachment_formats(&[output_format]),
 						)
 						.build()],
 					None,
@@ -253,7 +182,6 @@ impl Renderer {
 
 		Ok(Self {
 			staging: Staging::new(device)?,
-			pool: CommandPool::new(device, *device.queue_families().graphics())?,
 			snapshot: ExecutionSnapshot::default(),
 			images: FxHashMap::default(),
 			samplers: FxHashMap::default(),
@@ -286,11 +214,7 @@ impl Renderer {
 			self.index_size *= 2;
 		}
 
-		if self.staging.poll(device).unwrap() {
-			unsafe {
-				self.pool.reset(device).unwrap();
-			}
-		}
+		self.staging.poll(device).unwrap();
 
 		let arena = frame.arena();
 		let mut pass = frame.pass("UI Render");
@@ -311,21 +235,13 @@ impl Renderer {
 			ImageUsage {
 				format: self.format,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: ImageViewType::TYPE_2D,
-				aspect: ImageAspectFlags::COLOR,
+				view_type: vk::ImageViewType::TYPE_2D,
+				aspect: vk::ImageAspectFlags::COLOR,
 			},
 		);
 
-		for ext in self.generate_images(device, arena, delta) {
-			pass.output(
-				ext,
-				ImageUsage {
-					format: Format::R8G8B8A8_SRGB,
-					usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
-					view_type: ImageViewType::TYPE_2D,
-					aspect: ImageAspectFlags::COLOR,
-				},
-			);
+		if let Some(ticket) = self.generate_images(device, arena, delta) {
+			pass.wait_on(ticket.as_info());
 		}
 
 		pass.build(move |ctx| unsafe { self.execute(ctx, PassIO { vertex, index, out }, &tris, &screen) });
@@ -333,13 +249,15 @@ impl Renderer {
 
 	pub unsafe fn destroy(self, device: &Device) {
 		self.staging.destroy(device);
-		self.pool.destroy(device);
-		for (_, (image, view, _)) in self.images {
+		for (_, (image, _, view, _)) in self.images {
 			view.destroy(device);
 			image.destroy(device);
 		}
-		for (_, sampler) in self.samplers {
-			sampler.destroy(device);
+		for (_, (sampler, id)) in self.samplers {
+			unsafe {
+				device.device().destroy_sampler(sampler, None);
+				device.descriptors().return_sampler(id);
+			}
 		}
 		device.device().destroy_pipeline_layout(self.layout, None);
 		device.device().destroy_pipeline(self.pipeline, None);
@@ -356,11 +274,11 @@ impl Renderer {
 
 		ctx.device.device().cmd_begin_rendering(
 			ctx.buf,
-			&RenderingInfo::builder()
+			&vk::RenderingInfo::builder()
 				.render_area(
-					Rect2D::builder()
+					vk::Rect2D::builder()
 						.extent(
-							Extent2D::builder()
+							vk::Extent2D::builder()
 								.width(screen.physical_size.x)
 								.height(screen.physical_size.y)
 								.build(),
@@ -368,22 +286,22 @@ impl Renderer {
 						.build(),
 				)
 				.layer_count(1)
-				.color_attachments(&[RenderingAttachmentInfo::builder()
+				.color_attachments(&[vk::RenderingAttachmentInfo::builder()
 					.image_view(out.view)
-					.image_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-					.load_op(AttachmentLoadOp::CLEAR)
-					.clear_value(ClearValue {
-						color: ClearColorValue {
+					.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+					.load_op(vk::AttachmentLoadOp::CLEAR)
+					.clear_value(vk::ClearValue {
+						color: vk::ClearColorValue {
 							float32: [0.0, 0.0, 0.0, 1.0],
 						},
 					})
-					.store_op(AttachmentStoreOp::STORE)
+					.store_op(vk::AttachmentStoreOp::STORE)
 					.build()]),
 		);
 		ctx.device.device().cmd_set_viewport(
 			ctx.buf,
 			0,
-			&[Viewport {
+			&[vk::Viewport {
 				x: 0.0,
 				y: 0.0,
 				width: screen.physical_size.x as f32,
@@ -394,19 +312,19 @@ impl Renderer {
 		);
 		ctx.device
 			.device()
-			.cmd_bind_pipeline(ctx.buf, PipelineBindPoint::GRAPHICS, self.pipeline);
+			.cmd_bind_pipeline(ctx.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 		ctx.device.device().cmd_bind_descriptor_sets(
 			ctx.buf,
-			PipelineBindPoint::GRAPHICS,
+			vk::PipelineBindPoint::GRAPHICS,
 			self.layout,
 			0,
-			&[ctx.device.base_descriptors().set()],
+			&[ctx.device.descriptors().set()],
 			&[],
 		);
 		ctx.device.device().cmd_push_constants(
 			ctx.buf,
 			self.layout,
-			ShaderStageFlags::VERTEX,
+			vk::ShaderStageFlags::VERTEX,
 			0,
 			bytes_of(&PushConstantsStatic {
 				screen_size: screen.physical_size,
@@ -415,7 +333,7 @@ impl Renderer {
 		);
 		ctx.device
 			.device()
-			.cmd_bind_index_buffer(ctx.buf, index.buffer, 0, IndexType::UINT32);
+			.cmd_bind_index_buffer(ctx.buf, index.buffer, 0, vk::IndexType::UINT32);
 
 		let mut start_index = 0;
 		for prim in tris {
@@ -429,22 +347,22 @@ impl Renderer {
 					ctx.device.device().cmd_set_scissor(
 						ctx.buf,
 						0,
-						&[Rect2D {
-							extent: Extent2D {
+						&[vk::Rect2D {
+							extent: vk::Extent2D {
 								width: rect.width,
 								height: rect.height,
 							},
-							offset: Offset2D {
+							offset: vk::Offset2D {
 								x: rect.x as _,
 								y: rect.y as _,
 							},
 						}],
 					);
-					let (_, image, sampler) = &self.images[&m.texture_id];
+					let (_, _, image, sampler) = &self.images[&m.texture_id];
 					ctx.device.device().cmd_push_constants(
 						ctx.buf,
 						self.layout,
-						ShaderStageFlags::FRAGMENT,
+						vk::ShaderStageFlags::FRAGMENT,
 						std::mem::size_of::<PushConstantsStatic>() as u32,
 						bytes_of(&PushConstantsDynamic {
 							image: image.id.unwrap(),
@@ -487,34 +405,30 @@ impl Renderer {
 		}
 	}
 
-	fn generate_images<'a>(
-		&mut self, device: &Device, arena: &'a Arena, delta: TexturesDelta,
-	) -> Vec<ExternalImage, &'a Arena> {
-		let mut post_barriers = Vec::new_in(arena);
-
-		if !delta.set.is_empty() {
-			self.staging
+	fn generate_images<'a>(&mut self, device: &Device, arena: &'a Arena, delta: TexturesDelta) -> Option<StageTicket> {
+		let ticket = if !delta.set.is_empty() {
+			let ticket = self
+				.staging
 				.stage(
 					device,
 					self.snapshot.as_submit_info().into_iter().collect_in(arena),
 					|stage| {
-						let mut pre_barriers = Vec::new_in(arena);
-
 						for (id, data) in delta.set {
-							let (image, ..) = self.images.entry(id).or_insert_with(|| {
+							let (image, size, ..) = self.images.entry(id).or_insert_with(|| {
+								let size = Vec2::new(data.image.width() as u32, data.image.height() as _);
 								let image = Image::create(
 									device,
 									ImageDesc {
-										format: Format::R8G8B8A8_SRGB,
-										size: Extent3D {
-											width: data.image.width() as u32,
-											height: data.image.height() as u32,
+										format: vk::Format::R8G8B8A8_SRGB,
+										size: vk::Extent3D {
+											width: size.x,
+											height: size.y,
 											depth: 1,
 										},
 										levels: 1,
 										layers: 1,
-										samples: SampleCountFlags::TYPE_1,
-										usage: ImageUsageFlags::TRANSFER_DST | ImageUsageFlags::SAMPLED,
+										samples: vk::SampleCountFlags::TYPE_1,
+										usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
 										..Default::default()
 									},
 								)
@@ -524,41 +438,45 @@ impl Renderer {
 									device,
 									ImageViewDesc {
 										image: image.handle(),
-										view_type: ImageViewType::TYPE_2D,
-										format: Format::R8G8B8A8_SRGB,
+										view_type: vk::ImageViewType::TYPE_2D,
+										format: vk::Format::R8G8B8A8_SRGB,
 										usage: ImageViewUsage::Sampled,
-										aspect: ImageAspectFlags::COLOR,
+										aspect: vk::ImageAspectFlags::COLOR,
 									},
 								)
 								.unwrap();
 
-								fn map_filter(filter: TextureFilter) -> Filter {
+								fn map_filter(filter: TextureFilter) -> vk::Filter {
 									match filter {
-										TextureFilter::Nearest => Filter::NEAREST,
-										TextureFilter::Linear => Filter::LINEAR,
+										TextureFilter::Nearest => vk::Filter::NEAREST,
+										TextureFilter::Linear => vk::Filter::LINEAR,
 									}
 								}
 
-								let sampler = self.samplers.entry(data.options).or_insert_with(|| {
-									Sampler::create(
-										device,
-										SamplerDesc {
-											mag_filter: map_filter(data.options.magnification),
-											min_filter: map_filter(data.options.minification),
-											mipmap_mode: SamplerMipmapMode::LINEAR,
-											..Default::default()
-										},
-									)
-									.unwrap()
+								let (_, id) = self.samplers.entry(data.options).or_insert_with(|| unsafe {
+									let sampler = device
+										.device()
+										.create_sampler(
+											&vk::SamplerCreateInfo::builder()
+												.mag_filter(map_filter(data.options.magnification))
+												.min_filter(map_filter(data.options.minification))
+												.mipmap_mode(vk::SamplerMipmapMode::LINEAR),
+											None,
+										)
+										.unwrap();
+
+									let id = device.descriptors().get_sampler(device, sampler);
+
+									(sampler, id)
 								});
 
-								(image, view, sampler.id.unwrap())
+								(image, size, view, *id)
 							});
 
 							let pos = data.pos.unwrap_or([0, 0]);
 							let vec: Vec<Color32, &Arena>;
-							let image_subresource = ImageSubresourceLayers {
-								aspect_mask: ImageAspectFlags::COLOR,
+							let image_subresource = vk::ImageSubresourceLayers {
+								aspect_mask: vk::ImageAspectFlags::COLOR,
 								mip_level: 0,
 								base_array_layer: 0,
 								layer_count: 1,
@@ -576,87 +494,22 @@ impl Renderer {
 									buffer_row_length: 0,
 									buffer_image_height: 0,
 									image_subresource,
-									image_offset: Offset3D {
+									image_offset: vk::Offset3D {
 										x: pos[0] as i32,
 										y: pos[1] as i32,
 										z: 0,
 									},
-									image_extent: Extent3D {
+									image_extent: vk::Extent3D {
 										width: data.image.width() as u32,
 										height: data.image.height() as u32,
 										depth: 1,
 									},
 								},
-								*device.queue_families().graphics(),
-								ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-								ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-							)?;
-
-							if device.needs_queue_ownership_transfer() {
-								let range = ImageSubresourceRange {
-									aspect_mask: image_subresource.aspect_mask,
-									base_mip_level: image_subresource.mip_level,
-									level_count: 1,
-									base_array_layer: image_subresource.base_array_layer,
-									layer_count: image_subresource.layer_count,
-								};
-								pre_barriers.push(
-									ImageMemoryBarrier2::builder()
-										.image(image.handle())
-										.subresource_range(range)
-										.src_access_mask(AccessFlags2::SHADER_SAMPLED_READ)
-										.src_stage_mask(PipelineStageFlags2::FRAGMENT_SHADER)
-										.old_layout(if pos == [0, 0] {
-											ImageLayout::UNDEFINED
-										} else {
-											ImageLayout::SHADER_READ_ONLY_OPTIMAL
-										})
-										.src_queue_family_index(*device.queue_families().graphics())
-										.new_layout(ImageLayout::TRANSFER_DST_OPTIMAL)
-										.dst_queue_family_index(*device.queue_families().transfer())
-										.build(),
-								);
-
-								let (semaphore, value) = stage.wait_semaphore().unwrap();
-								post_barriers.push(ExternalImage {
-									handle: image.handle(),
-									prev_usage: Some(ExternalSync {
-										semaphore,
-										value,
-										queue: Some(*device.queue_families().transfer()),
-										..Default::default()
-									}),
-									next_usage: None,
-								});
-							}
-						}
-
-						let buf = self.pool.next(device).unwrap();
-						unsafe {
-							let (semaphore, value) = stage.signal_semaphore().unwrap();
-
-							device.device().begin_command_buffer(
-								buf,
-								&CommandBufferBeginInfo::builder().flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-							)?;
-							device.device().cmd_pipeline_barrier2(
-								buf,
-								&DependencyInfo::builder().image_memory_barriers(&pre_barriers),
-							);
-							device.device().end_command_buffer(buf)?;
-							device.submit_graphics(
-								&[SubmitInfo2::builder()
-									.wait_semaphore_infos(&self.snapshot.as_submit_info())
-									.command_buffer_infos(&[CommandBufferSubmitInfo::builder()
-										.command_buffer(buf)
-										.build()])
-									.signal_semaphore_infos(&[SemaphoreSubmitInfo::builder()
-										.semaphore(semaphore)
-										.value(value)
-										.stage_mask(PipelineStageFlags2::TRANSFER)
-										.build()])
-									.build()],
-								Fence::null(),
+								pos == [0, 0]
+									&& *size == Vec2::new(data.image.width() as u32, data.image.height() as _),
+								QueueType::Graphics,
+								&[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
+								&[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
 							)?;
 						}
 
@@ -664,17 +517,20 @@ impl Renderer {
 					},
 				)
 				.unwrap();
-		}
+			Some(ticket)
+		} else {
+			None
+		};
 
 		for free in delta.free {
-			let (image, view, _) = self.images.remove(&free).unwrap();
+			let (image, _, view, _) = self.images.remove(&free).unwrap();
 			unsafe {
 				image.destroy(device);
 				view.destroy(device);
 			}
 		}
 
-		post_barriers
+		ticket
 	}
 }
 

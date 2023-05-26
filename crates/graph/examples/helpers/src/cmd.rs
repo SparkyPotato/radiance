@@ -1,30 +1,14 @@
-use radiance_graph::{
-	ash::vk::{
-		AttachmentLoadOp,
-		AttachmentStoreOp,
-		ClearColorValue,
-		ClearValue,
-		CommandBuffer,
-		Extent2D,
-		ImageLayout,
-		Rect2D,
-		RenderingAttachmentInfo,
-		RenderingInfo,
-		Viewport,
-	},
-	device::Device,
-	resource::ImageView,
-};
+use radiance_graph::{ash::vk, device::Device, resource::ImageView};
 use vek::Vec2;
 
 use crate::misc::simple_rect;
 
-pub fn set_viewport_and_scissor(device: &Device, buf: CommandBuffer, size: Vec2<u32>) {
+pub fn set_viewport_and_scissor(device: &Device, buf: vk::CommandBuffer, size: Vec2<u32>) {
 	unsafe {
 		device.device().cmd_set_viewport(
 			buf,
 			0,
-			&[Viewport {
+			&[vk::Viewport {
 				x: 0.0,
 				y: 0.0,
 				width: size.x as f32,
@@ -37,27 +21,27 @@ pub fn set_viewport_and_scissor(device: &Device, buf: CommandBuffer, size: Vec2<
 	}
 }
 
-pub fn start_rendering_swapchain(device: &Device, buf: CommandBuffer, view: ImageView, size: Vec2<u32>) {
+pub fn start_rendering_swapchain(device: &Device, buf: vk::CommandBuffer, view: ImageView, size: Vec2<u32>) {
 	unsafe {
 		device.device().cmd_begin_rendering(
 			buf,
-			&RenderingInfo::builder()
+			&vk::RenderingInfo::builder()
 				.render_area(
-					Rect2D::builder()
-						.extent(Extent2D::builder().width(size.x).height(size.y).build())
+					vk::Rect2D::builder()
+						.extent(vk::Extent2D::builder().width(size.x).height(size.y).build())
 						.build(),
 				)
 				.layer_count(1)
-				.color_attachments(&[RenderingAttachmentInfo::builder()
+				.color_attachments(&[vk::RenderingAttachmentInfo::builder()
 					.image_view(view.view)
-					.image_layout(ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-					.load_op(AttachmentLoadOp::CLEAR)
-					.clear_value(ClearValue {
-						color: ClearColorValue {
+					.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+					.load_op(vk::AttachmentLoadOp::CLEAR)
+					.clear_value(vk::ClearValue {
+						color: vk::ClearColorValue {
 							float32: [0.0, 0.0, 0.0, 1.0],
 						},
 					})
-					.store_op(AttachmentStoreOp::STORE)
+					.store_op(vk::AttachmentStoreOp::STORE)
 					.build()]),
 		);
 		set_viewport_and_scissor(device, buf, size);

@@ -2,17 +2,7 @@
 
 use std::ops::{BitOr, BitOrAssign};
 
-use ash::vk::{
-	AccessFlags2,
-	BufferUsageFlags,
-	Image,
-	ImageLayout,
-	ImageMemoryBarrier2,
-	ImageSubresourceRange,
-	ImageUsageFlags,
-	MemoryBarrier2,
-	PipelineStageFlags2,
-};
+use ash::vk;
 
 /// Defines all potential shader stages.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -138,9 +128,9 @@ impl Default for UsageType {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 pub struct AccessInfo {
-	pub stage_mask: PipelineStageFlags2,
-	pub access_mask: AccessFlags2,
-	pub image_layout: ImageLayout,
+	pub stage_mask: vk::PipelineStageFlags2,
+	pub access_mask: vk::AccessFlags2,
+	pub image_layout: vk::ImageLayout,
 }
 
 impl BitOr for AccessInfo {
@@ -167,42 +157,42 @@ impl BitOrAssign for AccessInfo {
 	fn bitor_assign(&mut self, rhs: Self) { *self = *self | rhs; }
 }
 
-impl From<BufferUsage> for BufferUsageFlags {
+impl From<BufferUsage> for vk::BufferUsageFlags {
 	fn from(usage: BufferUsage) -> Self {
 		match usage {
-			BufferUsage::IndirectBuffer => BufferUsageFlags::INDIRECT_BUFFER,
-			BufferUsage::IndexBuffer => BufferUsageFlags::INDEX_BUFFER,
-			BufferUsage::VertexBuffer => BufferUsageFlags::VERTEX_BUFFER,
-			BufferUsage::ShaderReadUniformBuffer(_) => BufferUsageFlags::UNIFORM_BUFFER,
-			BufferUsage::Nothing => BufferUsageFlags::empty(),
-			BufferUsage::ShaderStorageRead(_) => BufferUsageFlags::STORAGE_BUFFER,
-			BufferUsage::TransferRead => BufferUsageFlags::TRANSFER_SRC,
-			BufferUsage::HostRead => BufferUsageFlags::empty(),
-			BufferUsage::ShaderStorageWrite(_) => BufferUsageFlags::STORAGE_BUFFER,
-			BufferUsage::TransferWrite => BufferUsageFlags::TRANSFER_DST,
-			BufferUsage::HostWrite => BufferUsageFlags::empty(),
-			BufferUsage::General => BufferUsageFlags::empty(),
+			BufferUsage::IndirectBuffer => vk::BufferUsageFlags::INDIRECT_BUFFER,
+			BufferUsage::IndexBuffer => vk::BufferUsageFlags::INDEX_BUFFER,
+			BufferUsage::VertexBuffer => vk::BufferUsageFlags::VERTEX_BUFFER,
+			BufferUsage::ShaderReadUniformBuffer(_) => vk::BufferUsageFlags::UNIFORM_BUFFER,
+			BufferUsage::Nothing => vk::BufferUsageFlags::empty(),
+			BufferUsage::ShaderStorageRead(_) => vk::BufferUsageFlags::STORAGE_BUFFER,
+			BufferUsage::TransferRead => vk::BufferUsageFlags::TRANSFER_SRC,
+			BufferUsage::HostRead => vk::BufferUsageFlags::empty(),
+			BufferUsage::ShaderStorageWrite(_) => vk::BufferUsageFlags::STORAGE_BUFFER,
+			BufferUsage::TransferWrite => vk::BufferUsageFlags::TRANSFER_DST,
+			BufferUsage::HostWrite => vk::BufferUsageFlags::empty(),
+			BufferUsage::General => vk::BufferUsageFlags::empty(),
 		}
 	}
 }
 
-impl From<ImageUsage> for ImageUsageFlags {
+impl From<ImageUsage> for vk::ImageUsageFlags {
 	fn from(usage: ImageUsage) -> Self {
 		match usage {
-			ImageUsage::ShaderReadSampledImage(_) => ImageUsageFlags::SAMPLED,
-			ImageUsage::ColorAttachmentRead => ImageUsageFlags::COLOR_ATTACHMENT,
-			ImageUsage::DepthStencilAttachmentRead => ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-			ImageUsage::Present => ImageUsageFlags::empty(),
-			ImageUsage::ColorAttachmentWrite => ImageUsageFlags::COLOR_ATTACHMENT,
-			ImageUsage::DepthStencilAttachmentWrite => ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-			ImageUsage::DepthAttachmentWriteStencilReadOnly => ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-			ImageUsage::StencilAttachmentWriteDepthReadOnly => ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-			ImageUsage::Nothing => ImageUsageFlags::empty(),
-			ImageUsage::ShaderStorageRead(_) => ImageUsageFlags::STORAGE,
-			ImageUsage::TransferRead => ImageUsageFlags::TRANSFER_SRC,
-			ImageUsage::ShaderStorageWrite(_) => ImageUsageFlags::STORAGE,
-			ImageUsage::TransferWrite => ImageUsageFlags::TRANSFER_DST,
-			ImageUsage::General => ImageUsageFlags::empty(),
+			ImageUsage::ShaderReadSampledImage(_) => vk::ImageUsageFlags::SAMPLED,
+			ImageUsage::ColorAttachmentRead => vk::ImageUsageFlags::COLOR_ATTACHMENT,
+			ImageUsage::DepthStencilAttachmentRead => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+			ImageUsage::Present => vk::ImageUsageFlags::empty(),
+			ImageUsage::ColorAttachmentWrite => vk::ImageUsageFlags::COLOR_ATTACHMENT,
+			ImageUsage::DepthStencilAttachmentWrite => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+			ImageUsage::DepthAttachmentWriteStencilReadOnly => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+			ImageUsage::StencilAttachmentWriteDepthReadOnly => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+			ImageUsage::Nothing => vk::ImageUsageFlags::empty(),
+			ImageUsage::ShaderStorageRead(_) => vk::ImageUsageFlags::STORAGE,
+			ImageUsage::TransferRead => vk::ImageUsageFlags::TRANSFER_SRC,
+			ImageUsage::ShaderStorageWrite(_) => vk::ImageUsageFlags::STORAGE,
+			ImageUsage::TransferWrite => vk::ImageUsageFlags::TRANSFER_DST,
+			ImageUsage::General => vk::ImageUsageFlags::empty(),
 		}
 	}
 }
@@ -211,120 +201,126 @@ impl From<UsageType> for AccessInfo {
 	fn from(usage: UsageType) -> Self {
 		match usage {
 			UsageType::Nothing => AccessInfo {
-				stage_mask: PipelineStageFlags2::NONE,
-				access_mask: AccessFlags2::NONE,
-				image_layout: ImageLayout::UNDEFINED,
+				stage_mask: vk::PipelineStageFlags2::NONE,
+				access_mask: vk::AccessFlags2::NONE,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::IndirectBuffer => AccessInfo {
-				stage_mask: PipelineStageFlags2::DRAW_INDIRECT,
-				access_mask: AccessFlags2::INDIRECT_COMMAND_READ,
-				image_layout: ImageLayout::UNDEFINED,
+				stage_mask: vk::PipelineStageFlags2::DRAW_INDIRECT,
+				access_mask: vk::AccessFlags2::INDIRECT_COMMAND_READ,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::IndexBuffer => AccessInfo {
-				stage_mask: PipelineStageFlags2::INDEX_INPUT,
-				access_mask: AccessFlags2::INDEX_READ,
-				image_layout: ImageLayout::UNDEFINED,
+				stage_mask: vk::PipelineStageFlags2::INDEX_INPUT,
+				access_mask: vk::AccessFlags2::INDEX_READ,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::VertexBuffer => AccessInfo {
-				stage_mask: PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
-				access_mask: AccessFlags2::VERTEX_ATTRIBUTE_READ,
-				image_layout: ImageLayout::UNDEFINED,
+				stage_mask: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
+				access_mask: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::ShaderReadUniformBuffer(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
-				access_mask: AccessFlags2::UNIFORM_READ,
-				image_layout: ImageLayout::UNDEFINED,
+				access_mask: vk::AccessFlags2::UNIFORM_READ,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::ShaderReadSampledImage(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
-				access_mask: AccessFlags2::SHADER_SAMPLED_READ,
-				image_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+				access_mask: vk::AccessFlags2::SHADER_SAMPLED_READ,
+				image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
 			},
 			UsageType::ColorAttachmentRead => AccessInfo {
-				stage_mask: PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-				access_mask: AccessFlags2::COLOR_ATTACHMENT_READ,
-				image_layout: ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+				access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_READ,
+				image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
 			},
 			UsageType::DepthStencilAttachmentRead => AccessInfo {
-				stage_mask: PipelineStageFlags2::EARLY_FRAGMENT_TESTS | PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-				access_mask: AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
-				image_layout: ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
+				image_layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
 			},
 			UsageType::ShaderStorageRead(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
-				access_mask: AccessFlags2::SHADER_STORAGE_READ,
-				image_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+				access_mask: vk::AccessFlags2::SHADER_STORAGE_READ,
+				image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
 			},
 			UsageType::TransferRead => AccessInfo {
-				stage_mask: PipelineStageFlags2::TRANSFER,
-				access_mask: AccessFlags2::TRANSFER_READ,
-				image_layout: ImageLayout::TRANSFER_SRC_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::TRANSFER,
+				access_mask: vk::AccessFlags2::TRANSFER_READ,
+				image_layout: vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
 			},
 			UsageType::HostRead => AccessInfo {
-				stage_mask: PipelineStageFlags2::HOST,
-				access_mask: AccessFlags2::HOST_READ,
-				image_layout: ImageLayout::GENERAL,
+				stage_mask: vk::PipelineStageFlags2::HOST,
+				access_mask: vk::AccessFlags2::HOST_READ,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::Present => AccessInfo {
-				stage_mask: PipelineStageFlags2::empty(),
-				access_mask: AccessFlags2::empty(),
-				image_layout: ImageLayout::PRESENT_SRC_KHR,
+				stage_mask: vk::PipelineStageFlags2::empty(),
+				access_mask: vk::AccessFlags2::empty(),
+				image_layout: vk::ImageLayout::PRESENT_SRC_KHR,
 			},
 			UsageType::ShaderStorageWrite(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
-				access_mask: AccessFlags2::SHADER_STORAGE_WRITE,
-				image_layout: ImageLayout::GENERAL,
+				access_mask: vk::AccessFlags2::SHADER_STORAGE_WRITE,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::ColorAttachmentWrite => AccessInfo {
-				stage_mask: PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-				access_mask: AccessFlags2::COLOR_ATTACHMENT_WRITE,
-				image_layout: ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+				access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+				image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
 			},
 			UsageType::DepthStencilAttachmentWrite => AccessInfo {
-				stage_mask: PipelineStageFlags2::EARLY_FRAGMENT_TESTS | PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-				access_mask: AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-				image_layout: ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
+				image_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 			},
 			UsageType::DepthAttachmentWriteStencilReadOnly => AccessInfo {
-				stage_mask: PipelineStageFlags2::EARLY_FRAGMENT_TESTS | PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-				access_mask: AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE | AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
-				image_layout: ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
+					| vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
+				image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
 			},
 			UsageType::StencilAttachmentWriteDepthReadOnly => AccessInfo {
-				stage_mask: PipelineStageFlags2::EARLY_FRAGMENT_TESTS | PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-				access_mask: AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE | AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
-				image_layout: ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
+					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
+				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
+					| vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
+				image_layout: vk::ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
 			},
 			UsageType::TransferWrite => AccessInfo {
-				stage_mask: PipelineStageFlags2::TRANSFER,
-				access_mask: AccessFlags2::TRANSFER_WRITE,
-				image_layout: ImageLayout::TRANSFER_DST_OPTIMAL,
+				stage_mask: vk::PipelineStageFlags2::TRANSFER,
+				access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+				image_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
 			},
 			UsageType::HostWrite => AccessInfo {
-				stage_mask: PipelineStageFlags2::HOST,
-				access_mask: AccessFlags2::HOST_WRITE,
-				image_layout: ImageLayout::GENERAL,
+				stage_mask: vk::PipelineStageFlags2::HOST,
+				access_mask: vk::AccessFlags2::HOST_WRITE,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::General => AccessInfo {
-				stage_mask: PipelineStageFlags2::ALL_COMMANDS,
-				access_mask: AccessFlags2::MEMORY_READ | AccessFlags2::MEMORY_WRITE,
-				image_layout: ImageLayout::GENERAL,
+				stage_mask: vk::PipelineStageFlags2::ALL_COMMANDS,
+				access_mask: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 		}
 	}
 }
 
-impl From<Shader> for PipelineStageFlags2 {
+impl From<Shader> for vk::PipelineStageFlags2 {
 	fn from(shader: Shader) -> Self {
 		match shader {
-			Shader::Vertex => PipelineStageFlags2::VERTEX_SHADER,
-			Shader::TessellationControl => PipelineStageFlags2::TESSELLATION_CONTROL_SHADER,
-			Shader::TessellationEvaluation => PipelineStageFlags2::TESSELLATION_EVALUATION_SHADER,
-			Shader::Mesh => PipelineStageFlags2::MESH_SHADER_EXT,
-			Shader::Geometry => PipelineStageFlags2::GEOMETRY_SHADER,
-			Shader::Fragment => PipelineStageFlags2::FRAGMENT_SHADER,
-			Shader::Compute => PipelineStageFlags2::COMPUTE_SHADER,
-			Shader::Any => PipelineStageFlags2::ALL_GRAPHICS,
+			Shader::Vertex => vk::PipelineStageFlags2::VERTEX_SHADER,
+			Shader::TessellationControl => vk::PipelineStageFlags2::TESSELLATION_CONTROL_SHADER,
+			Shader::TessellationEvaluation => vk::PipelineStageFlags2::TESSELLATION_EVALUATION_SHADER,
+			Shader::Mesh => vk::PipelineStageFlags2::MESH_SHADER_EXT,
+			Shader::Geometry => vk::PipelineStageFlags2::GEOMETRY_SHADER,
+			Shader::Fragment => vk::PipelineStageFlags2::FRAGMENT_SHADER,
+			Shader::Compute => vk::PipelineStageFlags2::COMPUTE_SHADER,
+			Shader::Any => vk::PipelineStageFlags2::ALL_GRAPHICS,
 		}
 	}
 }
@@ -353,7 +349,7 @@ pub fn is_write_access(usage: UsageType) -> bool {
 	}
 }
 
-fn get_pipeline_stage(shader: Shader) -> PipelineStageFlags2 { shader.into() }
+fn get_pipeline_stage(shader: Shader) -> vk::PipelineStageFlags2 { shader.into() }
 
 /// Image barriers should only be used when a queue family ownership transfer
 /// or an image layout transition is required - prefer global barriers at all
@@ -381,18 +377,18 @@ pub struct ImageBarrier<'a> {
 	pub discard_contents: bool,
 	pub src_queue_family_index: u32,
 	pub dst_queue_family_index: u32,
-	pub image: Image,
-	pub range: ImageSubresourceRange,
+	pub image: vk::Image,
+	pub range: vk::ImageSubresourceRange,
 }
 
-impl From<ImageBarrier<'_>> for ImageMemoryBarrier2 {
+impl From<ImageBarrier<'_>> for vk::ImageMemoryBarrier2 {
 	fn from(barrier: ImageBarrier) -> Self {
 		let previous_access = as_previous_access(barrier.previous_usages.iter().copied(), barrier.discard_contents);
 		let mut next_access = as_next_access(barrier.next_usages.iter().copied(), previous_access);
 
 		// Ensure that the stage masks are valid if no stages were determined
-		if next_access.stage_mask == PipelineStageFlags2::empty() {
-			next_access.stage_mask = PipelineStageFlags2::ALL_COMMANDS;
+		if next_access.stage_mask == vk::PipelineStageFlags2::empty() {
+			next_access.stage_mask = vk::PipelineStageFlags2::ALL_COMMANDS;
 		}
 
 		ImageBarrierAccess {
@@ -432,13 +428,13 @@ pub struct ImageBarrierAccess {
 	pub next_access: AccessInfo,
 	pub src_queue_family_index: u32,
 	pub dst_queue_family_index: u32,
-	pub image: Image,
-	pub range: ImageSubresourceRange,
+	pub image: vk::Image,
+	pub range: vk::ImageSubresourceRange,
 }
 
-impl From<ImageBarrierAccess> for ImageMemoryBarrier2 {
+impl From<ImageBarrierAccess> for vk::ImageMemoryBarrier2 {
 	fn from(barrier: ImageBarrierAccess) -> Self {
-		ImageMemoryBarrier2 {
+		vk::ImageMemoryBarrier2 {
 			image: barrier.image,
 			subresource_range: barrier.range,
 			src_stage_mask: barrier.previous_access.stage_mask,
@@ -465,14 +461,14 @@ pub struct GlobalBarrier<'a> {
 	pub next_usages: &'a [UsageType],
 }
 
-impl From<GlobalBarrier<'_>> for MemoryBarrier2 {
+impl From<GlobalBarrier<'_>> for vk::MemoryBarrier2 {
 	fn from(barrier: GlobalBarrier<'_>) -> Self {
 		let previous_access = as_previous_access(barrier.previous_usages.iter().copied(), false);
 		let mut next_access = as_next_access(barrier.next_usages.iter().copied(), previous_access);
 
 		// Ensure that the stage masks are valid if no stages were determined
-		if next_access.stage_mask == PipelineStageFlags2::empty() {
-			next_access.stage_mask = PipelineStageFlags2::ALL_COMMANDS;
+		if next_access.stage_mask == vk::PipelineStageFlags2::empty() {
+			next_access.stage_mask = vk::PipelineStageFlags2::ALL_COMMANDS;
 		}
 
 		GlobalBarrierAccess {
@@ -494,9 +490,9 @@ pub struct GlobalBarrierAccess {
 	pub next_access: AccessInfo,
 }
 
-impl From<GlobalBarrierAccess> for MemoryBarrier2 {
+impl From<GlobalBarrierAccess> for vk::MemoryBarrier2 {
 	fn from(barrier: GlobalBarrierAccess) -> Self {
-		MemoryBarrier2 {
+		vk::MemoryBarrier2 {
 			src_stage_mask: barrier.previous_access.stage_mask,
 			src_access_mask: barrier.previous_access.access_mask,
 			dst_stage_mask: barrier.next_access.stage_mask,
@@ -506,11 +502,15 @@ impl From<GlobalBarrierAccess> for MemoryBarrier2 {
 	}
 }
 
-pub fn get_image_barrier(image_barrier: &ImageBarrier) -> ImageMemoryBarrier2 { (*image_barrier).into() }
-pub fn get_image_barrier_access(image_barrier: &ImageBarrierAccess) -> ImageMemoryBarrier2 { (*image_barrier).into() }
+pub fn get_image_barrier(image_barrier: &ImageBarrier) -> vk::ImageMemoryBarrier2 { (*image_barrier).into() }
+pub fn get_image_barrier_access(image_barrier: &ImageBarrierAccess) -> vk::ImageMemoryBarrier2 {
+	(*image_barrier).into()
+}
 
-pub fn get_global_barrier(global_barrier: &GlobalBarrier) -> MemoryBarrier2 { (*global_barrier).into() }
-pub fn get_global_barrier_access(global_barrier: &GlobalBarrierAccess) -> MemoryBarrier2 { (*global_barrier).into() }
+pub fn get_global_barrier(global_barrier: &GlobalBarrier) -> vk::MemoryBarrier2 { (*global_barrier).into() }
+pub fn get_global_barrier_access(global_barrier: &GlobalBarrierAccess) -> vk::MemoryBarrier2 {
+	(*global_barrier).into()
+}
 
 impl UsageType {
 	pub fn into_prev_access(self, discard_contents: bool) -> AccessInfo {
@@ -518,11 +518,11 @@ impl UsageType {
 
 		// We don't care about previous reads, only writes need to be made available.
 		if !is_write_access(self) {
-			info.access_mask = AccessFlags2::NONE;
+			info.access_mask = vk::AccessFlags2::NONE;
 		}
 		// If we're discarding contents, we don't care about the previous layout.
 		if discard_contents {
-			info.image_layout = ImageLayout::UNDEFINED;
+			info.image_layout = vk::ImageLayout::UNDEFINED;
 		}
 
 		info
@@ -533,8 +533,8 @@ impl UsageType {
 
 		// If the previous access was a read, and no layout transition in required, we don't need to make anything
 		// available.
-		if prev_access.access_mask == AccessFlags2::NONE && prev_access.image_layout == info.image_layout {
-			info.access_mask = AccessFlags2::NONE;
+		if prev_access.access_mask == vk::AccessFlags2::NONE && prev_access.image_layout == info.image_layout {
+			info.access_mask = vk::AccessFlags2::NONE;
 		}
 
 		info

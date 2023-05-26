@@ -7,7 +7,7 @@ pub use bytemuck;
 pub use naga::ShaderStage;
 use radiance_graph::{
 	arena::Arena,
-	ash::vk::Format,
+	ash::vk,
 	device::Device,
 	graph::{ExternalImage, Frame, RenderGraph},
 };
@@ -31,7 +31,7 @@ mod swapchain;
 
 pub struct RenderInput<'a> {
 	pub image: ExternalImage<'a>,
-	pub format: Format,
+	pub format: vk::Format,
 	pub size: Vec2<u32>,
 }
 
@@ -75,7 +75,7 @@ pub fn run<T: App>() -> ! {
 				&mut frame,
 				RenderInput {
 					image,
-					format: Format::B8G8R8A8_SRGB,
+					format: vk::Format::B8G8R8A8_SRGB,
 					size: Vec2::new(size.width, size.height),
 				},
 				prev.elapsed(),

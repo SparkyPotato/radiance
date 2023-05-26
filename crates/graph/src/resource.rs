@@ -1,39 +1,6 @@
 use std::{hash::Hash, ops::BitOr, ptr::NonNull};
 
-use ash::{
-	vk,
-	vk::{
-		BorderColor,
-		BufferCreateInfo,
-		BufferUsageFlags,
-		ComponentMapping,
-		ComponentSwizzle,
-		EventCreateFlags,
-		EventCreateInfo,
-		Extent3D,
-		Filter,
-		Format,
-		ImageAspectFlags,
-		ImageCreateFlags,
-		ImageCreateInfo,
-		ImageLayout,
-		ImageMemoryRequirementsInfo2,
-		ImageSubresourceRange,
-		ImageType,
-		ImageUsageFlags,
-		ImageViewCreateInfo,
-		ImageViewType,
-		MemoryDedicatedRequirements,
-		MemoryRequirements2,
-		SampleCountFlags,
-		SamplerAddressMode,
-		SamplerCreateInfo,
-		SamplerMipmapMode,
-		SharingMode,
-		REMAINING_ARRAY_LAYERS,
-		REMAINING_MIP_LEVELS,
-	},
-};
+use ash::vk;
 use gpu_allocator::{
 	vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
 	MemoryLocation,
@@ -41,7 +8,7 @@ use gpu_allocator::{
 
 use crate::{
 	device::{
-		descriptor::{BufferId, ImageId, SamplerId, StorageImageId},
+		descriptor::{BufferId, ImageId, StorageImageId},
 		Device,
 		Queues,
 	},
@@ -64,7 +31,7 @@ pub trait Resource: Default + Sized {
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct BufferDesc {
 	pub size: usize,
-	pub usage: BufferUsageFlags,
+	pub usage: vk::BufferUsageFlags,
 }
 
 /// A buffer.
@@ -77,10 +44,10 @@ pub struct Buffer {
 
 impl Buffer {
 	pub fn create(device: &Device, desc: BufferDesc, location: MemoryLocation) -> Result<Self> {
-		let info = BufferCreateInfo::builder()
+		let info = vk::BufferCreateInfo::builder()
 			.size(desc.size as u64)
 			.usage(desc.usage)
-			.sharing_mode(SharingMode::CONCURRENT);
+			.sharing_mode(vk::SharingMode::CONCURRENT);
 
 		let usage = info.usage;
 		let buffer = unsafe {
@@ -114,8 +81,8 @@ impl Buffer {
 		}
 
 		let id = usage
-			.contains(BufferUsageFlags::STORAGE_BUFFER)
-			.then(|| device.base_descriptors().get_buffer(device.device(), buffer));
+			.contains(vk::BufferUsageFlags::STORAGE_BUFFER)
+			.then(|| device.descriptors().get_buffer(device, buffer));
 
 		Ok(Self {
 			inner: buffer,
@@ -139,7 +106,7 @@ impl Buffer {
 
 	pub unsafe fn destroy(self, device: &Device) {
 		if let Some(id) = self.id {
-			device.base_descriptors().return_buffer(id);
+			device.descriptors().return_buffer(id);
 		}
 
 		let _ = device.allocator().free(self.alloc);
@@ -217,13 +184,13 @@ impl Resource for GpuBuffer {
 /// A description for an image.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct ImageDesc {
-	pub flags: ImageCreateFlags,
-	pub format: Format,
-	pub size: Extent3D,
+	pub flags: vk::ImageCreateFlags,
+	pub format: vk::Format,
+	pub size: vk::Extent3D,
 	pub levels: u32,
 	pub layers: u32,
-	pub samples: SampleCountFlags,
-	pub usage: ImageUsageFlags,
+	pub samples: vk::SampleCountFlags,
+	pub usage: vk::ImageUsageFlags,
 }
 
 /// A GPU-side image.
@@ -242,14 +209,14 @@ impl Resource for Image {
 	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
 		let image = unsafe {
 			device.device().create_image(
-				&ImageCreateInfo::builder()
+				&vk::ImageCreateInfo::builder()
 					.flags(desc.flags)
 					.image_type(if desc.size.depth > 1 {
-						ImageType::TYPE_3D
+						vk::ImageType::TYPE_3D
 					} else if desc.size.height > 1 {
-						ImageType::TYPE_2D
+						vk::ImageType::TYPE_2D
 					} else {
-						ImageType::TYPE_1D
+						vk::ImageType::TYPE_1D
 					})
 					.format(desc.format)
 					.extent(desc.size)
@@ -257,18 +224,18 @@ impl Resource for Image {
 					.array_layers(desc.layers)
 					.samples(desc.samples)
 					.usage(desc.usage)
-					.sharing_mode(SharingMode::EXCLUSIVE)
-					.initial_layout(ImageLayout::UNDEFINED),
+					.sharing_mode(vk::SharingMode::EXCLUSIVE)
+					.initial_layout(vk::ImageLayout::UNDEFINED),
 				None,
 			)?
 		};
 
 		let (requirements, allocation_scheme) = unsafe {
-			let mut dedicated = MemoryDedicatedRequirements::default();
-			let mut out = MemoryRequirements2::builder().push_next(&mut dedicated);
+			let mut dedicated = vk::MemoryDedicatedRequirements::default();
+			let mut out = vk::MemoryRequirements2::builder().push_next(&mut dedicated);
 			device
 				.device()
-				.get_image_memory_requirements2(&ImageMemoryRequirementsInfo2::builder().image(image), &mut out);
+				.get_image_memory_requirements2(&vk::ImageMemoryRequirementsInfo2::builder().image(image), &mut out);
 
 			(
 				out.memory_requirements,
@@ -335,10 +302,10 @@ impl BitOr for ImageViewUsage {
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ImageViewDesc {
 	pub image: vk::Image,
-	pub view_type: ImageViewType,
-	pub format: Format,
+	pub view_type: vk::ImageViewType,
+	pub format: vk::Format,
 	pub usage: ImageViewUsage,
-	pub aspect: ImageAspectFlags,
+	pub aspect: vk::ImageAspectFlags,
 }
 
 /// A GPU-side image view.
@@ -359,35 +326,32 @@ impl Resource for ImageView {
 	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
 		unsafe {
 			let view = device.device().create_image_view(
-				&ImageViewCreateInfo::builder()
+				&vk::ImageViewCreateInfo::builder()
 					.image(desc.image)
 					.view_type(desc.view_type)
 					.format(desc.format)
-					.components(ComponentMapping {
-						r: ComponentSwizzle::IDENTITY,
-						g: ComponentSwizzle::IDENTITY,
-						b: ComponentSwizzle::IDENTITY,
-						a: ComponentSwizzle::IDENTITY,
+					.components(vk::ComponentMapping {
+						r: vk::ComponentSwizzle::IDENTITY,
+						g: vk::ComponentSwizzle::IDENTITY,
+						b: vk::ComponentSwizzle::IDENTITY,
+						a: vk::ComponentSwizzle::IDENTITY,
 					})
-					.subresource_range(ImageSubresourceRange {
+					.subresource_range(vk::ImageSubresourceRange {
 						aspect_mask: desc.aspect,
 						base_mip_level: 0,
-						level_count: REMAINING_MIP_LEVELS,
+						level_count: vk::REMAINING_MIP_LEVELS,
 						base_array_layer: 0,
-						layer_count: REMAINING_ARRAY_LAYERS,
+						layer_count: vk::REMAINING_ARRAY_LAYERS,
 					}),
 				None,
 			)?;
 			let (id, storage_id) = match desc.usage {
 				ImageViewUsage::None => (None, None),
-				ImageViewUsage::Sampled => (Some(device.base_descriptors().get_image(device.device(), view)), None),
-				ImageViewUsage::Storage => (
-					None,
-					Some(device.base_descriptors().get_storage_image(device.device(), view)),
-				),
+				ImageViewUsage::Sampled => (Some(device.descriptors().get_image(device, view)), None),
+				ImageViewUsage::Storage => (None, Some(device.descriptors().get_storage_image(device, view))),
 				ImageViewUsage::Both => (
-					Some(device.base_descriptors().get_image(device.device(), view)),
-					Some(device.base_descriptors().get_storage_image(device.device(), view)),
+					Some(device.descriptors().get_image(device, view)),
+					Some(device.descriptors().get_storage_image(device, view)),
 				),
 			};
 
@@ -403,63 +367,12 @@ impl Resource for ImageView {
 	unsafe fn destroy(self, device: &Device) {
 		unsafe {
 			if let Some(id) = self.id {
-				device.base_descriptors().return_image(id);
+				device.descriptors().return_image(id);
 			}
 			if let Some(id) = self.storage_id {
-				device.base_descriptors().return_storage_image(id);
+				device.descriptors().return_storage_image(id);
 			}
 			device.device().destroy_image_view(self.view, None);
-		}
-	}
-}
-
-/// A description for a sampler.
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
-pub struct SamplerDesc {
-	pub mag_filter: Filter,
-	pub min_filter: Filter,
-	pub mipmap_mode: SamplerMipmapMode,
-	pub address_mode_u: SamplerAddressMode,
-	pub address_mode_v: SamplerAddressMode,
-	pub address_mode_w: SamplerAddressMode,
-	pub border_color: BorderColor,
-}
-
-/// A GPU-side sampler.
-#[derive(Default, Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct Sampler {
-	pub sampler: vk::Sampler,
-	pub id: Option<SamplerId>,
-}
-
-impl Resource for Sampler {
-	type Desc = SamplerDesc;
-	type Handle = Self;
-
-	fn handle(&self) -> Self::Handle { *self }
-
-	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
-		unsafe {
-			let sampler = device.device().create_sampler(
-				&SamplerCreateInfo::builder()
-					.mag_filter(desc.mag_filter)
-					.min_filter(desc.min_filter)
-					.mipmap_mode(desc.mipmap_mode)
-					.address_mode_u(desc.address_mode_u)
-					.address_mode_v(desc.address_mode_v)
-					.address_mode_w(desc.address_mode_w)
-					.border_color(desc.border_color),
-				None,
-			)?;
-			let id = device.base_descriptors().get_sampler(device.device(), sampler);
-			Ok(Self { sampler, id: Some(id) })
-		}
-	}
-
-	unsafe fn destroy(self, device: &Device) {
-		unsafe {
-			device.base_descriptors().return_sampler(self.id.unwrap());
-			device.device().destroy_sampler(self.sampler, None);
 		}
 	}
 }
@@ -477,9 +390,10 @@ impl Resource for Event {
 
 	fn create(device: &Device, _: Self::Desc) -> Result<Self> {
 		unsafe {
-			let inner = device
-				.device()
-				.create_event(&EventCreateInfo::builder().flags(EventCreateFlags::DEVICE_ONLY), None)?;
+			let inner = device.device().create_event(
+				&vk::EventCreateInfo::builder().flags(vk::EventCreateFlags::DEVICE_ONLY),
+				None,
+			)?;
 			Ok(Self { inner })
 		}
 	}

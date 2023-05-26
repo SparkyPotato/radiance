@@ -1,6 +1,6 @@
 use std::{hash::BuildHasherDefault, hint::unreachable_unchecked, ptr::NonNull};
 
-use ash::vk::{Extent3D, Format, ImageAspectFlags, ImageCreateFlags, ImageViewType, SampleCountFlags, Semaphore};
+use ash::vk;
 
 pub use crate::sync::{BufferUsage as BufferUsageType, ImageUsage as ImageUsageType, Shader};
 use crate::{
@@ -43,10 +43,10 @@ pub struct BufferUsageOwned<'graph> {
 /// Has a corresponding usage of [`ImageUsage`].
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ImageDesc {
-	pub size: Extent3D,
+	pub size: vk::Extent3D,
 	pub levels: u32,
 	pub layers: u32,
-	pub samples: SampleCountFlags,
+	pub samples: vk::SampleCountFlags,
 }
 
 /// The usage of an image in a render pass.
@@ -56,27 +56,27 @@ pub struct ImageUsage<'a> {
 	/// [compatible].
 	///
 	/// [compatible]: https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#formats-compatibility-classes
-	pub format: Format,
+	pub format: vk::Format,
 	pub usages: &'a [ImageUsageType],
-	pub view_type: ImageViewType,
-	pub aspect: ImageAspectFlags,
+	pub view_type: vk::ImageViewType,
+	pub aspect: vk::ImageAspectFlags,
 }
 
 #[doc(hidden)]
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ImageUsageOwned<'graph> {
-	pub format: Format,
+	pub format: vk::Format,
 	pub usages: Vec<ImageUsageType, &'graph Arena>,
-	pub view_type: ImageViewType,
-	pub aspect: ImageAspectFlags,
+	pub view_type: vk::ImageViewType,
+	pub aspect: vk::ImageAspectFlags,
 }
 
 impl ImageUsageOwned<'_> {
-	pub fn create_flags(&self) -> ImageCreateFlags {
+	pub fn create_flags(&self) -> vk::ImageCreateFlags {
 		match self.view_type {
-			ImageViewType::CUBE | ImageViewType::CUBE_ARRAY => ImageCreateFlags::CUBE_COMPATIBLE,
-			ImageViewType::TYPE_2D_ARRAY => ImageCreateFlags::TYPE_2D_ARRAY_COMPATIBLE,
-			_ => ImageCreateFlags::empty(),
+			vk::ImageViewType::CUBE | vk::ImageViewType::CUBE_ARRAY => vk::ImageCreateFlags::CUBE_COMPATIBLE,
+			vk::ImageViewType::TYPE_2D_ARRAY => vk::ImageCreateFlags::TYPE_2D_ARRAY_COMPATIBLE,
+			_ => vk::ImageCreateFlags::empty(),
 		}
 	}
 }
@@ -85,7 +85,7 @@ impl ImageUsageOwned<'_> {
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct ExternalSync<U> {
 	/// The semaphore to wait on or signal. If no cross-queue sync is required, this is `::null()`.
-	pub semaphore: Semaphore,
+	pub semaphore: vk::Semaphore,
 	/// If `semaphore` is a timeline semaphore, the value to wait on or set.
 	pub value: u64,
 	/// The related usage of the resource.
@@ -460,15 +460,15 @@ impl VirtualResourceDesc for ExternalImage<'_> {
 	}
 }
 
-pub fn compatible_formats(a: Format, b: Format) -> bool { get_format_block(a) == get_format_block(b) }
+pub fn compatible_formats(a: vk::Format, b: vk::Format) -> bool { get_format_block(a) == get_format_block(b) }
 
-fn get_format_block(f: Format) -> i32 {
+fn get_format_block(f: vk::Format) -> i32 {
 	macro_rules! f {
 		($raw:ident,($i:ident)) => {
-			Format::$i.as_raw() == $raw
+			vk::Format::$i.as_raw() == $raw
 		};
 		($raw:ident,($f:ident : $t:ident)) => {
-			(Format::$f.as_raw()..=Format::$t.as_raw()).contains(&$raw)
+			(vk::Format::$f.as_raw()..=vk::Format::$t.as_raw()).contains(&$raw)
 		};
 	}
 

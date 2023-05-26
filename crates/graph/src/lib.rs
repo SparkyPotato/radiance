@@ -9,6 +9,7 @@ pub use ash;
 pub use gpu_allocator;
 
 pub mod arena;
+pub mod cmd;
 pub mod device;
 pub mod graph;
 pub mod resource;

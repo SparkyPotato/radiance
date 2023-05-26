@@ -7,41 +7,7 @@ use naga::{
 	valid::{Capabilities, ValidationFlags},
 	ShaderStage,
 };
-use radiance_graph::{
-	ash::vk::{
-		BlendFactor,
-		BlendOp,
-		ColorComponentFlags,
-		CullModeFlags,
-		DynamicState,
-		Format,
-		FrontFace,
-		GraphicsPipelineCreateInfo,
-		Pipeline,
-		PipelineCache,
-		PipelineColorBlendAttachmentState,
-		PipelineColorBlendStateCreateInfo,
-		PipelineDynamicStateCreateInfo,
-		PipelineInputAssemblyStateCreateInfo,
-		PipelineLayout,
-		PipelineLayoutCreateInfo,
-		PipelineMultisampleStateCreateInfo,
-		PipelineRasterizationStateCreateInfo,
-		PipelineRenderingCreateInfo,
-		PipelineShaderStageCreateInfo,
-		PipelineVertexInputStateCreateInfo,
-		PipelineViewportStateCreateInfo,
-		PolygonMode,
-		PrimitiveTopology,
-		PushConstantRange,
-		Rect2D,
-		SampleCountFlags,
-		ShaderModuleCreateInfo,
-		ShaderStageFlags,
-		Viewport,
-	},
-	device::Device,
-};
+use radiance_graph::{ash::vk, device::Device};
 
 // We use WGSL because there's a nice compiler in rust for it (and I totally didn't contribute to it).
 pub fn compile(shader: &str, stage: ShaderStage) -> Vec<u32> {
@@ -62,23 +28,23 @@ pub fn compile(shader: &str, stage: ShaderStage) -> Vec<u32> {
 }
 
 pub fn simple(
-	device: &Device, vertex: &[u32], fragment: &[u32], format: Format, push_constants: &[PushConstantRange],
-) -> (Pipeline, PipelineLayout) {
+	device: &Device, vertex: &[u32], fragment: &[u32], format: vk::Format, push_constants: &[vk::PushConstantRange],
+) -> (vk::Pipeline, vk::PipelineLayout) {
 	unsafe {
 		let vertex = device
 			.device()
-			.create_shader_module(&ShaderModuleCreateInfo::builder().code(vertex), None)
+			.create_shader_module(&vk::ShaderModuleCreateInfo::builder().code(vertex), None)
 			.unwrap();
 		let fragment = device
 			.device()
-			.create_shader_module(&ShaderModuleCreateInfo::builder().code(fragment), None)
+			.create_shader_module(&vk::ShaderModuleCreateInfo::builder().code(fragment), None)
 			.unwrap();
 
 		let layout = device
 			.device()
 			.create_pipeline_layout(
-				&PipelineLayoutCreateInfo::builder()
-					.set_layouts(&[device.base_descriptors().layout()])
+				&vk::PipelineLayoutCreateInfo::builder()
+					.set_layouts(&[device.descriptors().layout()])
 					.push_constant_ranges(push_constants),
 				None,
 			)
@@ -87,63 +53,65 @@ pub fn simple(
 		let ret = device
 			.device()
 			.create_graphics_pipelines(
-				PipelineCache::null(),
-				&[GraphicsPipelineCreateInfo::builder()
+				vk::PipelineCache::null(),
+				&[vk::GraphicsPipelineCreateInfo::builder()
 					.stages(&[
-						PipelineShaderStageCreateInfo::builder()
-							.stage(ShaderStageFlags::VERTEX)
+						vk::PipelineShaderStageCreateInfo::builder()
+							.stage(vk::ShaderStageFlags::VERTEX)
 							.module(vertex)
 							.name(CStr::from_bytes_with_nul_unchecked(b"main\0"))
 							.build(),
-						PipelineShaderStageCreateInfo::builder()
-							.stage(ShaderStageFlags::FRAGMENT)
+						vk::PipelineShaderStageCreateInfo::builder()
+							.stage(vk::ShaderStageFlags::FRAGMENT)
 							.module(fragment)
 							.name(CStr::from_bytes_with_nul_unchecked(b"main\0"))
 							.build(),
 					])
-					.vertex_input_state(&PipelineVertexInputStateCreateInfo::builder())
+					.vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::builder())
 					.input_assembly_state(
-						&PipelineInputAssemblyStateCreateInfo::builder().topology(PrimitiveTopology::TRIANGLE_LIST),
+						&vk::PipelineInputAssemblyStateCreateInfo::builder()
+							.topology(vk::PrimitiveTopology::TRIANGLE_LIST),
 					)
 					.viewport_state(
-						&PipelineViewportStateCreateInfo::builder()
-							.viewports(&[Viewport::builder().build()])
-							.scissors(&[Rect2D::builder().build()]),
+						&vk::PipelineViewportStateCreateInfo::builder()
+							.viewports(&[vk::Viewport::builder().build()])
+							.scissors(&[vk::Rect2D::builder().build()]),
 					)
 					.rasterization_state(
-						&PipelineRasterizationStateCreateInfo::builder()
-							.polygon_mode(PolygonMode::FILL)
-							.front_face(FrontFace::COUNTER_CLOCKWISE)
-							.cull_mode(CullModeFlags::NONE)
+						&vk::PipelineRasterizationStateCreateInfo::builder()
+							.polygon_mode(vk::PolygonMode::FILL)
+							.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+							.cull_mode(vk::CullModeFlags::NONE)
 							.line_width(1.0),
 					)
 					.multisample_state(
-						&PipelineMultisampleStateCreateInfo::builder().rasterization_samples(SampleCountFlags::TYPE_1),
+						&vk::PipelineMultisampleStateCreateInfo::builder()
+							.rasterization_samples(vk::SampleCountFlags::TYPE_1),
 					)
 					.color_blend_state(
-						&PipelineColorBlendStateCreateInfo::builder().attachments(&[
-							PipelineColorBlendAttachmentState::builder()
+						&vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[
+							vk::PipelineColorBlendAttachmentState::builder()
 								.color_write_mask(
-									ColorComponentFlags::R
-										| ColorComponentFlags::G | ColorComponentFlags::B
-										| ColorComponentFlags::A,
+									vk::ColorComponentFlags::R
+										| vk::ColorComponentFlags::G | vk::ColorComponentFlags::B
+										| vk::ColorComponentFlags::A,
 								)
 								.blend_enable(true)
-								.src_color_blend_factor(BlendFactor::SRC_ALPHA)
-								.dst_color_blend_factor(BlendFactor::ONE_MINUS_SRC_ALPHA)
-								.color_blend_op(BlendOp::ADD)
-								.src_alpha_blend_factor(BlendFactor::ONE)
-								.dst_alpha_blend_factor(BlendFactor::ONE_MINUS_SRC_ALPHA)
-								.alpha_blend_op(BlendOp::ADD)
+								.src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
+								.dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+								.color_blend_op(vk::BlendOp::ADD)
+								.src_alpha_blend_factor(vk::BlendFactor::ONE)
+								.dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+								.alpha_blend_op(vk::BlendOp::ADD)
 								.build(),
 						]),
 					)
 					.dynamic_state(
-						&PipelineDynamicStateCreateInfo::builder()
-							.dynamic_states(&[DynamicState::VIEWPORT, DynamicState::SCISSOR]),
+						&vk::PipelineDynamicStateCreateInfo::builder()
+							.dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]),
 					)
 					.layout(layout)
-					.push_next(&mut PipelineRenderingCreateInfo::builder().color_attachment_formats(&[format]))
+					.push_next(&mut vk::PipelineRenderingCreateInfo::builder().color_attachment_formats(&[format]))
 					.build()],
 				None,
 			)

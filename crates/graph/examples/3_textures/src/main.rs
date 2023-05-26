@@ -14,7 +14,6 @@ use radiance_graph::{
 		PipelineLayout,
 		PushConstantRange,
 		Sampler,
-		SamplerAddressMode,
 		SamplerCreateInfo,
 		ShaderStageFlags,
 	},
@@ -69,15 +68,12 @@ impl App for Textures {
 				.create_sampler(
 					&SamplerCreateInfo::builder()
 						.mag_filter(Filter::LINEAR)
-						.min_filter(Filter::LINEAR)
-						.address_mode_u(SamplerAddressMode::REPEAT)
-						.address_mode_v(SamplerAddressMode::REPEAT)
-						.address_mode_w(SamplerAddressMode::REPEAT),
+						.min_filter(Filter::LINEAR),
 					None,
 				)
 				.unwrap()
 		};
-		let sampler_id = device.base_descriptors().get_sampler(device.device(), sampler);
+		let sampler_id = device.descriptors().get_sampler(device, sampler);
 
 		Self {
 			pipeline,
@@ -92,7 +88,7 @@ impl App for Textures {
 	fn destroy(self, device: &Device) {
 		unsafe {
 			device.device().destroy_sampler(self.sampler, None);
-			device.base_descriptors().return_sampler(self.sampler_id);
+			device.descriptors().return_sampler(self.sampler_id);
 			self.view.destroy(device);
 			self.image.destroy(device);
 			device.device().destroy_pipeline_layout(self.layout, None);
@@ -147,7 +143,7 @@ impl App for Textures {
 				PipelineBindPoint::GRAPHICS,
 				self.layout,
 				0,
-				&[ctx.device.base_descriptors().set()],
+				&[ctx.device.descriptors().set()],
 				&[],
 			);
 			ctx.device

@@ -2,35 +2,9 @@
 
 use std::{collections::VecDeque, num::NonZeroU32, sync::Mutex};
 
-use ash::{
-	vk::{
-		Buffer,
-		DescriptorBindingFlags,
-		DescriptorBufferInfo,
-		DescriptorImageInfo,
-		DescriptorPool,
-		DescriptorPoolCreateFlags,
-		DescriptorPoolCreateInfo,
-		DescriptorPoolSize,
-		DescriptorSet,
-		DescriptorSetAllocateInfo,
-		DescriptorSetLayout,
-		DescriptorSetLayoutBinding,
-		DescriptorSetLayoutBindingFlagsCreateInfo,
-		DescriptorSetLayoutCreateFlags,
-		DescriptorSetLayoutCreateInfo,
-		DescriptorType,
-		ImageLayout,
-		ImageView,
-		Sampler,
-		ShaderStageFlags,
-		WriteDescriptorSet,
-		WHOLE_SIZE,
-	},
-	Device,
-};
+use ash::vk;
 
-use crate::Result;
+use crate::{device::Device, Result};
 
 /// An ID representing a storage buffer, for use by a shader.
 ///
@@ -79,9 +53,9 @@ mod bytemuck {
 }
 
 pub struct Descriptors {
-	pool: DescriptorPool,
-	layout: DescriptorSetLayout,
-	set: DescriptorSet,
+	pool: vk::DescriptorPool,
+	layout: vk::DescriptorSetLayout,
+	set: vk::DescriptorSet,
 	inner: Mutex<Inner>,
 }
 
@@ -93,26 +67,26 @@ struct Inner {
 }
 
 impl Descriptors {
-	pub fn set(&self) -> DescriptorSet { self.set }
+	pub fn set(&self) -> vk::DescriptorSet { self.set }
 
 	/// Get a `DescriptorSetLayout` that should be used when making pipelines.
-	pub fn layout(&self) -> DescriptorSetLayout { self.layout }
+	pub fn layout(&self) -> vk::DescriptorSetLayout { self.layout }
 
-	pub fn get_buffer(&self, device: &Device, buffer: Buffer) -> BufferId {
+	pub fn get_buffer(&self, device: &Device, buffer: vk::Buffer) -> BufferId {
 		let mut inner = self.inner.lock().unwrap();
 
 		let index = inner.storage_buffers.get_index();
 		unsafe {
-			device.update_descriptor_sets(
-				&[WriteDescriptorSet::builder()
+			device.device().update_descriptor_sets(
+				&[vk::WriteDescriptorSet::builder()
 					.dst_set(self.set)
 					.dst_binding(0)
 					.dst_array_element(index.get())
-					.descriptor_type(DescriptorType::STORAGE_BUFFER)
-					.buffer_info(&[DescriptorBufferInfo::builder()
+					.descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+					.buffer_info(&[vk::DescriptorBufferInfo::builder()
 						.buffer(buffer)
 						.offset(0)
-						.range(WHOLE_SIZE)
+						.range(vk::WHOLE_SIZE)
 						.build()])
 					.build()],
 				&[],
@@ -122,19 +96,19 @@ impl Descriptors {
 		BufferId(index)
 	}
 
-	pub fn get_image(&self, device: &Device, image: ImageView) -> ImageId {
+	pub fn get_image(&self, device: &Device, image: vk::ImageView) -> ImageId {
 		let mut inner = self.inner.lock().unwrap();
 
 		let index = inner.sampled_images.get_index();
 		unsafe {
-			device.update_descriptor_sets(
-				&[WriteDescriptorSet::builder()
+			device.device().update_descriptor_sets(
+				&[vk::WriteDescriptorSet::builder()
 					.dst_set(self.set)
 					.dst_binding(1)
 					.dst_array_element(index.get())
-					.descriptor_type(DescriptorType::SAMPLED_IMAGE)
-					.image_info(&[DescriptorImageInfo::builder()
-						.image_layout(ImageLayout::READ_ONLY_OPTIMAL)
+					.descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+					.image_info(&[vk::DescriptorImageInfo::builder()
+						.image_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
 						.image_view(image)
 						.build()])
 					.build()],
@@ -145,19 +119,19 @@ impl Descriptors {
 		ImageId(index)
 	}
 
-	pub fn get_storage_image(&self, device: &Device, image: ImageView) -> StorageImageId {
+	pub fn get_storage_image(&self, device: &Device, image: vk::ImageView) -> StorageImageId {
 		let mut inner = self.inner.lock().unwrap();
 
 		let index = inner.storage_images.get_index();
 		unsafe {
-			device.update_descriptor_sets(
-				&[WriteDescriptorSet::builder()
+			device.device().update_descriptor_sets(
+				&[vk::WriteDescriptorSet::builder()
 					.dst_set(self.set)
 					.dst_binding(2)
 					.dst_array_element(index.get())
-					.descriptor_type(DescriptorType::STORAGE_IMAGE)
-					.image_info(&[DescriptorImageInfo::builder()
-						.image_layout(ImageLayout::GENERAL)
+					.descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+					.image_info(&[vk::DescriptorImageInfo::builder()
+						.image_layout(vk::ImageLayout::GENERAL)
 						.image_view(image)
 						.build()])
 					.build()],
@@ -168,18 +142,18 @@ impl Descriptors {
 		StorageImageId(index)
 	}
 
-	pub fn get_sampler(&self, device: &Device, sampler: Sampler) -> SamplerId {
+	pub fn get_sampler(&self, device: &Device, sampler: vk::Sampler) -> SamplerId {
 		let mut inner = self.inner.lock().unwrap();
 
 		let index = inner.samplers.get_index();
 		unsafe {
-			device.update_descriptor_sets(
-				&[WriteDescriptorSet::builder()
+			device.device().update_descriptor_sets(
+				&[vk::WriteDescriptorSet::builder()
 					.dst_set(self.set)
 					.dst_binding(3)
 					.dst_array_element(index.get())
-					.descriptor_type(DescriptorType::SAMPLER)
-					.image_info(&[DescriptorImageInfo::builder().sampler(sampler).build()])
+					.descriptor_type(vk::DescriptorType::SAMPLER)
+					.image_info(&[vk::DescriptorImageInfo::builder().sampler(sampler).build()])
 					.build()],
 				&[],
 			);
@@ -208,49 +182,49 @@ impl Descriptors {
 		inner.samplers.return_index(index.0);
 	}
 
-	pub(super) fn new(device: &Device) -> Result<Self> {
+	pub(super) fn new(device: &ash::Device) -> Result<Self> {
 		let storage_buffer_count = 512 * 1024;
 		let sampled_image_count = 512 * 1024;
 		let storage_image_count = 64 * 1024;
 		let sampler_count = 512;
 
-		let binding_flags = DescriptorBindingFlags::UPDATE_AFTER_BIND
-			| DescriptorBindingFlags::PARTIALLY_BOUND
-			| DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
+		let binding_flags = vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+			| vk::DescriptorBindingFlags::PARTIALLY_BOUND
+			| vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
 
 		let set_layout = [
-			DescriptorSetLayoutBinding::builder()
+			vk::DescriptorSetLayoutBinding::builder()
 				.binding(0)
-				.descriptor_type(DescriptorType::STORAGE_BUFFER)
+				.descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
 				.descriptor_count(storage_buffer_count)
-				.stage_flags(ShaderStageFlags::ALL)
+				.stage_flags(vk::ShaderStageFlags::ALL)
 				.build(),
-			DescriptorSetLayoutBinding::builder()
+			vk::DescriptorSetLayoutBinding::builder()
 				.binding(1)
-				.descriptor_type(DescriptorType::SAMPLED_IMAGE)
+				.descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
 				.descriptor_count(sampled_image_count)
-				.stage_flags(ShaderStageFlags::ALL)
+				.stage_flags(vk::ShaderStageFlags::ALL)
 				.build(),
-			DescriptorSetLayoutBinding::builder()
+			vk::DescriptorSetLayoutBinding::builder()
 				.binding(2)
-				.descriptor_type(DescriptorType::STORAGE_IMAGE)
+				.descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
 				.descriptor_count(storage_image_count)
-				.stage_flags(ShaderStageFlags::ALL)
+				.stage_flags(vk::ShaderStageFlags::ALL)
 				.build(),
-			DescriptorSetLayoutBinding::builder()
+			vk::DescriptorSetLayoutBinding::builder()
 				.binding(3)
-				.descriptor_type(DescriptorType::SAMPLER)
+				.descriptor_type(vk::DescriptorType::SAMPLER)
 				.descriptor_count(sampler_count)
-				.stage_flags(ShaderStageFlags::ALL)
+				.stage_flags(vk::ShaderStageFlags::ALL)
 				.build(),
 		];
 		let layout = unsafe {
 			device.create_descriptor_set_layout(
-				&DescriptorSetLayoutCreateInfo::builder()
+				&vk::DescriptorSetLayoutCreateInfo::builder()
 					.bindings(&set_layout)
-					.flags(DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+					.flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
 					.push_next(
-						&mut DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&[
+						&mut vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&[
 							binding_flags,
 							binding_flags,
 							binding_flags,
@@ -263,34 +237,34 @@ impl Descriptors {
 
 		let pool = unsafe {
 			device.create_descriptor_pool(
-				&DescriptorPoolCreateInfo::builder()
+				&vk::DescriptorPoolCreateInfo::builder()
 					.max_sets(1)
 					.pool_sizes(&[
-						DescriptorPoolSize::builder()
-							.ty(DescriptorType::STORAGE_BUFFER)
+						vk::DescriptorPoolSize::builder()
+							.ty(vk::DescriptorType::STORAGE_BUFFER)
 							.descriptor_count(storage_buffer_count)
 							.build(),
-						DescriptorPoolSize::builder()
-							.ty(DescriptorType::SAMPLED_IMAGE)
+						vk::DescriptorPoolSize::builder()
+							.ty(vk::DescriptorType::SAMPLED_IMAGE)
 							.descriptor_count(sampled_image_count)
 							.build(),
-						DescriptorPoolSize::builder()
-							.ty(DescriptorType::STORAGE_IMAGE)
+						vk::DescriptorPoolSize::builder()
+							.ty(vk::DescriptorType::STORAGE_IMAGE)
 							.descriptor_count(storage_image_count)
 							.build(),
-						DescriptorPoolSize::builder()
-							.ty(DescriptorType::SAMPLER)
+						vk::DescriptorPoolSize::builder()
+							.ty(vk::DescriptorType::SAMPLER)
 							.descriptor_count(sampler_count)
 							.build(),
 					])
-					.flags(DescriptorPoolCreateFlags::UPDATE_AFTER_BIND),
+					.flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND),
 				None,
 			)?
 		};
 
 		let set = unsafe {
 			device.allocate_descriptor_sets(
-				&DescriptorSetAllocateInfo::builder()
+				&vk::DescriptorSetAllocateInfo::builder()
 					.descriptor_pool(pool)
 					.set_layouts(&[layout]),
 			)?[0]
@@ -309,7 +283,7 @@ impl Descriptors {
 		})
 	}
 
-	pub(super) unsafe fn cleanup(&mut self, device: &Device) {
+	pub(super) unsafe fn cleanup(&mut self, device: &ash::Device) {
 		device.destroy_descriptor_set_layout(self.layout, None);
 		device.destroy_descriptor_pool(self.pool, None);
 	}

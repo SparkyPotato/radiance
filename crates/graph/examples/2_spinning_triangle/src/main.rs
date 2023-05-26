@@ -111,7 +111,7 @@ impl App for SpinningTriangle {
 				PipelineBindPoint::GRAPHICS,
 				self.layout,
 				0,
-				&[ctx.device.base_descriptors().set()],
+				&[ctx.device.descriptors().set()],
 				&[],
 			);
 			ctx.device.device().cmd_draw(ctx.buf, 3, 1, 0, 0);

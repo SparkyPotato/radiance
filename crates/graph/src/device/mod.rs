@@ -6,36 +6,41 @@ use std::{
 };
 
 use ash::{
-	extensions::{ext::DebugUtils, khr::Surface},
-	vk::{DebugUtilsMessengerEXT, Fence, PhysicalDevice, Queue, SubmitInfo2},
-	Entry,
-	Instance,
+	extensions::{ext, khr},
+	vk,
 };
 use gpu_allocator::vulkan::Allocator;
 
 use crate::{device::descriptor::Descriptors, Result};
 
-pub mod cmd;
 pub mod descriptor;
 mod init;
 
 /// Has everything you need to do Vulkan stuff.
 pub struct Device {
-	debug_messenger: DebugUtilsMessengerEXT, // Can be null.
-	physical_device: PhysicalDevice,
+	debug_messenger: vk::DebugUtilsMessengerEXT, // Can be null.
+	physical_device: vk::PhysicalDevice,
 	device: ash::Device,
-	surface_ext: Option<Surface>,
-	debug_utils_ext: Option<DebugUtils>,
+	surface_ext: Option<khr::Surface>,
+	debug_utils_ext: Option<ext::DebugUtils>,
 	queues: Queues<QueueData>,
 	allocator: ManuallyDrop<Mutex<Allocator>>,
 	descriptors: Descriptors,
-	instance: Instance,
-	entry: Entry,
+	instance: ash::Instance,
+	entry: ash::Entry,
 }
 
 struct QueueData {
-	queue: Mutex<Queue>,
+	queue: Mutex<vk::Queue>,
 	family: u32,
+}
+
+/// The type of a queue.
+#[derive(Copy, Clone)]
+pub enum QueueType {
+	Graphics,
+	Compute,
+	Transfer,
 }
 
 /// Data consisting of two queue strategies:
@@ -51,7 +56,37 @@ pub enum Queues<T> {
 }
 
 impl<T> Queues<T> {
-	fn map<U>(&self, mut f: impl FnMut(&T) -> U) -> Queues<U> {
+	pub fn get(&self, ty: QueueType) -> &T {
+		match self {
+			Queues::Separate {
+				graphics,
+				compute,
+				transfer,
+			} => match ty {
+				QueueType::Graphics => graphics,
+				QueueType::Compute => compute,
+				QueueType::Transfer => transfer,
+			},
+			Queues::Single(queue) => queue,
+		}
+	}
+
+	pub fn get_mut(&mut self, ty: QueueType) -> &mut T {
+		match self {
+			Queues::Separate {
+				graphics,
+				compute,
+				transfer,
+			} => match ty {
+				QueueType::Graphics => graphics,
+				QueueType::Compute => compute,
+				QueueType::Transfer => transfer,
+			},
+			Queues::Single(queue) => queue,
+		}
+	}
+
+	pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Queues<U> {
 		match self {
 			Queues::Separate {
 				graphics,
@@ -63,6 +98,68 @@ impl<T> Queues<T> {
 				transfer: f(transfer),
 			},
 			Queues::Single(queue) => Queues::Single(f(queue)),
+		}
+	}
+
+	pub fn map_ref<U>(&self, mut f: impl FnMut(&T) -> U) -> Queues<U> {
+		match self {
+			Queues::Separate {
+				graphics,
+				compute,
+				transfer,
+			} => Queues::Separate {
+				graphics: f(graphics),
+				compute: f(compute),
+				transfer: f(transfer),
+			},
+			Queues::Single(queue) => Queues::Single(f(queue)),
+		}
+	}
+
+	pub fn map_mut<U>(&mut self, mut f: impl FnMut(&mut T) -> U) -> Queues<U> {
+		match self {
+			Queues::Separate {
+				graphics,
+				compute,
+				transfer,
+			} => Queues::Separate {
+				graphics: f(graphics),
+				compute: f(compute),
+				transfer: f(transfer),
+			},
+			Queues::Single(queue) => Queues::Single(f(queue)),
+		}
+	}
+
+	pub fn try_map_ref<U, E>(
+		&self, mut f: impl FnMut(&T) -> std::result::Result<U, E>,
+	) -> std::result::Result<Queues<U>, E> {
+		match self {
+			Queues::Separate {
+				graphics,
+				compute,
+				transfer,
+			} => Ok(Queues::Separate {
+				graphics: f(graphics)?,
+				compute: f(compute)?,
+				transfer: f(transfer)?,
+			}),
+			Queues::Single(queue) => Ok(Queues::Single(f(queue)?)),
+		}
+	}
+
+	pub fn try_map<U, E>(self, mut f: impl FnMut(T) -> std::result::Result<U, E>) -> std::result::Result<Queues<U>, E> {
+		match self {
+			Queues::Separate {
+				graphics,
+				compute,
+				transfer,
+			} => Ok(Queues::Separate {
+				graphics: f(graphics)?,
+				compute: f(compute)?,
+				transfer: f(transfer)?,
+			}),
+			Queues::Single(queue) => Ok(Queues::Single(f(queue)?)),
 		}
 	}
 
@@ -86,85 +183,99 @@ impl<T> Queues<T> {
 			Queues::Single(queue) => queue,
 		}
 	}
-}
 
-impl Device {
-	pub fn entry(&self) -> &Entry { &self.entry }
+	pub fn graphics_mut(&mut self) -> &mut T {
+		match self {
+			Queues::Separate { graphics, .. } => graphics,
+			Queues::Single(queue) => queue,
+		}
+	}
 
-	pub fn instance(&self) -> &Instance { &self.instance }
+	pub fn compute_mut(&mut self) -> &mut T {
+		match self {
+			Queues::Separate { compute, .. } => compute,
+			Queues::Single(queue) => queue,
+		}
+	}
 
-	pub fn device(&self) -> &ash::Device { &self.device }
+	pub fn transfer_mut(&mut self) -> &mut T {
+		match self {
+			Queues::Separate { transfer, .. } => transfer,
+			Queues::Single(queue) => queue,
+		}
+	}
 
-	pub fn physical_device(&self) -> PhysicalDevice { self.physical_device }
-
-	pub fn surface_ext(&self) -> Option<&Surface> { self.surface_ext.as_ref() }
-
-	pub fn queue_families(&self) -> Queues<u32> { self.queues.map(|data| data.family) }
-
-	pub fn graphics_queue(&self) -> MutexGuard<'_, Queue> { self.queues.graphics().queue.lock().unwrap() }
-
-	pub fn compute_queue(&self) -> MutexGuard<'_, Queue> { self.queues.compute().queue.lock().unwrap() }
-
-	pub fn transfer_queue(&self) -> MutexGuard<'_, Queue> { self.queues.transfer().queue.lock().unwrap() }
-
-	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.allocator.lock().unwrap() }
-
-	pub fn base_descriptors(&self) -> &Descriptors { &self.descriptors }
-
-	pub fn needs_queue_ownership_transfer(&self) -> bool {
-		match self.queues {
+	pub fn need_ownership_transfer(&self) -> bool {
+		match self {
 			Queues::Separate { .. } => true,
 			Queues::Single(_) => false,
 		}
 	}
+}
+
+impl Device {
+	pub fn entry(&self) -> &ash::Entry { &self.entry }
+
+	pub fn instance(&self) -> &ash::Instance { &self.instance }
+
+	pub fn device(&self) -> &ash::Device { &self.device }
+
+	pub fn physical_device(&self) -> vk::PhysicalDevice { self.physical_device }
+
+	pub fn surface_ext(&self) -> Option<&khr::Surface> { self.surface_ext.as_ref() }
+
+	pub fn debug_utils_ext(&self) -> Option<&ext::DebugUtils> { self.debug_utils_ext.as_ref() }
+
+	pub fn queue_families(&self) -> Queues<u32> { self.queues.map_ref(|data| data.family) }
+
+	pub fn graphics_queue(&self) -> MutexGuard<'_, vk::Queue> { self.queues.graphics().queue.lock().unwrap() }
+
+	pub fn compute_queue(&self) -> MutexGuard<'_, vk::Queue> { self.queues.compute().queue.lock().unwrap() }
+
+	pub fn transfer_queue(&self) -> MutexGuard<'_, vk::Queue> { self.queues.transfer().queue.lock().unwrap() }
+
+	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.allocator.lock().unwrap() }
+
+	pub fn descriptors(&self) -> &Descriptors { &self.descriptors }
+
+	pub fn needs_queue_ownership_transfer(&self) -> bool { self.queues.need_ownership_transfer() }
 
 	/// # Safety
 	/// Thread-safety is handled, nothing else is.
-	pub unsafe fn submit_graphics(&self, submits: &[SubmitInfo2], fence: Fence) -> Result<()> {
-		match &self.queues {
-			Queues::Single(graphics) => unsafe {
-				self.device
-					.queue_submit2(*graphics.queue.lock().unwrap(), submits, fence)
-			}?,
-			Queues::Separate { graphics, .. } => unsafe {
-				self.device
-					.queue_submit2(*graphics.queue.lock().unwrap(), submits, fence)
-			}?,
-		}
+	pub unsafe fn submit(&self, ty: QueueType, submits: &[vk::SubmitInfo2], fence: vk::Fence) -> Result<()> {
+		let queue = self.queues.get(ty);
+		self.device
+			.queue_submit2(*queue.queue.lock().unwrap(), submits, fence)?;
 
 		Ok(())
 	}
 
 	/// # Safety
 	/// Thread-safety is handled, nothing else is.
-	pub unsafe fn submit_compute(&self, submits: &[SubmitInfo2], fence: Fence) -> Result<()> {
-		match &self.queues {
-			Queues::Single(compute) => unsafe {
-				self.device
-					.queue_submit2(*compute.queue.lock().unwrap(), submits, fence)
-			}?,
-			Queues::Separate { compute, .. } => unsafe {
-				self.device
-					.queue_submit2(*compute.queue.lock().unwrap(), submits, fence)
-			}?,
-		}
+	pub unsafe fn submit_graphics(&self, submits: &[vk::SubmitInfo2], fence: vk::Fence) -> Result<()> {
+		let queue = self.queues.graphics();
+		self.device
+			.queue_submit2(*queue.queue.lock().unwrap(), submits, fence)?;
 
 		Ok(())
 	}
 
 	/// # Safety
 	/// Thread-safety is handled, nothing else is.
-	pub unsafe fn submit_transfer(&self, submits: &[SubmitInfo2], fence: Fence) -> Result<()> {
-		match &self.queues {
-			Queues::Single(transfer) => unsafe {
-				self.device
-					.queue_submit2(*transfer.queue.lock().unwrap(), submits, fence)
-			}?,
-			Queues::Separate { transfer, .. } => unsafe {
-				self.device
-					.queue_submit2(*transfer.queue.lock().unwrap(), submits, fence)
-			}?,
-		}
+	pub unsafe fn submit_compute(&self, submits: &[vk::SubmitInfo2], fence: vk::Fence) -> Result<()> {
+		let queue = self.queues.compute();
+		self.device
+			.queue_submit2(*queue.queue.lock().unwrap(), submits, fence)?;
+
+		Ok(())
+	}
+
+	/// # Safety
+	/// Thread-safety is handled, nothing else is.
+	pub unsafe fn submit_transfer(&self, submits: &[vk::SubmitInfo2], fence: vk::Fence) -> Result<()> {
+		let queue = self.queues.transfer();
+		self.device
+			.queue_submit2(*queue.queue.lock().unwrap(), submits, fence)?;
 
 		Ok(())
 	}

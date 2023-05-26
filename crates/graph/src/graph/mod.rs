@@ -2,11 +2,12 @@
 
 use std::{
 	alloc::{Allocator, Layout},
+	ffi::CStr,
 	hash::BuildHasherDefault,
 	marker::PhantomData,
 };
 
-use ash::vk::{CommandBuffer, PipelineStageFlags2, Semaphore, SemaphoreSubmitInfo, SemaphoreWaitInfo};
+use ash::vk;
 use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 use tracing::{span, Level};
@@ -52,7 +53,7 @@ const FRAMES_IN_FLIGHT: usize = 2;
 /// A snapshot of the GPU execution state of the render graph.
 #[derive(Default)]
 pub struct ExecutionSnapshot {
-	semaphores: [Semaphore; FRAMES_IN_FLIGHT],
+	semaphores: [vk::Semaphore; FRAMES_IN_FLIGHT],
 	values: [u64; FRAMES_IN_FLIGHT],
 }
 
@@ -68,7 +69,7 @@ impl ExecutionSnapshot {
 	pub fn wait(&self, device: &Device) -> Result<()> {
 		unsafe {
 			device.device().wait_semaphores(
-				&SemaphoreWaitInfo::builder()
+				&vk::SemaphoreWaitInfo::builder()
 					.semaphores(&self.semaphores)
 					.values(&self.values),
 				u64::MAX,
@@ -78,14 +79,14 @@ impl ExecutionSnapshot {
 		}
 	}
 
-	pub fn as_submit_info<'a>(&self) -> [SemaphoreSubmitInfo; FRAMES_IN_FLIGHT] {
-		let mut out = [SemaphoreSubmitInfo::default(); FRAMES_IN_FLIGHT];
+	pub fn as_submit_info<'a>(&self) -> [vk::SemaphoreSubmitInfo; FRAMES_IN_FLIGHT] {
+		let mut out = [vk::SemaphoreSubmitInfo::default(); FRAMES_IN_FLIGHT];
 
 		for (i, (&sem, &value)) in self.semaphores.iter().zip(self.values.iter()).enumerate() {
-			out[i] = SemaphoreSubmitInfo::builder()
+			out[i] = vk::SemaphoreSubmitInfo::builder()
 				.semaphore(sem)
 				.value(value)
-				.stage_mask(PipelineStageFlags2::ALL_COMMANDS)
+				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
 				.build();
 		}
 
@@ -142,7 +143,7 @@ impl RenderGraph {
 	pub fn snapshot(&self) -> ExecutionSnapshot {
 		ExecutionSnapshot {
 			semaphores: {
-				let mut x = [Semaphore::null(); FRAMES_IN_FLIGHT];
+				let mut x = [vk::Semaphore::null(); FRAMES_IN_FLIGHT];
 				for (x, frame) in x.iter_mut().zip(self.frame_data.iter()) {
 					*x = frame.semaphore.semaphore();
 				}
@@ -195,6 +196,8 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 		let name = name.as_bytes().iter().copied().chain([0]);
 		PassBuilder {
 			name: name.collect_in(arena),
+			wait: Vec::new_in(arena),
+			signal: Vec::new_in(arena),
 			frame: self,
 		}
 	}
@@ -219,6 +222,9 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			graph,
 		} = self.compile(device)?;
 
+		let span = span!(Level::TRACE, "run passes");
+		let _e = span.enter();
+
 		let mut submitter = Submitter::new(arena, sync, &mut graph.frame_data, graph.curr_frame);
 
 		for (i, pass) in passes.into_iter().enumerate() {
@@ -229,6 +235,17 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 
 				let buf = submitter.pass(&device)?;
 
+				#[cfg(debug_assertions)]
+				unsafe {
+					if let Some(debug) = device.debug_utils_ext() {
+						debug.cmd_begin_debug_utils_label(
+							buf,
+							&vk::DebugUtilsLabelEXT::builder()
+								.label_name(&CStr::from_bytes_with_nul_unchecked(&pass.name)),
+						);
+					}
+				}
+
 				(pass.callback)(PassContext {
 					arena,
 					device,
@@ -238,6 +255,13 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 					resource_map: &mut resource_map,
 					caches: &mut graph.caches,
 				});
+
+				#[cfg(debug_assertions)]
+				unsafe {
+					if let Some(debug) = device.debug_utils_ext() {
+						debug.cmd_end_debug_utils_label(buf);
+					}
+				}
 			}
 		}
 
@@ -246,7 +270,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 				unsafe {
 					device
 						.device()
-						.cmd_reset_event2(buf, event, PipelineStageFlags2::ALL_COMMANDS);
+						.cmd_reset_event2(buf, event, vk::PipelineStageFlags2::ALL_COMMANDS);
 				}
 			}
 		})?;
@@ -258,9 +282,18 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	}
 }
 
+#[derive(Copy, Clone)]
+pub struct SemaphoreInfo {
+	pub semaphore: vk::Semaphore,
+	pub value: u64,
+	pub stage: vk::PipelineStageFlags2KHR,
+}
+
 /// A builder for a pass.
 pub struct PassBuilder<'frame, 'pass, 'graph> {
 	name: Vec<u8, &'graph Arena>,
+	wait: Vec<SemaphoreInfo, &'graph Arena>,
+	signal: Vec<SemaphoreInfo, &'graph Arena>,
 	frame: &'frame mut Frame<'pass, 'graph>,
 }
 
@@ -330,10 +363,18 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		)
 	}
 
+	/// Wait on an external semaphore before executing this pass.
+	pub fn wait_on(&mut self, info: SemaphoreInfo) { self.wait.push(info); }
+
+	/// Signal an external semaphore after executing this pass.
+	pub fn signal(&mut self, info: SemaphoreInfo) { self.signal.push(info); }
+
 	/// Build the pass with the given callback.
 	pub fn build(self, callback: impl FnOnce(PassContext) + 'pass) {
 		let pass = PassData {
 			name: self.name,
+			wait: self.wait,
+			signal: self.signal,
 			callback: Box::new_in(callback, self.frame.arena),
 		};
 		self.frame.passes.push(pass);
@@ -344,7 +385,7 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 pub struct PassContext<'frame, 'graph> {
 	pub arena: &'graph Arena,
 	pub device: &'frame Device,
-	pub buf: CommandBuffer,
+	pub buf: vk::CommandBuffer,
 	base_id: usize,
 	pass: u32,
 	resource_map: &'frame mut ResourceMap<'graph>,
@@ -482,6 +523,8 @@ impl<T: VirtualResource> Clone for ReadId<T> {
 struct PassData<'pass, 'graph> {
 	// UTF-8 encoded, null terminated.
 	name: Vec<u8, &'graph Arena>,
+	wait: Vec<SemaphoreInfo, &'graph Arena>,
+	signal: Vec<SemaphoreInfo, &'graph Arena>,
 	callback: Box<dyn FnOnce(PassContext) + 'pass, &'graph Arena>,
 }
 
