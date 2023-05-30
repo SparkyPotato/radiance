@@ -1,4 +1,5 @@
 use ash::vk;
+use tracing::{span, Level};
 
 use crate::{
 	arena::{Arena, IteratorAlloc},
@@ -237,6 +238,9 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 	fn submit_inner(&mut self, device: &Device, signal: &[vk::SemaphoreSubmitInfo]) -> Result<()> {
 		unsafe {
 			if self.buf != vk::CommandBuffer::null() {
+				let span = span!(Level::TRACE, "submit");
+				let _e = span.enter();
+
 				device.device().end_command_buffer(self.buf)?;
 				device.submit_graphics(
 					&[vk::SubmitInfo2::builder()

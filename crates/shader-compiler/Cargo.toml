@@ -5,11 +5,12 @@ edition = "2021"
 
 [features]
 runtime = ["ash"]
-compile = ["dep:hassle-rs", "dep:serde", "dep:serde_json"]
+compile = ["dep:hassle-rs", "dep:serde", "dep:serde_json", "dep:cargo_toml"]
 build-script = ["compile"]
 
 [dependencies]
 ash = { version = "0.37.2", optional = true }
+cargo_toml = { version = "0.15.2", optional = true }
 hassle-rs = { path = "../../../hassle-rs", optional = true }
 rspirv = "0.11.0"
 rustc-hash = "1.1.0"

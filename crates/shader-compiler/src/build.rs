@@ -1,40 +1,55 @@
-use crate::compile::ShaderModuleBuilder;
+//! Utilities for compiling shaders in a build script.
 
-pub fn for_build_script(name: impl ToString) -> ShaderModuleBuilder {
-	let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-	println!("cargo:rerun-if-changed={}/shader", root);
-	ShaderModuleBuilder::new(name, root, std::env::var("OUT_DIR").unwrap()).unwrap()
-}
+use crate::compile::ShaderBuilder;
 
-pub fn export_env_var(builder: ShaderModuleBuilder) {
-	let var_name = format!("{}_OUTPUT_PATH", builder.vfs.name);
-	println!(
-		"cargo:rustc-env={}={}",
-		var_name,
-		builder.vfs.output.join(format!("{}.spv", builder.vfs.name)).display()
-	);
-}
+impl ShaderBuilder {
+	/// Create a new shader module builder for the build script. The name of the shader module is the same name as the
+	/// crate.
+	pub fn for_build() -> Self {
+		let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+		println!("cargo:rerun-if-changed={}/shaders", root);
 
-impl ShaderModuleBuilder {
-	pub fn build(name: impl ToString) { for_build_script(name).run_build(); }
+		let mut builder = ShaderBuilder::new().unwrap();
+		builder
+			.target(root.as_ref(), std::env::var("OUT_DIR").unwrap().as_ref())
+			.unwrap();
 
-	pub fn run_build(mut self) {
-		match self.compile_all() {
-			Ok(()) => {},
+		builder
+	}
+
+	/// Compile all shaders in the shader module.
+	///
+	/// The environment variable `name_OUTPUT_PATH` will be set to the path of the compiled shader module.
+	pub fn build(mut self) {
+		let link = match self.compile_all() {
+			Ok(x) => x,
 			Err(e) => {
 				for error in e {
 					eprintln!("{error}");
 				}
 				panic!("Failed to compile shaders");
 			},
+		};
+
+		if link {
+			match self.link() {
+				Ok(()) => {},
+				Err(e) => {
+					for error in e {
+						eprintln!("{error}");
+					}
+					panic!("Failed to link shaders");
+				},
+			}
 		}
-		match self.link() {
-			Ok(()) => {},
-			Err(e) => {
-				eprintln!("{e}");
-				panic!("Failed to link shaders");
-			},
+
+		for (name, _, out) in self.vfs.compilable_modules() {
+			let var_name = format!("{}_OUTPUT_PATH", name);
+			println!(
+				"cargo:rustc-env={}={}",
+				var_name,
+				out.parent().unwrap().join(format!("{}.spv", name)).display()
+			);
 		}
-		export_env_var(self)
 	}
 }

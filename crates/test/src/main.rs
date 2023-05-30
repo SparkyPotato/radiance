@@ -1,7 +1,7 @@
 use std::{mem::ManuallyDrop, time::Instant};
 
 use radiance_graph::{arena::Arena, device::Device, graph::RenderGraph, Result};
-use tracing_subscriber::{fmt, fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter};
+use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 use winit::{
 	event::{Event, WindowEvent},
 	event_loop::{ControlFlow, EventLoop},
@@ -26,8 +26,8 @@ struct State {
 impl State {
 	pub fn new(event_loop: &EventLoop<()>, window: winit::window::Window) -> Result<Self> {
 		let (device, surface) = unsafe { Device::with_window(&window, &event_loop)? };
-		let window = ManuallyDrop::new(Window::new(&device, window, surface)?);
 		let graph = ManuallyDrop::new(RenderGraph::new(&device)?);
+		let window = ManuallyDrop::new(Window::new(&device, &graph, window, surface)?);
 		let ui = ManuallyDrop::new(UiHandler::new(&device, &event_loop, &window)?);
 
 		Ok(Self {
@@ -51,11 +51,13 @@ impl Drop for State {
 
 fn main() {
 	let _ = tracing::subscriber::set_global_default(
-		fmt()
-			.pretty()
-			.with_env_filter(EnvFilter::from_env("RADLOG"))
-			.with_span_events(FmtSpan::CLOSE)
-			.finish()
+		Registry::default()
+			.with(
+				tracing_subscriber::fmt::layer()
+					.pretty()
+					.with_span_events(FmtSpan::CLOSE)
+					.with_filter(EnvFilter::from_env("RADLOG")),
+			)
 			.with(tracy::tracing::TracyLayer),
 	);
 
@@ -88,7 +90,7 @@ fn main() {
 				.unwrap();
 
 			frame.run(&state.device).unwrap();
-			state.window.present(&state.device, id, &state.graph).unwrap();
+			state.window.present(&state.device, id).unwrap();
 			tracy::frame!();
 		},
 		Event::WindowEvent { event, .. } => {

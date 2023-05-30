@@ -45,6 +45,7 @@ use radiance_shader_compiler::{
 };
 use radiance_util::staging::{ImageStage, StageTicket, Staging};
 use rustc_hash::FxHashMap;
+use tracing::{span, Level};
 use vek::Vec2;
 
 const SHADERS: ShaderBlob = shader!("radiance-egui");
@@ -197,6 +198,9 @@ impl Renderer {
 		&'pass mut self, frame: &mut Frame<'pass, '_>, device: &Device, tris: Vec<ClippedPrimitive>,
 		delta: TexturesDelta, screen: ScreenDescriptor, out: D,
 	) {
+		let span = span!(Level::TRACE, "setup ui pass");
+		let _e = span.enter();
+
 		self.snapshot = frame.graph().snapshot();
 		let (vertices, indices) = tris
 			.iter()
@@ -214,10 +218,9 @@ impl Renderer {
 			self.index_size *= 2;
 		}
 
-		self.staging.poll(device).unwrap();
-
 		let arena = frame.arena();
-		let mut pass = frame.pass("UI Render");
+		let mut pass = frame.pass("ui");
+
 		let (_, vertex) = pass.output(
 			UploadBufferDesc { size: self.vertex_size },
 			BufferUsage {
@@ -240,6 +243,7 @@ impl Renderer {
 			},
 		);
 
+		self.staging.poll(device).unwrap();
 		if let Some(ticket) = self.generate_images(device, arena, delta) {
 			pass.wait_on(ticket.as_info());
 		}
@@ -384,6 +388,9 @@ impl Renderer {
 	unsafe fn generate_buffers(
 		mut vertex: UploadBufferHandle, mut index: UploadBufferHandle, tris: &[ClippedPrimitive],
 	) {
+		let span = span!(Level::TRACE, "upload ui buffers");
+		let _e = span.enter();
+
 		let mut vertices_written = 0;
 		let mut vertex_slice = vertex.data.as_mut();
 		let mut index_slice = index.data.as_mut();
@@ -406,6 +413,9 @@ impl Renderer {
 	}
 
 	fn generate_images<'a>(&mut self, device: &Device, arena: &'a Arena, delta: TexturesDelta) -> Option<StageTicket> {
+		let span = span!(Level::TRACE, "upload ui images");
+		let _e = span.enter();
+
 		let ticket = if !delta.set.is_empty() {
 			let ticket = self
 				.staging
@@ -543,19 +553,16 @@ struct ScissorRect {
 
 impl ScissorRect {
 	fn new(clip_rect: &Rect, screen: &ScreenDescriptor) -> Self {
-		// Transform clip rect to physical pixels:
 		let clip_min_x = screen.scaling * clip_rect.min.x;
 		let clip_min_y = screen.scaling * clip_rect.min.y;
 		let clip_max_x = screen.scaling * clip_rect.max.x;
 		let clip_max_y = screen.scaling * clip_rect.max.y;
 
-		// Round to integer:
 		let clip_min_x = clip_min_x.round() as u32;
 		let clip_min_y = clip_min_y.round() as u32;
 		let clip_max_x = clip_max_x.round() as u32;
 		let clip_max_y = clip_max_y.round() as u32;
 
-		// Clamp:
 		let clip_min_x = clip_min_x.clamp(0, screen.physical_size.x);
 		let clip_min_y = clip_min_y.clamp(0, screen.physical_size.y);
 		let clip_max_x = clip_max_x.clamp(clip_min_x, screen.physical_size.x);

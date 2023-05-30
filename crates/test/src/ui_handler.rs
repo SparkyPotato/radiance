@@ -25,18 +25,20 @@ impl UiHandler {
 		&'pass mut self, frame: &mut Frame<'pass, '_>, device: &Device, window: &Window, run: impl FnOnce(&Context),
 	) -> Result<u32> {
 		let (image, id) = {
-			tracy::zone!("Swapchain acquire");
+			tracy::zone!("swapchain acquire");
 			window.acquire()?
 		};
 
-		tracy::zone!("UI Render");
-
 		let output = self.ctx.run(self.platform_state.take_egui_input(&window.window), run);
-		self.platform_state
-			.handle_platform_output(&window.window, &self.ctx, output.platform_output);
+
+		{
+			tracy::zone!("handle window output");
+			self.platform_state
+				.handle_platform_output(&window.window, &self.ctx, output.platform_output);
+		}
 
 		let tris = {
-			tracy::zone!("Tessellate shapes");
+			tracy::zone!("tessellate shapes");
 			self.ctx.tessellate(output.shapes)
 		};
 

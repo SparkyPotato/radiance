@@ -2,7 +2,6 @@
 
 use std::{
 	alloc::{Allocator, Layout},
-	ffi::CStr,
 	hash::BuildHasherDefault,
 	marker::PhantomData,
 };
@@ -241,7 +240,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 						debug.cmd_begin_debug_utils_label(
 							buf,
 							&vk::DebugUtilsLabelEXT::builder()
-								.label_name(&CStr::from_bytes_with_nul_unchecked(&pass.name)),
+								.label_name(&std::ffi::CStr::from_bytes_with_nul_unchecked(&pass.name)),
 						);
 					}
 				}

@@ -1,3 +1,3 @@
-use radiance_shader_compiler::compile::ShaderModuleBuilder;
+use radiance_shader_compiler::compile::ShaderBuilder;
 
-fn main() { ShaderModuleBuilder::build("radiance-egui"); }
+fn main() { ShaderBuilder::for_build().build(); }

@@ -26,7 +26,7 @@ use radiance_graph::{
 
 struct OldSwapchain {
 	swapchain: SwapchainKHR,
-	snapshot: Option<ExecutionSnapshot>,
+	snapshot: ExecutionSnapshot,
 }
 
 pub struct Window {
@@ -42,7 +42,9 @@ pub struct Window {
 }
 
 impl Window {
-	pub fn new(device: &Device, window: winit::window::Window, surface: SurfaceKHR) -> Result<Self> {
+	pub fn new(
+		device: &Device, graph: &RenderGraph, window: winit::window::Window, surface: SurfaceKHR,
+	) -> Result<Self> {
 		let swapchain_ext = khr::Swapchain::new(device.instance(), device.device());
 		let mut this = Self {
 			window,
@@ -51,14 +53,14 @@ impl Window {
 			swapchain: SwapchainKHR::null(),
 			old_swapchain: OldSwapchain {
 				swapchain: SwapchainKHR::null(),
-				snapshot: None,
+				snapshot: ExecutionSnapshot::default(),
 			},
 			images: Vec::new(),
 			available: semaphore(device),
 			rendered: semaphore(device),
 			format: Format::UNDEFINED,
 		};
-		this.make(device)?;
+		this.make(device, graph)?;
 		Ok(this)
 	}
 
@@ -88,17 +90,9 @@ impl Window {
 		}
 	}
 
-	pub fn present(&mut self, device: &Device, id: u32, graph: &RenderGraph) -> Result<()> {
+	pub fn present(&mut self, device: &Device, id: u32) -> Result<()> {
 		unsafe {
-			if let Some(snapshot) = self.old_swapchain.snapshot.take() {
-				if snapshot.is_complete(graph) {
-					self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
-					self.old_swapchain = OldSwapchain {
-						swapchain: SwapchainKHR::null(),
-						snapshot: None,
-					};
-				}
-			}
+			self.cleanup_old(device)?;
 
 			self.swapchain_ext.queue_present(
 				*device.graphics_queue(),
@@ -115,20 +109,7 @@ impl Window {
 
 	pub fn format(&self) -> Format { self.format }
 
-	pub fn resize(&mut self, device: &Device, graph: &RenderGraph) -> Result<()> {
-		if let Some(snapshot) = self.old_swapchain.snapshot.take() {
-			snapshot.wait(device)?;
-			unsafe {
-				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
-			}
-		}
-
-		self.old_swapchain = OldSwapchain {
-			swapchain: self.swapchain,
-			snapshot: Some(graph.snapshot()),
-		};
-		self.make(device)
-	}
+	pub fn resize(&mut self, device: &Device, graph: &RenderGraph) -> Result<()> { self.make(device, graph) }
 
 	pub fn destroy(&mut self, device: &Device) {
 		unsafe {
@@ -140,8 +121,25 @@ impl Window {
 		}
 	}
 
-	fn make(&mut self, device: &Device) -> Result<()> {
+	fn cleanup_old(&mut self, device: &Device) -> Result<()> {
+		if self.old_swapchain.swapchain != SwapchainKHR::null() {
+			self.old_swapchain.snapshot.wait(device)?;
+			unsafe {
+				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
+			}
+			self.old_swapchain.swapchain = SwapchainKHR::null();
+		}
+
+		Ok(())
+	}
+
+	fn make(&mut self, device: &Device, graph: &RenderGraph) -> Result<()> {
 		unsafe {
+			let size = self.window.inner_size();
+			if size.height == 0 || size.width == 0 {
+				return Ok(());
+			}
+
 			let surface_ext = device.surface_ext().unwrap();
 			let capabilities =
 				surface_ext.get_physical_device_surface_capabilities(device.physical_device(), self.surface)?;
@@ -155,6 +153,14 @@ impl Window {
 				.map(|format| (format.format, format.color_space))
 				.unwrap_or((formats[0].format, formats[0].color_space));
 
+			self.cleanup_old(device)?;
+			if self.swapchain != SwapchainKHR::null() {
+				self.old_swapchain = OldSwapchain {
+					swapchain: self.swapchain,
+					snapshot: graph.snapshot(),
+				};
+			}
+
 			self.swapchain = self
 				.swapchain_ext
 				.create_swapchain(
@@ -164,8 +170,8 @@ impl Window {
 						.image_format(format)
 						.image_color_space(color_space)
 						.image_extent(Extent2D {
-							width: self.window.inner_size().width,
-							height: self.window.inner_size().height,
+							width: size.width,
+							height: size.height,
 						})
 						.image_array_layers(1)
 						.image_usage(ImageUsageFlags::COLOR_ATTACHMENT) // Check
