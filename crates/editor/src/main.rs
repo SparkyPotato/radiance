@@ -1,4 +1,4 @@
-use std::{mem::ManuallyDrop, time::Instant};
+use std::mem::ManuallyDrop;
 
 use radiance_graph::{arena::Arena, device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
@@ -8,11 +8,12 @@ use winit::{
 	window::WindowBuilder,
 };
 
-use crate::{ui_handler::UiHandler, window::Window};
+use crate::{ui::UiState, ui_handler::UiHandler, window::Window};
 
 #[global_allocator]
 static ALLOC: tracy::alloc::GlobalAllocator = tracy::alloc::GlobalAllocator::new();
 
+mod ui;
 mod ui_handler;
 mod window;
 
@@ -25,10 +26,10 @@ struct State {
 
 impl State {
 	pub fn new(event_loop: &EventLoop<()>, window: winit::window::Window) -> Result<Self> {
-		let (device, surface) = unsafe { Device::with_window(&window, &event_loop)? };
+		let (device, surface) = unsafe { Device::with_window(&window, event_loop)? };
 		let graph = ManuallyDrop::new(RenderGraph::new(&device)?);
 		let window = ManuallyDrop::new(Window::new(&device, &graph, window, surface)?);
-		let ui = ManuallyDrop::new(UiHandler::new(&device, &event_loop, &window)?);
+		let ui = ManuallyDrop::new(UiHandler::new(&device, event_loop, &window)?);
 
 		Ok(Self {
 			device,
@@ -63,30 +64,23 @@ fn main() {
 
 	let event_loop = EventLoop::new();
 	let window = WindowBuilder::new()
-		.with_title("radiance-test")
+		.with_title("radiance-editor")
 		.build(&event_loop)
 		.unwrap();
 
 	let mut state = State::new(&event_loop, window).unwrap();
+	let mut ui = UiState::new(state.ui.icon().clone());
 	let mut arena = Arena::new();
 
-	let mut prev = Instant::now();
 	event_loop.run(move |event, _, flow| match event {
 		Event::MainEventsCleared => state.window.request_redraw(),
 		Event::RedrawRequested(_) => {
-			let dt = prev.elapsed();
-			prev = Instant::now();
-
 			arena.reset();
 			let mut frame = state.graph.frame(&arena);
 
 			let id = state
 				.ui
-				.run(&mut frame, &state.device, &state.window, |ctx| {
-					egui::Window::new("sus").show(&ctx, |ui| {
-						ui.label("sus");
-					});
-				})
+				.run(&mut frame, &state.device, &state.window, |ctx| ui.render(ctx))
 				.unwrap();
 
 			frame.run(&state.device).unwrap();

@@ -26,21 +26,21 @@ macro_rules! gen_usage_enums {
 		pub enum CommonUsage { $($(#[$common_doc:meta])* $common_name:ident $(( $common_tt:tt ))?,)* };
 	) => {
 		/// Defines all potential buffer usages.
-		#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+		#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 		pub enum BufferUsage {
 			$($(#[$buffer_doc])* $buffer_only_name $(( $buffer_only_tt ))?,)*
 			$($(#[$common_doc])* $common_name $(( $common_tt ))?,)*
 		}
 
 		/// Defines all potential image usages.
-		#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+		#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 		pub enum ImageUsage {
 			$($(#[$image_doc])* $image_only_name $(( $image_only_tt ))?,)*
 			$($(#[$common_doc])* $common_name $(( $common_tt ))?,)*
 		}
 
 		/// Defines all potential resource usages.
-		#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+		#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
 		pub enum UsageType {
 			$($(#[$buffer_doc])* $buffer_only_name $(( $buffer_only_tt ))?,)*
 			$($(#[$image_doc])* $image_only_name $(( $image_only_tt ))?,)*
@@ -118,12 +118,9 @@ gen_usage_enums! {
 		/// Written as the destination of a transfer operation.
 		TransferWrite,
 		/// Covers any access - useful for debug, generally avoid for performance reasons.
+		#[default]
 		General,
 	};
-}
-
-impl Default for UsageType {
-	fn default() -> Self { UsageType::Nothing }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
@@ -336,17 +333,17 @@ impl ImageUsage {
 pub fn get_access_info(usage: UsageType) -> AccessInfo { usage.into() }
 
 pub fn is_write_access(usage: UsageType) -> bool {
-	match usage {
-		UsageType::ShaderStorageWrite(_) => true,
-		UsageType::ColorAttachmentWrite => true,
-		UsageType::DepthStencilAttachmentWrite => true,
-		UsageType::DepthAttachmentWriteStencilReadOnly => true,
-		UsageType::StencilAttachmentWriteDepthReadOnly => true,
-		UsageType::TransferWrite => true,
-		UsageType::HostWrite => true,
-		UsageType::General => true,
-		_ => false,
-	}
+	matches!(
+		usage,
+		UsageType::ShaderStorageWrite(_)
+			| UsageType::ColorAttachmentWrite
+			| UsageType::DepthStencilAttachmentWrite
+			| UsageType::DepthAttachmentWriteStencilReadOnly
+			| UsageType::StencilAttachmentWriteDepthReadOnly
+			| UsageType::TransferWrite
+			| UsageType::HostWrite
+			| UsageType::General
+	)
 }
 
 fn get_pipeline_stage(shader: Shader) -> vk::PipelineStageFlags2 { shader.into() }
@@ -365,12 +362,13 @@ fn get_pipeline_stage(shader: Shader) -> vk::PipelineStageFlags2 { shader.into()
 /// An image barrier defining a queue ownership transfer needs to be executed
 /// twice - once by a queue in the source queue family, and then once again by a
 /// queue in the destination queue family, with a semaphore guaranteeing
-/// execution order between them.
+/// execution order between them. The release barrier must also have no `next_access`, and the acquire barrier must have
+/// no `previous_access`.
 ///
 /// If `discard_contents` is set to true, the contents of the image become
 /// undefined after the barrier is executed, which can result in a performance
 /// boost over attempting to preserve the contents.
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ImageBarrier<'a> {
 	pub previous_usages: &'a [UsageType],
 	pub next_usages: &'a [UsageType],
@@ -379,6 +377,20 @@ pub struct ImageBarrier<'a> {
 	pub dst_queue_family_index: u32,
 	pub image: vk::Image,
 	pub range: vk::ImageSubresourceRange,
+}
+
+impl Default for ImageBarrier<'_> {
+	fn default() -> Self {
+		Self {
+			previous_usages: &[],
+			next_usages: &[],
+			discard_contents: false,
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			image: vk::Image::null(),
+			range: vk::ImageSubresourceRange::default(),
+		}
+	}
 }
 
 impl From<ImageBarrier<'_>> for vk::ImageMemoryBarrier2 {
@@ -417,12 +429,13 @@ impl From<ImageBarrier<'_>> for vk::ImageMemoryBarrier2 {
 /// An image barrier defining a queue ownership transfer needs to be executed
 /// twice - once by a queue in the source queue family, and then once again by a
 /// queue in the destination queue family, with a semaphore guaranteeing
-/// execution order between them.
+/// execution order between them. The release barrier must also have no `next_access`, and the acquire barrier must have
+/// no `previous_access`.
 ///
 /// If `discard_contents` is set to true, the contents of the image become
 /// undefined after the barrier is executed, which can result in a performance
 /// boost over attempting to preserve the contents.
-#[derive(Debug, Default, Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ImageBarrierAccess {
 	pub previous_access: AccessInfo,
 	pub next_access: AccessInfo,
@@ -430,6 +443,51 @@ pub struct ImageBarrierAccess {
 	pub dst_queue_family_index: u32,
 	pub image: vk::Image,
 	pub range: vk::ImageSubresourceRange,
+}
+
+impl Default for ImageBarrierAccess {
+	fn default() -> Self {
+		Self {
+			previous_access: Default::default(),
+			next_access: Default::default(),
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			image: vk::Image::null(),
+			range: vk::ImageSubresourceRange::default(),
+		}
+	}
+}
+
+impl ImageBarrierAccess {
+	/// As a QFOT release barrier.
+	pub fn as_release_barrier(self) -> Self {
+		Self {
+			next_access: AccessInfo {
+				image_layout: self.next_access.image_layout,
+				..Default::default()
+			},
+			..self
+		}
+	}
+
+	/// As a QFOT acquire barrier.
+	pub fn as_acquire_barrier(self) -> Self {
+		Self {
+			previous_access: AccessInfo {
+				image_layout: self.previous_access.image_layout,
+				..Default::default()
+			},
+			..self
+		}
+	}
+
+	pub fn as_no_qfot_barrier(self) -> Self {
+		Self {
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			..self
+		}
+	}
 }
 
 impl From<ImageBarrierAccess> for vk::ImageMemoryBarrier2 {

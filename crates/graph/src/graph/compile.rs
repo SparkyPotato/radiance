@@ -254,7 +254,7 @@ where
 }
 
 impl<'graph> VirtualResourceType<'graph> {
-	fn to_res(self, pass: u32) -> ResourceDescType<'graph> {
+	fn into_res(self, pass: u32) -> ResourceDescType<'graph> {
 		match self {
 			VirtualResourceType::Data(ptr) => ResourceDescType::Data(ptr),
 			VirtualResourceType::UploadBuffer(desc) => ResourceDescType::UploadBuffer(BufferDesc {
@@ -390,7 +390,7 @@ struct ResourceDesc<'graph> {
 impl<'graph> From<VirtualResourceData<'graph>> for ResourceDesc<'graph> {
 	fn from(value: VirtualResourceData<'graph>) -> Self {
 		Self {
-			ty: value.ty.to_res(value.lifetime.start),
+			ty: value.ty.into_res(value.lifetime.start),
 			lifetime: value.lifetime,
 		}
 	}
@@ -713,7 +713,6 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 						},
 						src_queue_family_index,
 						dst_queue_family_index,
-						..Default::default()
 					}
 					.into()
 				})

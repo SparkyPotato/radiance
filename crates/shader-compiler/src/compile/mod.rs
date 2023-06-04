@@ -62,11 +62,16 @@ impl ShaderBuilder {
 		let virtual_path = self.vfs.unresolve_source(file).unwrap();
 
 		if let Some(ty) = ty {
-			let args: Vec<_> = ["-spirv", "-fspv-target-env=vulkan1.3", "-HV 2021"]
-				.into_iter()
-				.map(|x| x.to_string())
-				.chain(Some(format!("-T {}", ty.target_profile())))
-				.collect();
+			let args: Vec<_> = [
+				"-spirv",
+				"-fspv-target-env=vulkan1.3",
+				"-HV 2021",
+				"-enable-16bit-types",
+			]
+			.into_iter()
+			.map(|x| x.to_string())
+			.chain(Some(format!("-T {}", ty.target_profile())))
+			.collect();
 			let args: Vec<_> = args.iter().map(|x| x.as_str()).collect();
 			let mut handler = IncludeHandler::new(&self.vfs, &mut self.dependencies, &virtual_path);
 
@@ -134,7 +139,7 @@ impl ShaderBuilder {
 				let virtual_path = self.vfs.unresolve_source(path).unwrap();
 				let output_path = self.vfs.resolve_output(&virtual_path).unwrap();
 
-				if let Some(meta) = std::fs::metadata(output_path).ok() {
+				if let Ok(meta) = std::fs::metadata(output_path) {
 					if meta.modified().unwrap() < file.metadata().unwrap().modified().unwrap() {
 						compile_queue.push(path.to_path_buf());
 						compile_queue.extend(
@@ -174,7 +179,7 @@ impl ShaderBuilder {
 				let files: Vec<_> = WalkDir::new(module_out)
 					.into_iter()
 					.filter_map(|e| e.ok())
-					.filter_map(|e| match e.path().extension().map(|x| x.to_str()).flatten() {
+					.filter_map(|e| match e.path().extension().and_then(|x| x.to_str()) {
 						Some("spv") => Some(e.path().as_os_str().to_owned()),
 						_ => None,
 					})
@@ -240,7 +245,7 @@ impl<'a> IncludeHandler<'a> {
 	}
 
 	fn load(&mut self, filename: &Path) -> Option<String> {
-		match std::fs::read_to_string(&filename) {
+		match std::fs::read_to_string(filename) {
 			Ok(source) => {
 				self.deps.add(self.curr, self.vfs.unresolve_source(filename)?);
 				Some(source)

@@ -1,4 +1,6 @@
-use egui::Context;
+use std::sync::Arc;
+
+use egui::{Context, FontData, FontDefinitions, FontFamily};
 use radiance_egui::ScreenDescriptor;
 use radiance_graph::{device::Device, graph::Frame, Result};
 use vek::Vec2;
@@ -10,16 +12,41 @@ pub struct UiHandler {
 	ctx: Context,
 	platform_state: egui_winit::State,
 	renderer: radiance_egui::Renderer,
+	icon: Arc<str>,
 }
 
 impl UiHandler {
 	pub fn new(device: &Device, event_loop: &EventLoop<()>, window: &Window) -> Result<Self> {
+		let mut ctx = Context::default();
+		let mut fonts = FontDefinitions::empty();
+		fonts.font_data.insert(
+			"Inter".to_string(),
+			FontData::from_static(include_bytes!("../fonts/Inter/Inter-Regular.otf")),
+		);
+		fonts.font_data.insert(
+			"Font Awesome".to_string(),
+			FontData::from_static(include_bytes!(
+				"../fonts/Font Awesome/Font Awesome 6 Free-Solid-900.otf"
+			)),
+		);
+		let icon: Arc<str> = Arc::from("Icon");
+		fonts
+			.families
+			.insert(FontFamily::Proportional, vec!["Inter".to_string()]);
+		fonts
+			.families
+			.insert(FontFamily::Name(icon.clone()), vec!["Font Awesome".to_string()]);
+		ctx.set_fonts(fonts);
+
 		Ok(Self {
-			ctx: Context::default(),
+			ctx,
 			platform_state: egui_winit::State::new(event_loop),
 			renderer: radiance_egui::Renderer::new(device, window.format())?,
+			icon,
 		})
 	}
+
+	pub fn icon(&self) -> &Arc<str> { &self.icon }
 
 	pub fn run<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, device: &Device, window: &Window, run: impl FnOnce(&Context),

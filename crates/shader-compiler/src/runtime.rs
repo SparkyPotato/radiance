@@ -52,9 +52,11 @@ impl ShaderRuntime {
 		Self { modules }
 	}
 
-	pub unsafe fn destroy(self, device: &ash::Device) {
+	pub fn destroy(self, device: &ash::Device) {
 		for module in self.modules.values() {
-			device.destroy_shader_module(*module, None);
+			unsafe {
+				device.destroy_shader_module(*module, None);
+			}
 		}
 	}
 

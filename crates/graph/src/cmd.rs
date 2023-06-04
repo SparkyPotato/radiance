@@ -26,6 +26,10 @@ impl CommandPool {
 		})
 	}
 
+	/// Reset the command pool.
+	///
+	/// # Safety
+	/// All command buffers previously allocated by a call to [`Self::next`] must not be used anymore.
 	pub unsafe fn reset(&mut self, device: &Device) -> Result<()> {
 		device
 			.device()
@@ -55,5 +59,7 @@ impl CommandPool {
 		}
 	}
 
+	/// # Safety
+	/// This invalidates all command buffers allocated from this pool, and must also be synchronized correctly.
 	pub unsafe fn destroy(self, device: &Device) { device.device().destroy_command_pool(self.pool, None); }
 }

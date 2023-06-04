@@ -251,6 +251,8 @@ impl Renderer {
 		pass.build(move |ctx| unsafe { self.execute(ctx, PassIO { vertex, index, out }, &tris, &screen) });
 	}
 
+	/// # Safety
+	/// Appropriate synchronization must be performed.
 	pub unsafe fn destroy(self, device: &Device) {
 		self.staging.destroy(device);
 		for (_, (image, _, view, _)) in self.images {
@@ -399,10 +401,10 @@ impl Renderer {
 			match &prim.primitive {
 				Primitive::Mesh(m) => {
 					let bytes: &[u8] = cast_slice(&m.vertices);
-					vertex_slice.write(bytes).unwrap();
+					vertex_slice.write_all(bytes).unwrap();
 
 					for i in m.indices.iter() {
-						index_slice.write(bytes_of(&(i + vertices_written))).unwrap();
+						index_slice.write_all(bytes_of(&(i + vertices_written))).unwrap();
 					}
 
 					vertices_written += m.vertices.len() as u32;
@@ -412,7 +414,7 @@ impl Renderer {
 		}
 	}
 
-	fn generate_images<'a>(&mut self, device: &Device, arena: &'a Arena, delta: TexturesDelta) -> Option<StageTicket> {
+	fn generate_images(&mut self, device: &Device, arena: &Arena, delta: TexturesDelta) -> Option<StageTicket> {
 		let span = span!(Level::TRACE, "upload ui images");
 		let _e = span.enter();
 

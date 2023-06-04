@@ -22,7 +22,7 @@ impl VirtualPath {
 
 	pub fn get_module(&self) -> &str { self.inner.components().next().unwrap().as_os_str().to_str().unwrap() }
 
-	pub fn display(&self) -> impl Display + '_ { self.inner.to_str().expect("weird path").replace("\\", "/") }
+	pub fn display(&self) -> impl Display + '_ { self.inner.to_str().expect("weird path").replace('\\', "/") }
 }
 
 #[repr(transparent)]
@@ -160,7 +160,7 @@ impl VirtualFileSystem {
 
 fn get_cargo_package_name(root: &Path) -> Result<String, Box<dyn Error>> {
 	let manifest = root.join("Cargo.toml");
-	let manifest = cargo_toml::Manifest::from_path(&manifest)?;
-	let name = manifest.package.ok_or_else(|| "Cargo.toml has no package")?.name;
+	let manifest = cargo_toml::Manifest::from_path(manifest)?;
+	let name = manifest.package.ok_or("Cargo.toml has no package")?.name;
 	Ok(name)
 }

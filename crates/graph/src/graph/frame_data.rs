@@ -48,6 +48,7 @@ impl TimelineSemaphore {
 		}
 	}
 
+	#[allow(clippy::should_implement_trait)]
 	pub fn next(&mut self) -> (vk::Semaphore, u64) {
 		self.value += 1;
 		(self.inner, self.value)
@@ -248,7 +249,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 						.command_buffer_infos(&[vk::CommandBufferSubmitInfo::builder()
 							.command_buffer(self.buf)
 							.build()])
-						.signal_semaphore_infos(&signal)
+						.signal_semaphore_infos(signal)
 						.build()],
 					vk::Fence::null(),
 				)?;

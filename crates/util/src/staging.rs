@@ -8,7 +8,7 @@ use radiance_graph::{
 	gpu_allocator::MemoryLocation,
 	graph::{ImageUsageType, SemaphoreInfo, TimelineSemaphore},
 	resource::{Buffer, BufferDesc},
-	sync::{as_next_access, as_previous_access},
+	sync::{as_next_access, as_previous_access, get_access_info, ImageBarrierAccess, UsageType},
 	Result,
 };
 
@@ -16,6 +16,7 @@ pub struct Staging {
 	inner: CircularBuffer,
 	semaphore: TimelineSemaphore,
 	pools: Queues<CommandPool>,
+	min_granularity: vk::Extent3D,
 }
 
 pub struct StageTicket {
@@ -35,21 +36,31 @@ impl StageTicket {
 
 impl Staging {
 	pub fn new(device: &Device) -> Result<Self> {
+		let min_granularity = unsafe {
+			let props = device
+				.instance()
+				.get_physical_device_queue_family_properties(device.physical_device());
+			props[*device.queue_families().transfer() as usize].min_image_transfer_granularity
+		};
+
 		Ok(Self {
 			inner: CircularBuffer::new(device)?,
 			semaphore: TimelineSemaphore::new(device)?,
 			pools: device
 				.queue_families()
 				.try_map_ref(|&queue| CommandPool::new(device, queue))?,
+			min_granularity,
 		})
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
-		self.semaphore.wait(device).unwrap();
+	pub fn destroy(self, device: &Device) {
+		unsafe {
+			self.semaphore.wait(device).unwrap();
 
-		self.inner.destroy(device);
-		self.semaphore.destroy(device);
-		self.pools.map(|x| x.destroy(device));
+			self.inner.destroy(device);
+			self.semaphore.destroy(device);
+			self.pools.map(|x| x.destroy(device));
+		}
 	}
 
 	/// Stage some GPU resources.
@@ -68,6 +79,7 @@ impl Staging {
 				pre_bufs: self.pools.map_ref(|_| None),
 				post_bufs: self.pools.map_ref(|_| None),
 				queues: &mut self.pools,
+				min_granularity: self.min_granularity,
 			};
 			exec(&mut ctx)?;
 
@@ -116,6 +128,7 @@ pub struct StagingCtx<'a> {
 	queues: &'a mut Queues<CommandPool>,
 	pre_bufs: Queues<Option<vk::CommandBuffer>>,
 	post_bufs: Queues<Option<vk::CommandBuffer>>,
+	min_granularity: vk::Extent3D,
 }
 
 pub struct ImageStage {
@@ -153,7 +166,8 @@ impl StagingCtx<'_> {
 	///
 	/// - `discard` is whether the contents of the image before the copy will be discarded.
 	/// - `queue` is the current queue type that owns the image. Ownership will be returned to the queue.
-	pub fn stage_image<'a>(
+	#[allow(clippy::too_many_arguments)]
+	pub fn stage_image(
 		&mut self, data: &[u8], image: vk::Image, region: ImageStage, discard: bool, queue: QueueType,
 		prev_usages: &[ImageUsageType], next_usages: &[ImageUsageType],
 	) -> Result<()> {
@@ -162,6 +176,10 @@ impl StagingCtx<'_> {
 			let old_queue = *self.device.queue_families().get(queue);
 			let new_queue = *self.device.queue_families().get(QueueType::Transfer);
 
+			let previous_access = as_previous_access(prev_usages.iter().map(|&x| x.into()), discard);
+			let transfer_access = get_access_info(UsageType::TransferWrite);
+			let next_access = as_next_access(next_usages.iter().map(|&x| x.into()), previous_access);
+
 			let range = vk::ImageSubresourceRange {
 				aspect_mask: region.image_subresource.aspect_mask,
 				base_mip_level: region.image_subresource.mip_level,
@@ -169,89 +187,97 @@ impl StagingCtx<'_> {
 				base_array_layer: region.image_subresource.base_array_layer,
 				layer_count: region.image_subresource.layer_count,
 			};
-			let tbuf = self.pre_buf(QueueType::Transfer)?;
-
-			// `queue` to transfer QFOT.
-			let prev_access = as_previous_access(prev_usages.iter().map(|&x| x.into()), discard);
-			let discard = prev_access.image_layout == vk::ImageLayout::UNDEFINED;
-			let old_layout = if !discard {
-				// The release barrier is only required if the contents are to be preserved
-				self.device.device().cmd_pipeline_barrier2(
-					self.pre_buf(queue)?,
-					&vk::DependencyInfo::builder().image_memory_barriers(&[vk::ImageMemoryBarrier2::builder()
-						.image(image)
-						.subresource_range(range)
-						.old_layout(prev_access.image_layout)
-						.new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-						.src_access_mask(prev_access.access_mask)
-						.src_stage_mask(prev_access.stage_mask)
-						.build()]),
-				);
-				prev_access.image_layout
-			} else {
-				vk::ImageLayout::UNDEFINED
+			let copy = vk::BufferImageCopy {
+				buffer_offset: loc.offset as u64,
+				buffer_row_length: region.buffer_row_length,
+				buffer_image_height: region.buffer_image_height,
+				image_subresource: region.image_subresource,
+				image_offset: region.image_offset,
+				image_extent: region.image_extent,
 			};
-			let barr = vk::ImageMemoryBarrier2::builder()
-				.image(image)
-				.subresource_range(range)
-				.old_layout(old_layout)
-				.new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-				.dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-				.dst_stage_mask(vk::PipelineStageFlags2::TRANSFER);
-			self.device.device().cmd_pipeline_barrier2(
-				tbuf,
-				&vk::DependencyInfo::builder().image_memory_barriers(&[if !discard {
-					barr.src_queue_family_index(old_queue)
-						.dst_queue_family_index(new_queue)
-						.build()
-				} else {
-					barr.build()
-				}]),
-			);
 
-			self.device.device().cmd_copy_buffer_to_image(
-				tbuf,
-				loc.buffer,
+			let to_transfer = ImageBarrierAccess {
 				image,
-				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-				&[vk::BufferImageCopy {
-					buffer_offset: loc.offset as u64,
-					buffer_row_length: region.buffer_row_length,
-					buffer_image_height: region.buffer_image_height,
-					image_subresource: region.image_subresource,
-					image_offset: region.image_offset,
-					image_extent: region.image_extent,
-				}],
-			);
+				range,
+				previous_access,
+				next_access: transfer_access,
+				src_queue_family_index: old_queue,
+				dst_queue_family_index: new_queue,
+			};
+			let to_original = ImageBarrierAccess {
+				image,
+				range,
+				previous_access: transfer_access,
+				next_access,
+				src_queue_family_index: new_queue,
+				dst_queue_family_index: old_queue,
+			};
 
-			// transfer to `queue` QFOT.
-			let next_access = as_next_access(next_usages.iter().map(|&x| x.into()), prev_access);
-			self.device.device().cmd_pipeline_barrier2(
-				tbuf,
-				&vk::DependencyInfo::builder().image_memory_barriers(&[vk::ImageMemoryBarrier2::builder()
-					.image(image)
-					.subresource_range(range)
-					.old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-					.new_layout(next_access.image_layout)
-					.src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-					.src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-					.src_queue_family_index(new_queue)
-					.dst_queue_family_index(old_queue)
-					.build()]),
-			);
-			self.device.device().cmd_pipeline_barrier2(
-				self.post_buf(queue)?,
-				&vk::DependencyInfo::builder().image_memory_barriers(&[vk::ImageMemoryBarrier2::builder()
-					.image(image)
-					.subresource_range(range)
-					.old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-					.new_layout(next_access.image_layout)
-					.dst_access_mask(next_access.access_mask)
-					.dst_stage_mask(next_access.stage_mask)
-					.src_queue_family_index(new_queue)
-					.dst_queue_family_index(old_queue)
-					.build()]),
-			);
+			if old_queue == new_queue
+				|| region.image_offset.x as u32 % self.min_granularity.width != 0
+				|| region.image_offset.y as u32 % self.min_granularity.height != 0
+				|| region.image_offset.z as u32 % self.min_granularity.depth != 0
+			{
+				// We can't use multiple queues.
+				let buf = self.pre_buf(queue)?;
+				self.device.device().cmd_pipeline_barrier2(
+					buf,
+					&vk::DependencyInfo::builder().image_memory_barriers(&[to_transfer.as_no_qfot_barrier().into()]),
+				);
+				self.device.device().cmd_copy_buffer_to_image(
+					buf,
+					loc.buffer,
+					image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&[copy],
+				);
+				self.device.device().cmd_pipeline_barrier2(
+					buf,
+					&vk::DependencyInfo::builder().image_memory_barriers(&[to_original.as_no_qfot_barrier().into()]),
+				);
+			} else {
+				// `queue` to transfer QFOT.
+				let discard = previous_access.image_layout == vk::ImageLayout::UNDEFINED;
+				if !discard {
+					// The release barrier is only required if the contents are to be preserved
+					self.device.device().cmd_pipeline_barrier2(
+						self.pre_buf(queue)?,
+						&vk::DependencyInfo::builder()
+							.image_memory_barriers(&[to_transfer.as_release_barrier().into()]),
+					);
+				}
+				let tbuf = self.pre_buf(QueueType::Transfer)?;
+				let barr = to_transfer.as_acquire_barrier();
+				self.device.device().cmd_pipeline_barrier2(
+					tbuf,
+					&vk::DependencyInfo::builder().image_memory_barriers(&[if !discard {
+						barr.into()
+					} else {
+						ImageBarrierAccess {
+							src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+							dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+							..barr
+						}
+						.into()
+					}]),
+				);
+				self.device.device().cmd_copy_buffer_to_image(
+					tbuf,
+					loc.buffer,
+					image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&[copy],
+				);
+				// transfer to `queue` QFOT.
+				self.device.device().cmd_pipeline_barrier2(
+					tbuf,
+					&vk::DependencyInfo::builder().image_memory_barriers(&[to_original.as_release_barrier().into()]),
+				);
+				self.device.device().cmd_pipeline_barrier2(
+					self.post_buf(queue)?,
+					&vk::DependencyInfo::builder().image_memory_barriers(&[to_original.as_acquire_barrier().into()]),
+				);
+			}
 
 			Ok(())
 		}
@@ -339,7 +365,7 @@ impl CircularBuffer {
 		let buffer = &mut self.buffers[self.tail.buffer];
 		unsafe {
 			let mut slice = &mut buffer.mapped_ptr().unwrap().as_mut()[self.tail.offset..];
-			slice.write(data).unwrap();
+			slice.write_all(data).unwrap();
 		}
 
 		self.tail.offset += size;
@@ -448,7 +474,7 @@ fn submit(
 		device.submit(
 			ty,
 			&[vk::SubmitInfo2::builder()
-				.wait_semaphore_infos(&wait)
+				.wait_semaphore_infos(wait)
 				.command_buffer_infos(&[vk::CommandBufferSubmitInfo::builder().command_buffer(buf).build()])
 				.signal_semaphore_infos(&[vk::SemaphoreSubmitInfo::builder()
 					.semaphore(sem)

@@ -108,10 +108,7 @@ impl Device {
 
 		let (device, physical_device, queues) = Self::create_device(
 			&instance,
-			match s {
-				Some(s) => Some((surface_ext.as_ref().unwrap(), s)),
-				None => None,
-			},
+			s.map(|s| (surface_ext.as_ref().unwrap(), s)),
 			device_extensions,
 		)?;
 
@@ -166,7 +163,7 @@ impl Device {
 						&vk::ApplicationInfo::builder()
 							.application_name(CStr::from_bytes_with_nul(b"radiance\0").unwrap())
 							.engine_name(CStr::from_bytes_with_nul(b"radiance\0").unwrap())
-							.api_version(ash::vk::make_api_version(0, 1, 3, 0)),
+							.api_version(vk::make_api_version(0, 1, 3, 0)),
 					)
 					.enabled_layer_names(&layers.into_iter().map(|x| x.as_ptr()).collect::<Vec<_>>())
 					.enabled_extension_names(&extensions.into_iter().map(|x| x.as_ptr()).collect::<Vec<_>>()),
@@ -189,7 +186,7 @@ impl Device {
 				.pfn_user_callback(Some(debug_callback));
 
 			unsafe {
-				let utils = ext::DebugUtils::new(&entry, &instance);
+				let utils = ext::DebugUtils::new(entry, &instance);
 				let messenger = utils.create_debug_utils_messenger(&info, None)?;
 
 				trace!("created debug utils messenger");
@@ -209,8 +206,7 @@ impl Device {
 			if entry
 				.enumerate_instance_layer_properties()?
 				.into_iter()
-				.find(|props| unsafe { CStr::from_ptr(props.layer_name.as_ptr()) } == Self::VALIDATION_LAYER)
-				.is_some()
+				.any(|props| unsafe { CStr::from_ptr(props.layer_name.as_ptr()) } == Self::VALIDATION_LAYER)
 			{
 				Some(Self::VALIDATION_LAYER)
 			} else {
@@ -233,23 +229,23 @@ impl Device {
 		Ok(match handle {
 			Some(handle) => match handle {
 				RawWindowHandle::Win32(_) => {
-					const S: &'static [&'static CStr] = &[khr::Surface::name(), khr::Win32Surface::name()];
+					const S: &[&CStr] = &[khr::Surface::name(), khr::Win32Surface::name()];
 					S
 				},
 				RawWindowHandle::Wayland(_) => {
-					const S: &'static [&'static CStr] = &[khr::Surface::name(), khr::WaylandSurface::name()];
+					const S: &[&CStr] = &[khr::Surface::name(), khr::WaylandSurface::name()];
 					S
 				},
 				RawWindowHandle::Xlib(_) => {
-					const S: &'static [&'static CStr] = &[khr::Surface::name(), khr::XlibSurface::name()];
+					const S: &[&CStr] = &[khr::Surface::name(), khr::XlibSurface::name()];
 					S
 				},
 				RawWindowHandle::Xcb(_) => {
-					const S: &'static [&'static CStr] = &[khr::Surface::name(), khr::XcbSurface::name()];
+					const S: &[&CStr] = &[khr::Surface::name(), khr::XcbSurface::name()];
 					S
 				},
 				RawWindowHandle::AndroidNdk(_) => {
-					const S: &'static [&'static CStr] = &[khr::Surface::name(), khr::AndroidSurface::name()];
+					const S: &[&CStr] = &[khr::Surface::name(), khr::AndroidSurface::name()];
 					S
 				},
 				_ => return Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT.into()),

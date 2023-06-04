@@ -133,7 +133,7 @@ impl<T: Resource> UniqueCache<T> {
 	pub fn get(&mut self, device: &Device, desc: T::Desc) -> Result<T::Handle> {
 		match self.resources.entry(desc) {
 			Entry::Vacant(v) => {
-				let resource = T::create(device, v.key().clone())?;
+				let resource = T::create(device, *v.key())?;
 				let handle = resource.handle();
 				v.insert(TrackedResource {
 					inner: resource,

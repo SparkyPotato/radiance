@@ -96,7 +96,7 @@ pub struct ExternalSync<U> {
 }
 
 impl<U> ExternalSync<U> {
-	pub(crate) fn map<'a, F, T>(&self, f: F) -> ExternalSync<T>
+	pub(crate) fn map<F, T>(&self, f: F) -> ExternalSync<T>
 	where
 		F: FnOnce(&U) -> T,
 	{
@@ -271,8 +271,8 @@ pub struct VirtualResourceData<'graph> {
 pub trait VirtualResourceDesc {
 	type Resource: VirtualResource;
 
-	fn ty<'a, 'graph>(
-		self, write_usage: <Self::Resource as VirtualResource>::Usage<'a>, arena: &'graph Arena,
+	fn ty<'graph>(
+		self, write_usage: <Self::Resource as VirtualResource>::Usage<'_>, arena: &'graph Arena,
 	) -> VirtualResourceType<'graph>;
 }
 
@@ -281,7 +281,7 @@ pub trait VirtualResource {
 
 	unsafe fn from_res(pass: u32, res: &Resource, caches: &mut Caches, device: &Device) -> Self;
 
-	unsafe fn add_read_usage<'a>(ty: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'a>);
+	unsafe fn add_read_usage(ty: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>);
 }
 
 pub struct GpuData<'graph, T, U> {
@@ -335,7 +335,7 @@ impl VirtualResource for UploadBufferHandle {
 
 	unsafe fn from_res(_: u32, res: &Resource, _: &mut Caches, _: &Device) -> Self { res.upload_buffer() }
 
-	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'a>) {
+	unsafe fn add_read_usage(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>) {
 		let u = &mut res.ty.upload_buffer().read_usages;
 		u.insert(pass, usage.to_owned_arena(u.allocator()));
 	}
@@ -344,7 +344,7 @@ impl VirtualResource for UploadBufferHandle {
 impl VirtualResourceDesc for UploadBufferDesc {
 	type Resource = UploadBufferHandle;
 
-	fn ty<'a, 'graph>(self, write_usage: BufferUsage<'a>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(self, write_usage: BufferUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
 		VirtualResourceType::UploadBuffer(GpuData {
 			desc: self.size,
 			write_usage: write_usage.to_owned_arena(arena),
@@ -358,7 +358,7 @@ impl VirtualResource for GpuBufferHandle {
 
 	unsafe fn from_res(_: u32, res: &Resource, _: &mut Caches, _: &Device) -> Self { res.gpu_buffer().resource.handle }
 
-	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'a>) {
+	unsafe fn add_read_usage(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>) {
 		let u = &mut res.ty.gpu_buffer().read_usages;
 		u.insert(pass, usage.to_owned_arena(u.allocator()));
 	}
@@ -367,7 +367,7 @@ impl VirtualResource for GpuBufferHandle {
 impl VirtualResourceDesc for GpuBufferDesc {
 	type Resource = GpuBufferHandle;
 
-	fn ty<'a, 'graph>(self, write_usage: BufferUsage<'a>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(self, write_usage: BufferUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
 		VirtualResourceType::GpuBuffer(GpuData {
 			desc: GpuBufferType::Internal(self.size),
 			write_usage: write_usage.to_owned_arena(arena),
@@ -379,7 +379,7 @@ impl VirtualResourceDesc for GpuBufferDesc {
 impl VirtualResource for ImageView {
 	type Usage<'a> = ImageUsage<'a>;
 
-	unsafe fn from_res<'a>(pass: u32, res: &Resource, caches: &mut Caches, device: &Device) -> Self {
+	unsafe fn from_res(pass: u32, res: &Resource, caches: &mut Caches, device: &Device) -> Self {
 		let res = &res.image().resource;
 		let usage = &res.usages[&pass];
 
@@ -410,7 +410,7 @@ impl VirtualResource for ImageView {
 			.expect("Failed to create image view")
 	}
 
-	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'a>) {
+	unsafe fn add_read_usage(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>) {
 		let image = res.ty.image();
 		debug_assert!(
 			compatible_formats(image.write_usage.format, usage.format),
@@ -427,7 +427,7 @@ impl VirtualResource for ImageView {
 impl VirtualResourceDesc for ImageDesc {
 	type Resource = ImageView;
 
-	fn ty<'a, 'graph>(self, usage: ImageUsage<'a>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(self, usage: ImageUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
 		VirtualResourceType::Image(GpuData {
 			desc: ImageType::Internal(self),
 			write_usage: usage.to_owned_arena(arena),
@@ -439,7 +439,7 @@ impl VirtualResourceDesc for ImageDesc {
 impl VirtualResourceDesc for ExternalBuffer<'_> {
 	type Resource = GpuBufferHandle;
 
-	fn ty<'a, 'graph>(self, write_usage: BufferUsage<'a>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(self, write_usage: BufferUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
 		VirtualResourceType::GpuBuffer(GpuData {
 			desc: GpuBufferType::External(self.to_owned_arena(arena)),
 			write_usage: write_usage.to_owned_arena(arena),
@@ -451,7 +451,7 @@ impl VirtualResourceDesc for ExternalBuffer<'_> {
 impl VirtualResourceDesc for ExternalImage<'_> {
 	type Resource = ImageView;
 
-	fn ty<'a, 'graph>(self, write_usage: ImageUsage<'a>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(self, write_usage: ImageUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
 		VirtualResourceType::Image(GpuData {
 			desc: ImageType::External(self.to_owned_arena(arena)),
 			write_usage: write_usage.to_owned_arena(arena),

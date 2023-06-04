@@ -24,6 +24,8 @@ pub trait Resource: Default + Sized {
 
 	fn create(device: &Device, desc: Self::Desc) -> Result<Self>;
 
+	/// # Safety
+	/// The resource must not be used after being destroyed, and appropriate synchronization must be performed.
 	unsafe fn destroy(self, device: &Device);
 }
 
@@ -104,6 +106,8 @@ impl Buffer {
 
 	pub fn inner(&self) -> vk::Buffer { self.inner }
 
+	/// # Safety
+	/// The resource must not be used after being destroyed, and appropriate synchronization must be performed.
 	pub unsafe fn destroy(self, device: &Device) {
 		if let Some(id) = self.id {
 			device.descriptors().return_buffer(id);

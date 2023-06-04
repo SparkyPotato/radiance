@@ -66,6 +66,10 @@ struct Inner {
 	last_alloc: usize,
 }
 
+impl Default for Arena {
+	fn default() -> Self { Self::new() }
+}
+
 impl Arena {
 	/// Creates a new arena with a default block size of 1 MiB.
 	pub fn new() -> Self { Self::with_block_size(1024 * 1024) }
@@ -98,6 +102,9 @@ impl Arena {
 	}
 
 	/// [`Allocator::deallocate`], but doesn't require a layout.
+	///
+	/// # Safety
+	/// Same as `Allocator::deallocate`.
 	pub unsafe fn deallocate(&self, ptr: NonNull<u8>) {
 		let inner = self.inner.get();
 

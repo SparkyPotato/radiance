@@ -1,0 +1,23 @@
+[package]
+name = "radiance-asset"
+version = "0.0.0"
+edition = "2021"
+
+[features]
+# Support importing.
+import = ["dep:gltf"]
+# Support file-based asset systems.
+fs = []
+
+[dependencies]
+bytemuck = { version = "1.13.1", features = ["derive"] }
+gltf = { version = "1.1.0", optional = true }
+meshopt = { git = "https://github.com/gwihlidal/meshopt-rs"}
+rayon = "1.7.0"
+rustc-hash = "1.1.0"
+static_assertions = "1.1.0"
+tracing = "0.1.37"
+uuid = { version = "1.3.3", features = ["v4", "fast-rng"] }
+vek = { version = "0.15.10", features = ["bytemuck"] }
+walkdir = "2.3.3"
+zstd = "0.12.3"

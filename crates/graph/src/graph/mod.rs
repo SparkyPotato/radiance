@@ -78,7 +78,7 @@ impl ExecutionSnapshot {
 		}
 	}
 
-	pub fn as_submit_info<'a>(&self) -> [vk::SemaphoreSubmitInfo; FRAMES_IN_FLIGHT] {
+	pub fn as_submit_info(&self) -> [vk::SemaphoreSubmitInfo; FRAMES_IN_FLIGHT] {
 		let mut out = [vk::SemaphoreSubmitInfo::default(); FRAMES_IN_FLIGHT];
 
 		for (i, (&sem, &value)) in self.semaphores.iter().zip(self.values.iter()).enumerate() {
@@ -158,16 +158,18 @@ impl RenderGraph {
 		}
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
-		for frame_data in self.frame_data {
-			frame_data.destroy(device);
+	pub fn destroy(self, device: &Device) {
+		unsafe {
+			for frame_data in self.frame_data {
+				frame_data.destroy(device);
+			}
+			for cache in self.caches.upload_buffers {
+				cache.destroy(device);
+			}
+			self.caches.gpu_buffers.destroy(device);
+			self.caches.image_views.destroy(device);
+			self.caches.images.destroy(device);
 		}
-		for cache in self.caches.upload_buffers {
-			cache.destroy(device);
-		}
-		self.caches.gpu_buffers.destroy(device);
-		self.caches.image_views.destroy(device);
-		self.caches.images.destroy(device);
 	}
 
 	fn next_frame(&mut self, resource_count: usize) {
@@ -232,7 +234,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 				let span = span!(Level::TRACE, "run pass", name = name);
 				let _e = span.enter();
 
-				let buf = submitter.pass(&device)?;
+				let buf = submitter.pass(device)?;
 
 				#[cfg(debug_assertions)]
 				unsafe {
@@ -240,7 +242,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 						debug.cmd_begin_debug_utils_label(
 							buf,
 							&vk::DebugUtilsLabelEXT::builder()
-								.label_name(&std::ffi::CStr::from_bytes_with_nul_unchecked(&pass.name)),
+								.label_name(std::ffi::CStr::from_bytes_with_nul_unchecked(&pass.name)),
 						);
 					}
 				}
@@ -446,7 +448,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		let id = id.id.wrapping_sub(self.base_id);
 		unsafe {
 			let res = self.resource_map.get(id as u32);
-			T::from_res(self.pass, res, &mut self.caches, &self.device)
+			T::from_res(self.pass, res, self.caches, self.device)
 		}
 	}
 
@@ -455,7 +457,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		let id = id.id.wrapping_sub(self.base_id);
 		unsafe {
 			let res = self.resource_map.get(id as u32);
-			T::from_res(self.pass, res, &mut self.caches, &self.device)
+			T::from_res(self.pass, res, self.caches, self.device)
 		}
 	}
 }
@@ -498,7 +500,7 @@ impl<T> Clone for RefId<T> {
 	fn clone(&self) -> Self { *self }
 }
 
-impl<'frame, T> From<GetId<T>> for RefId<T> {
+impl<T> From<GetId<T>> for RefId<T> {
 	fn from(id: GetId<T>) -> Self { id.to_ref() }
 }
 

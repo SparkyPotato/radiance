@@ -1,5 +1,7 @@
 //! Utilities for compiling shaders in a build script.
 
+use std::path::Path;
+
 use crate::compile::ShaderBuilder;
 
 impl ShaderBuilder {
@@ -51,5 +53,8 @@ impl ShaderBuilder {
 				out.parent().unwrap().join(format!("{}.spv", name)).display()
 			);
 		}
+
+		self.write_deps(&Path::new(&std::env::var("OUT_DIR").unwrap()).join("dependencies.json"))
+			.unwrap();
 	}
 }
