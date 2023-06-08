@@ -69,7 +69,7 @@ fn main() {
 		.unwrap();
 
 	let mut state = State::new(&event_loop, window).unwrap();
-	let mut ui = UiState::new(state.ui.icon().clone());
+	let mut ui = UiState::new(state.ui.fonts().clone());
 	let mut arena = Arena::new();
 
 	event_loop.run(move |event, _, flow| match event {

@@ -99,17 +99,24 @@ impl AssetSink for FsAsset {
 }
 
 #[cfg(feature = "import")]
-pub struct FsImporter<'a, F: FnMut(&Path, Uuid), P: Fn(ImportProgress, ImportProgress)> {
+pub struct FsImporter<'a, F, P, C>
+where
+	F: FnMut(&Path, Uuid),
+	P: Fn(ImportProgress, ImportProgress),
+	C: FnMut(PathBuf) -> PathBuf,
+{
 	out_path: &'a Path,
 	on_import: F,
+	on_conflict: C,
 	progress: P,
 }
 
 #[cfg(feature = "import")]
-impl<F, P> ImportContext for FsImporter<'_, F, P>
+impl<F, P, C> ImportContext for FsImporter<'_, F, P, C>
 where
 	F: FnMut(&Path, Uuid) + Send + Sync,
 	P: Fn(ImportProgress, ImportProgress) + Send + Sync,
+	C: FnMut(PathBuf) -> PathBuf + Send + Sync,
 {
 	type Error = io::Error;
 	type Sink = FsAsset;
@@ -126,6 +133,11 @@ where
 		std::fs::create_dir_all(&path)?;
 		path.push(name);
 		path.set_extension("radass");
+
+		if path.exists() {
+			path = (self.on_conflict)(path);
+		}
+
 		(self.on_import)(&path, header.uuid);
 		FsAsset::create(&path, header)
 	}
@@ -133,12 +145,17 @@ where
 	fn progress(&self, progress: ImportProgress, total: ImportProgress) { (self.progress)(progress, total) }
 }
 
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct DirectoryId(u32);
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub struct AssetId(u32);
+
 struct Directory {
 	name: String,
 	/// Range of child directories in `dirs`.
-	children: FxHashMap<String, usize>,
+	children: FxHashMap<String, DirectoryId>,
 	/// Range of child assets in `assets`.
-	assets: FxHashMap<String, usize>,
+	assets: FxHashMap<String, AssetId>,
 }
 
 struct AssetTree {
@@ -162,25 +179,33 @@ impl AssetTree {
 
 	fn add_asset(&mut self, rel_path: &Path, uuid: Uuid) {
 		let len = self.assets.len();
-		let dir = self.dir_of_mut(rel_path);
-		dir.assets
-			.insert(rel_path.file_name().unwrap().to_str().unwrap().to_string(), len);
+		let dir = self.dir_of_mut(rel_path.parent().unwrap());
+		dir.assets.insert(
+			rel_path
+				.with_extension("")
+				.file_name()
+				.unwrap()
+				.to_str()
+				.unwrap()
+				.to_string(),
+			AssetId(len as _),
+		);
 		self.assets.push(uuid);
 	}
 
 	fn remove_asset(&mut self, rel_path: &Path) -> Uuid {
-		let dir = self.dir_of_mut(rel_path);
+		let dir = self.dir_of_mut(rel_path.parent().unwrap());
 		let id = dir
 			.assets
 			.remove(rel_path.file_name().unwrap().to_str().unwrap())
 			.unwrap();
-		self.assets[id]
+		self.assets[id.0 as usize]
 	}
 
 	fn get_asset(&self, rel_path: &Path) -> Uuid {
-		let dir = self.dir_of(rel_path);
+		let dir = self.dir_of(rel_path.parent().unwrap());
 		let &id = dir.assets.get(rel_path.file_name().unwrap().to_str().unwrap()).unwrap();
-		self.assets[id]
+		self.assets[id.0 as usize]
 	}
 
 	fn dir_of(&self, rel_path: &Path) -> &Directory {
@@ -192,7 +217,7 @@ impl AssetTree {
 		for comp in components {
 			let name = comp.as_os_str().to_str().unwrap();
 			let &idx = self.dirs[curr].children.get(name).unwrap();
-			curr = idx;
+			curr = idx.0 as usize;
 		}
 		&self.dirs[curr]
 	}
@@ -206,7 +231,7 @@ impl AssetTree {
 		for comp in components {
 			let name = comp.as_os_str().to_str().unwrap();
 			curr = match self.dirs[curr].children.get(name) {
-				Some(&idx) => idx,
+				Some(&idx) => idx.0 as usize,
 				None => {
 					let idx = self.dirs.len();
 					self.dirs.push(Directory {
@@ -214,7 +239,7 @@ impl AssetTree {
 						children: FxHashMap::default(),
 						assets: FxHashMap::default(),
 					});
-					self.dirs[curr].children.insert(name.to_string(), idx);
+					self.dirs[curr].children.insert(name.to_string(), DirectoryId(idx as _));
 					idx
 				},
 			};
@@ -223,11 +248,37 @@ impl AssetTree {
 	}
 }
 
+pub struct DirView<'a> {
+	tree: &'a AssetTree,
+	dir: DirectoryId,
+}
+
+impl DirView<'_> {
+	pub fn name(&self) -> &str { &self.tree.dirs[self.dir.0 as usize].name }
+
+	pub fn dirs(&self) -> impl Iterator<Item = DirView<'_>> {
+		let dir = &self.tree.dirs[self.dir.0 as usize];
+		dir.children.iter().map(move |(_, &id)| DirView {
+			tree: self.tree,
+			dir: id,
+		})
+	}
+
+	pub fn assets(&self) -> impl Iterator<Item = (&str, Uuid)> + '_ {
+		let dir = &self.tree.dirs[self.dir.0 as usize];
+		dir.assets
+			.iter()
+			.map(move |(name, &id)| (name.as_str(), self.tree.assets[id.0 as usize]))
+	}
+}
+
 /// A filesystem-based asset system.
 pub struct FsSystem {
 	root: PathBuf,
 	tree: AssetTree,
 	system: AssetSystem<FsAsset>,
+	#[cfg(feature = "import")]
+	file_conflict_map: FxHashMap<PathBuf, u32>,
 }
 
 impl FsSystem {
@@ -236,6 +287,8 @@ impl FsSystem {
 		let root = root.into();
 		let mut system = AssetSystem::new();
 		let mut tree = AssetTree::new(root.components().last().unwrap().as_os_str().to_str().unwrap());
+		#[cfg(feature = "import")]
+		let mut file_conflict_map = FxHashMap::default();
 
 		for file in WalkDir::new(&root)
 			.into_iter()
@@ -244,8 +297,24 @@ impl FsSystem {
 		{
 			let path = file.path();
 			let header = match path.extension().and_then(|x| x.to_str()) {
-				Some("rmesh") => {
-					if let Ok(asset) = FsAsset::load(file.path()) {
+				Some("radass") => {
+					#[cfg(feature = "import")]
+					{
+						let mut path = path.to_path_buf();
+						let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
+						let mut p = 1u32;
+						loop {
+							let x = format!("{}_{}.radass", stem, p);
+							path.set_file_name(x);
+							p += 1;
+							if path.exists() {
+								file_conflict_map.insert(path.clone(), p);
+							} else {
+								break;
+							}
+						}
+					}
+					if let Ok(asset) = FsAsset::load(path) {
 						system.add(asset).ok()
 					} else {
 						None
@@ -260,7 +329,13 @@ impl FsSystem {
 			}
 		}
 
-		Self { root, tree, system }
+		Self {
+			root,
+			tree,
+			system,
+			#[cfg(feature = "import")]
+			file_conflict_map,
+		}
 	}
 
 	/// Add an asset copied into the root directory or a subdirectory.
@@ -313,6 +388,17 @@ impl FsSystem {
 			FsImporter {
 				out_path: &out_path,
 				on_import: |path, uuid| self.tree.add_asset(path.strip_prefix(&self.root).unwrap(), uuid),
+				on_conflict: |mut path| {
+					if let Some(p) = self.file_conflict_map.get_mut(&path) {
+						*p += 1;
+						let stem = path.file_stem().unwrap().to_str().unwrap();
+						path.set_file_name(format!("{}_{}.radass", stem, *p));
+						path
+					} else {
+						self.file_conflict_map.insert(path.clone(), 0);
+						path
+					}
+				},
 				progress,
 			},
 			path,
@@ -321,6 +407,24 @@ impl FsSystem {
 	}
 
 	pub fn root(&self) -> &Path { &self.root }
+
+	pub fn id_of_dir(&self, path: impl AsRef<Path>) -> Option<DirectoryId> {
+		let mut curr = DirectoryId(0);
+		for component in path.as_ref().strip_prefix(&self.root).ok()?.components() {
+			let name = component.as_os_str().to_str().unwrap();
+			let dir = &self.tree.dirs[curr.0 as usize];
+			if let Some(id) = dir.children.get(name) {
+				curr = *id;
+			} else {
+				return None;
+			}
+		}
+		Some(curr)
+	}
+
+	pub fn dir_view(&self, path: impl AsRef<Path>) -> Option<DirView<'_>> {
+		self.id_of_dir(path).map(|dir| DirView { tree: &self.tree, dir })
+	}
 }
 
 impl Deref for FsSystem {

@@ -61,10 +61,10 @@ pub struct Mesh {
 }
 
 impl Mesh {
-	/// 5 usizes: vertex count, index count, meshlet count, vertex bytes, index bytes.
-	/// meshopt encoded vertex buffer.
-	/// meshopt encoded index buffer.
-	/// meshlets.
+	/// - 5 u32s: vertex count, index count, meshlet count, vertex bytes, index bytes.
+	/// - meshopt encoded vertex buffer.
+	/// - meshopt encoded index buffer.
+	/// - meshlets.
 	///
 	/// Everything is little endian, compressed by zstd.
 	pub(super) fn to_bytes(&self) -> Vec<u8> {
@@ -72,20 +72,20 @@ impl Mesh {
 		let indices: Vec<_> = self.indices.iter().map(|&x| x as u32).collect();
 		let indices = meshopt::encode_index_buffer(&indices, self.vertices.len()).unwrap();
 
-		let usize_size = std::mem::size_of::<u64>();
+		let u32_size = std::mem::size_of::<u32>();
 		let vertex_len = vertices.len();
 		let index_len = indices.len();
 		let meshlet_len = std::mem::size_of::<Meshlet>() * self.meshlets.len();
 
-		let len = usize_size * 5 + vertex_len + index_len + meshlet_len;
+		let len = u32_size * 5 + vertex_len + index_len + meshlet_len;
 		let mut bytes = vec![0; len];
 		let mut writer = SliceWriter::new(bytes.as_mut_slice());
 
-		writer.write(self.vertices.len() as u64);
-		writer.write(self.indices.len() as u64);
-		writer.write(self.meshlets.len() as u64);
-		writer.write(vertex_len as u64);
-		writer.write(index_len as u64);
+		writer.write(self.vertices.len() as u32);
+		writer.write(self.indices.len() as u32);
+		writer.write(self.meshlets.len() as u32);
+		writer.write(vertex_len as u32);
+		writer.write(index_len as u32);
 
 		writer.write_slice(&vertices);
 		writer.write_slice(&indices);
@@ -96,13 +96,13 @@ impl Mesh {
 
 	pub(super) fn from_bytes(bytes: &[u8]) -> Self {
 		let bytes = zstd::decode_all(bytes).unwrap();
-		let mut reader = SliceReader::new(bytes.as_slice());
+		let mut reader = SliceReader::new(&bytes);
 
-		let vertex_count = reader.read::<u64>() as usize;
-		let index_count = reader.read::<u64>() as usize;
-		let meshlet_count = reader.read::<u64>() as usize;
-		let vertex_len = reader.read::<u64>() as usize;
-		let index_len = reader.read::<u64>() as usize;
+		let vertex_count = reader.read::<u32>() as usize;
+		let index_count = reader.read::<u32>() as usize;
+		let meshlet_count = reader.read::<u32>() as usize;
+		let vertex_len = reader.read::<u32>() as usize;
+		let index_len = reader.read::<u32>() as usize;
 
 		let vertices = meshopt::decode_vertex_buffer(reader.read_slice(vertex_len), vertex_count).unwrap();
 		let indices: Vec<u32> = meshopt::decode_index_buffer(reader.read_slice(index_len), index_count).unwrap();

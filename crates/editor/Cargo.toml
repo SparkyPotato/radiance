@@ -14,6 +14,7 @@ radiance-graph = { path = "../graph", features = ["bytemuck"] }
 ash = "0.37.2"
 bytemuck = { version = "1.13.1", features = ["derive"] }
 egui = { version = "0.21.0", features = ["bytemuck"] }
+egui_extras = "0.21.0"
 egui-winit = "0.21.1"
 rfd = "0.11.3"
 rustc-hash = "1.1.0"

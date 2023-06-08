@@ -4,13 +4,15 @@ use rustc_hash::FxHashMap;
 use tracing::{event, Level};
 use uuid::Uuid;
 
-use crate::mesh::Mesh;
+use crate::{mesh::Mesh, model::Model, scene::Scene};
 
 #[cfg(feature = "fs")]
 pub mod fs;
 #[cfg(feature = "import")]
 pub mod import;
 pub mod mesh;
+pub mod model;
+pub mod scene;
 mod util;
 
 const CONTAINER_VERSION: u32 = 1;
@@ -40,24 +42,30 @@ impl TryFrom<u32> for AssetType {
 }
 
 impl From<AssetType> for u32 {
-	fn from(v: AssetType) -> Self { unsafe { std::mem::transmute(v) } }
+	fn from(v: AssetType) -> Self { v as u32 }
 }
 
 /// An asset.
 pub enum Asset {
 	Mesh(Mesh),
+	Model(Model),
+	Scene(Scene),
 }
 
 impl Asset {
 	fn ty(&self) -> AssetType {
 		match self {
 			Self::Mesh(_) => AssetType::Mesh,
+			Self::Model(_) => AssetType::Model,
+			Self::Scene(_) => AssetType::Scene,
 		}
 	}
 
 	fn to_bytes(&self) -> Vec<u8> {
 		match self {
 			Self::Mesh(mesh) => mesh.to_bytes(),
+			Self::Model(model) => model.to_bytes(),
+			Self::Scene(scene) => scene.to_bytes(),
 		}
 	}
 }
@@ -205,6 +213,8 @@ impl<S: AssetSource> AssetSystem<S> {
 		let data = meta.source.load_data()?;
 		match meta.header.ty {
 			AssetType::Mesh => Ok(Asset::Mesh(Mesh::from_bytes(&data))),
+			AssetType::Model => Ok(Asset::Model(Model::from_bytes(&data))),
+			AssetType::Scene => Ok(Asset::Scene(Scene::from_bytes(&data))),
 			_ => unimplemented!(),
 		}
 	}

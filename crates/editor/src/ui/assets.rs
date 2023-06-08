@@ -1,10 +1,14 @@
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
-use egui::{Context, RichText};
+use egui::{Context, RichText, ScrollArea};
+use egui_extras::{Size, Strip, StripBuilder};
 use radiance_asset::fs::FsSystem;
 use tracing::{event, Level};
 
-use crate::ui::widgets::{icons, UiExt};
+use crate::ui::{
+	widgets::{icons, IntoIcon, UiExt},
+	Fonts,
+};
 
 #[derive(Default)]
 pub struct AssetManager {
@@ -19,7 +23,7 @@ impl AssetManager {
 		self.cursor = buf;
 	}
 
-	pub fn render(&mut self, ctx: &Context, icon: &Arc<str>) {
+	pub fn render(&mut self, ctx: &Context, fonts: &Fonts) {
 		egui::TopBottomPanel::bottom("assets")
 			.resizable(true)
 			.min_height(100.0)
@@ -46,7 +50,7 @@ impl AssetManager {
 								ui.vertical(|ui| {
 									ui.add_space(2.5);
 									if ui
-										.icon_button(icon, RichText::new(icons::ARROW_UP).size(16.0))
+										.icon_button(&fonts.icons, RichText::new(icons::ARROW_UP).size(16.0))
 										.on_hover_text("Go back")
 										.clicked() && self.cursor != sys.root()
 									{
@@ -69,6 +73,66 @@ impl AssetManager {
 									ui.label(RichText::new("/").size(16.0));
 								}
 							});
+							ui.add_space(5.0);
+
+							let rect = ui.available_rect_before_wrap();
+							const CELL_SIZE: f32 = 50.0;
+							let width = rect.width();
+							let height = rect.height();
+							let cells_x = (width / CELL_SIZE) as usize;
+							let cells_y = (height / CELL_SIZE) as usize;
+
+							let view = sys.dir_view(&self.cursor).unwrap();
+							ScrollArea::vertical()
+								.min_scrolled_width(width)
+								.min_scrolled_height(height)
+								.auto_shrink([false, false])
+								.stick_to_right(true)
+								.show(ui, |ui| {
+									let mut dirs = view.dirs();
+									let mut assets = view.assets();
+									let mut make_cell = |strip: &mut Strip| match dirs.next() {
+										Some(dir) => strip.cell(|ui| {
+											ui.vertical(|ui| {
+												ui.centered_and_justified(|ui| {
+													let name = dir.name();
+													if ui.text_button(RichText::new(icons::FOLDER).size(32.0)).clicked()
+													{
+														self.cursor.push(name);
+													}
+													ui.label(RichText::new(name).size(16.0));
+												});
+											});
+										}),
+										None => match assets.next() {
+											Some((asset, _)) => strip.cell(|ui| {
+												ui.vertical(|ui| {
+													ui.centered_and_justified(|ui| {
+														ui.label(fonts.icons.text(icons::FILE).size(32.0));
+														ui.label(RichText::new(asset).size(16.0));
+													});
+												});
+											}),
+											None => strip.empty(),
+										},
+									};
+
+									StripBuilder::new(ui).sizes(Size::exact(CELL_SIZE), cells_y).vertical(
+										|mut strip| {
+											for _ in 0..cells_y {
+												strip.strip(|builder| {
+													builder.sizes(Size::exact(CELL_SIZE), cells_x).horizontal(
+														|mut strip| {
+															for _ in 0..cells_x {
+																make_cell(&mut strip);
+															}
+														},
+													);
+												});
+											}
+										},
+									);
+								});
 						});
 					}
 				} else {

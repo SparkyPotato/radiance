@@ -7,19 +7,20 @@ use std::sync::Arc;
 
 use egui::{menu, CentralPanel, Context, TopBottomPanel};
 use rfd::FileDialog;
+pub use widgets::Fonts;
 
 use crate::ui::assets::AssetManager;
 
 pub struct UiState {
 	assets: AssetManager,
-	icon: Arc<str>,
+	fonts: Fonts,
 }
 
 impl UiState {
-	pub fn new(icon: Arc<str>) -> Self {
+	pub fn new(fonts: Fonts) -> Self {
 		Self {
 			assets: AssetManager::default(),
-			icon,
+			fonts,
 		}
 	}
 
@@ -38,7 +39,7 @@ impl UiState {
 			});
 		});
 
-		self.assets.render(ctx, &self.icon);
+		self.assets.render(ctx, &self.fonts);
 
 		CentralPanel::default().show(ctx, |ui| {});
 	}

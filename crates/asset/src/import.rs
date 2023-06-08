@@ -10,6 +10,7 @@ use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
 	image,
+	scene::Transform,
 	Accessor,
 	Document,
 	Primitive,
@@ -19,10 +20,12 @@ use meshopt::VertexDataAdapter;
 use rayon::prelude::*;
 use tracing::{span, Level};
 use uuid::Uuid;
-use vek::{Aabb, Vec2, Vec3};
+use vek::{Aabb, Mat4, Quaternion, Vec2, Vec3, Vec4};
 
 use crate::{
 	mesh::{Cone, Mesh, Meshlet, Vertex},
+	model::Model,
+	scene::{Node, Scene},
 	util::SliceReader,
 	AssetHeader,
 	AssetSink,
@@ -95,6 +98,9 @@ where
 	pub fn import<I: ImportContext<Sink = S>>(
 		&mut self, mut ctx: I, path: &Path,
 	) -> Result<(), ImportError<S::Error, I::Error>> {
+		let s = span!(Level::INFO, "import", path = path.to_string_lossy().as_ref());
+		let _e = s.enter();
+
 		let c = &mut ctx;
 		type Error<S, I> = ImportError<<S as AssetSink>::Error, <I as ImportContext>::Error>;
 		type Res<T, S, I> = Result<T, Error<S, I>>;
@@ -104,11 +110,12 @@ where
 
 		let total = ImportProgress {
 			meshes: imp.gltf.meshes().flat_map(|x| x.primitives()).count(),
-			models: imp.gltf.nodes().count(),
+			models: imp.gltf.meshes().count(),
 			materials: imp.gltf.materials().count(),
 			scenes: imp.gltf.scenes().count(),
 		};
 
+		// Meshes
 		let progress = AtomicUsize::new(0);
 		let prims: Vec<_> = imp
 			.gltf
@@ -116,43 +123,108 @@ where
 			.flat_map(move |mesh| {
 				let name = mesh.name().unwrap_or("unnamed mesh");
 				let prims = mesh.primitives();
-				let mesh = prims.len() == 1;
-				prims.enumerate().map(move |(id, prim)| (id, name, prim, mesh))
+				let mesh_id = mesh.index();
+				prims.map(move |prim| (mesh_id, name, prim))
 			})
-			.map(move |(id, name, prim, mesh)| {
-				let fmt = if mesh {
-					|root: &str, _| format!("{}", root)
-				} else {
-					|root: &str, id: usize| format!("{}_{}", root, id)
-				};
-				let name = fmt(name, id);
+			.map(move |(mesh_id, name, prim)| {
+				let uuid = Uuid::new_v4();
 				let sink = c
 					.asset(
 						&name,
 						AssetHeader {
-							uuid: Uuid::new_v4(),
+							uuid,
 							ty: AssetType::Mesh,
 						},
 					)
 					.map_err(|x| Error::<S, I>::Ctx(x))?;
-				Ok::<_, Error<S, I>>((name, prim, sink))
+				Ok::<_, Error<S, I>>((mesh_id, uuid, name, prim, sink))
 			})
 			.collect::<Result<_, _>>()?;
-		prims.into_par_iter().try_for_each(|(name, prim, mut sink)| {
-			let mesh = imp.mesh(&name, prim).map_err(|x| x.map_ignore())?;
-			sink.write_data(&mesh.to_bytes()).map_err(|x| ImportError::Sink(x))?;
-			let old = progress.fetch_add(1, Ordering::Relaxed);
+		let meshes: Vec<_> = prims
+			.into_par_iter()
+			.map(|(mesh_id, uuid, name, prim, mut sink)| {
+				let mesh = imp.mesh(&name, prim).map_err(|x| x.map_ignore())?;
+				sink.write_data(&mesh.to_bytes()).map_err(|x| ImportError::Sink(x))?;
+				let old = progress.fetch_add(1, Ordering::Relaxed);
+				ctx.progress(
+					ImportProgress {
+						meshes: old + 1,
+						models: 0,
+						materials: 0,
+						scenes: 0,
+					},
+					total,
+				);
+				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, uuid))
+			})
+			.collect::<Result<_, _>>()?;
+
+		// Models
+		let mut models: Vec<_> = imp
+			.gltf
+			.meshes()
+			.map(|mesh| {
+				(
+					mesh.name().unwrap_or("unnamed mesh").to_string(),
+					Model { meshes: Vec::new() },
+				)
+			})
+			.collect();
+		for (mesh_id, uuid) in meshes.into_iter() {
+			models[mesh_id].1.meshes.push(uuid);
+		}
+		let models: Vec<_> = models
+			.into_iter()
+			.enumerate()
+			.map(|(i, (name, model))| {
+				let uuid = Uuid::new_v4();
+				let mut sink = ctx
+					.asset(
+						&name,
+						AssetHeader {
+							uuid,
+							ty: AssetType::Model,
+						},
+					)
+					.map_err(|x| Error::<S, I>::Ctx(x))?;
+				sink.write_data(&model.to_bytes()).map_err(|x| ImportError::Sink(x))?;
+				ctx.progress(
+					ImportProgress {
+						meshes: total.meshes,
+						models: i + 1,
+						materials: 0,
+						scenes: 0,
+					},
+					total,
+				);
+				Ok::<_, ImportError<S::Error, I::Error>>(uuid)
+			})
+			.collect::<Result<_, _>>()?;
+
+		for scene in imp.gltf.scenes() {
+			let name = scene.name().unwrap_or("unnamed scene");
+			let i = scene.index();
+			let out = imp.scene(&name, scene, &models).map_err(|x| x.map_ignore())?;
+			let mut sink = ctx
+				.asset(
+					&name,
+					AssetHeader {
+						uuid: Uuid::new_v4(),
+						ty: AssetType::Scene,
+					},
+				)
+				.map_err(|x| Error::<S, I>::Ctx(x))?;
+			sink.write_data(&out.to_bytes()).map_err(|x| ImportError::Sink(x))?;
 			ctx.progress(
 				ImportProgress {
-					meshes: old + 1,
-					models: 0,
+					meshes: total.meshes,
+					models: total.models,
 					materials: 0,
-					scenes: 0,
+					scenes: i + 1,
 				},
 				total,
 			);
-			Ok::<_, ImportError<S::Error, I::Error>>(())
-		})?;
+		}
 
 		Ok(())
 	}
@@ -167,7 +239,7 @@ struct Importer {
 }
 
 impl Importer {
-	pub fn mesh(&self, name: &str, prim: Primitive) -> ImportResult<Mesh> {
+	fn mesh(&self, name: &str, prim: Primitive) -> ImportResult<Mesh> {
 		let s = span!(Level::INFO, "importing mesh", name = name);
 		let _e = s.enter();
 
@@ -318,6 +390,53 @@ impl Importer {
 		}
 
 		Ok(mesh)
+	}
+
+	fn scene(&self, name: &str, scene: gltf::Scene, models: &[Uuid]) -> ImportResult<Scene> {
+		let s = span!(Level::INFO, "importing scene", name = name);
+		let _e = s.enter();
+
+		let mut out = Scene {
+			nodes: Vec::with_capacity(scene.nodes().count()),
+		};
+
+		for node in scene.nodes() {
+			self.node(node, Mat4::identity(), models, &mut out.nodes);
+		}
+
+		Ok(out)
+	}
+
+	fn node(&self, node: gltf::Node, transform: Mat4<f32>, models: &[Uuid], out: &mut Vec<Node>) {
+		let node = node.mesh().map(|model| {
+			let model = models[model.index()];
+			let this_transform = match node.transform() {
+				Transform::Decomposed {
+					translation,
+					rotation,
+					scale,
+				} => {
+					let translation = Vec3::from_slice(&translation);
+					let rotation = Quaternion::from_vec4(Vec4::from_slice(&rotation));
+					let scale = Vec3::from_slice(&scale);
+					let (angle, axis) = rotation.into_angle_axis();
+					Mat4::<f32>::translation_3d(translation) * Mat4::scaling_3d(scale) * Mat4::rotation_3d(angle, axis)
+				},
+				Transform::Matrix { matrix } => Mat4::from_col_arrays(matrix),
+			};
+			let transform = transform * this_transform;
+
+			for child in node.children() {
+				self.node(child, transform, models, out);
+			}
+
+			Node {
+				name: node.name().unwrap_or("unnamed node").to_string(),
+				transform,
+				model,
+			}
+		});
+		out.extend(node);
 	}
 
 	pub fn accessor(&self, accessor: Accessor) -> ImportResult<(&[u8], DataType, Dimensions)> {
