@@ -1,9 +1,11 @@
 [workspace]
 members = [
-    "crates/*",
-    "crates/graph/examples/*",
+    "crates/lib/*",
+    "crates/lib/graph/examples/*",
+
+    "crates/editor",
 ]
-default-members = ["crates/*"]
+default-members = ["crates/editor"]
 
 resolver = "2"
 

@@ -71,7 +71,7 @@ impl VirtualFileSystem {
 
 	/// Add a root directory to the virtual file system.
 	///
-	/// `path` must be a directory containing a `Cargo.toml` file and a `shaders` directory.
+	/// `source_path` must be a directory containing a `Cargo.toml` file and a `shaders` directory.
 	pub fn add_root<T: Into<PathBuf>>(&mut self, source_path: T, output_path: Option<T>) -> Result<(), Box<dyn Error>> {
 		let mut source_path = source_path.into();
 		let mut output_path = output_path.map(Into::into);

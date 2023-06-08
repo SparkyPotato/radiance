@@ -36,8 +36,11 @@ impl App for SpinningTriangle {
 	const NAME: &'static str = "spinning triangle";
 
 	fn create(device: &Device) -> Self {
-		let vertex = pipeline::compile(include_str!("vertex.wgsl"), ShaderStage::Vertex);
-		let fragment = pipeline::compile(include_str!("fragment.wgsl"), ShaderStage::Fragment);
+		let vertex = pipeline::compile(include_str!("2_spinning_triangle/src/vertex.wgsl"), ShaderStage::Vertex);
+		let fragment = pipeline::compile(
+			include_str!("2_spinning_triangle/src/fragment.wgsl"),
+			ShaderStage::Fragment,
+		);
 		let (pipeline, layout) = pipeline::simple(
 			device,
 			&vertex,

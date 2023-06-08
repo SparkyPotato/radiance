@@ -3,8 +3,6 @@
 mod assets;
 mod widgets;
 
-use std::sync::Arc;
-
 use egui::{menu, CentralPanel, Context, TopBottomPanel};
 use rfd::FileDialog;
 pub use widgets::Fonts;

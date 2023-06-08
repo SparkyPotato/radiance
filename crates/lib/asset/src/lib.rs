@@ -1,4 +1,6 @@
 //! This crate handles importing assets into our custom formats, as well as loading and storing them to disk.
+//!
+//! It provides raw access to assets, without any sort of caching or GPU resource management.
 
 use rustc_hash::FxHashMap;
 use tracing::{event, Level};
@@ -155,7 +157,6 @@ pub trait AssetSink {
 }
 
 /// Raw access to assets from sources and sinks.
-/// Does not handle any caching.
 pub struct AssetSystem<S> {
 	assets: FxHashMap<Uuid, AssetMetadata<S>>,
 }

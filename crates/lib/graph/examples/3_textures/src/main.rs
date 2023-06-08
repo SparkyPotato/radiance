@@ -46,8 +46,8 @@ impl App for Textures {
 	const NAME: &'static str = "textures";
 
 	fn create(device: &Device) -> Self {
-		let vertex = pipeline::compile(include_str!("vertex.wgsl"), ShaderStage::Vertex);
-		let fragment = pipeline::compile(include_str!("fragment.wgsl"), ShaderStage::Fragment);
+		let vertex = pipeline::compile(include_str!("3_textures/src/vertex.wgsl"), ShaderStage::Vertex);
+		let fragment = pipeline::compile(include_str!("3_textures/src/fragment.wgsl"), ShaderStage::Fragment);
 		let (pipeline, layout) = pipeline::simple(
 			device,
 			&vertex,
@@ -60,7 +60,11 @@ impl App for Textures {
 				.build()],
 		);
 
-		let (image, view) = load::image(device, include_bytes!("red.webp"), load::ImageFormat::WebP);
+		let (image, view) = load::image(
+			device,
+			include_bytes!("3_textures/src/red.webp"),
+			load::ImageFormat::WebP,
+		);
 
 		let sampler = unsafe {
 			device

@@ -4,12 +4,12 @@ version = "0.0.0"
 edition = "2021"
 
 [build-dependencies]
-radiance-shader-compiler = { path = "../shader-compiler", features = ["build-script"] }
+radiance-shader-compiler = { path = "../lib/shader-compiler", features = ["build-script"] }
 
 [dependencies]
-radiance-asset = { path = "../asset", features = ["fs", "import"] }
-radiance-egui = { path = "../egui" }
-radiance-graph = { path = "../graph", features = ["bytemuck"] }
+radiance-asset = { path = "../lib/asset", features = ["fs", "import"] }
+radiance-egui = { path = "../lib/egui" }
+radiance-graph = { path = "../lib/graph", features = ["bytemuck"] }
 
 ash = "0.37.2"
 bytemuck = { version = "1.13.1", features = ["derive"] }
