@@ -1,0 +1,18 @@
+[package]
+name = "radiance-renderer"
+version = "0.0.0"
+edition = "2021"
+
+[build-dependencies]
+radiance-shader-compiler = { path = "../shader-compiler", features = ["build-script"] }
+
+[dependencies]
+radiance-asset-runtime = { path = "../asset-runtime" }
+radiance-graph = { path = "../graph", features = ["bytemuck"] }
+radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"] }
+radiance-util = { path = "../util" }
+
+ash = "0.37.2"
+bytemuck = { version = "1.13.1", features = ["derive"] }
+tracing = "0.1.37"
+vek = { version = "0.15.10", features = ["bytemuck"] }

@@ -118,7 +118,8 @@ impl VirtualFileSystem {
 			if let Some(name) = self.source_reverse.get(test) {
 				let mut path = Path::new(name).join(path.strip_prefix(test).ok()?);
 				path.set_extension("");
-				return Some(VirtualPathBuf::new(path));
+				let s = path.into_os_string().into_string().unwrap();
+				return Some(VirtualPathBuf::new(s.replace('\\', "/")));
 			}
 
 			test = test.parent()?;

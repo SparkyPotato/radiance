@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use static_assertions::const_assert_eq;
-use vek::{Vec2, Vec3};
+use vek::{Aabb, Vec2, Vec3};
 
 use crate::util::{SliceReader, SliceWriter};
 
@@ -33,7 +33,7 @@ pub struct Cone {
 pub struct Meshlet {
 	/// AABB of the meshlet relative to the mesh origin.
 	pub aabb_min: Vec3<f32>,
-	pub aabb_extent: Vec3<f32>,
+	pub aabb_max: Vec3<f32>,
 	/// Offset of the meshlet index buffer relative to the parent mesh index buffer.
 	pub index_offset: u32,
 	/// Offset of the meshlet vertex buffer relative to the parent mesh vertex buffer.
@@ -58,9 +58,11 @@ pub struct Mesh {
 	pub indices: Vec<u8>,
 	/// Meshlets of the mesh.
 	pub meshlets: Vec<Meshlet>,
+	pub aabb: Aabb<f32>,
 }
 
 impl Mesh {
+	/// - AABB.
 	/// - 5 u32s: vertex count, index count, meshlet count, vertex bytes, index bytes.
 	/// - meshopt encoded vertex buffer.
 	/// - meshopt encoded index buffer.
@@ -77,10 +79,12 @@ impl Mesh {
 		let index_len = indices.len();
 		let meshlet_len = std::mem::size_of::<Meshlet>() * self.meshlets.len();
 
-		let len = u32_size * 5 + vertex_len + index_len + meshlet_len;
+		let len = std::mem::size_of::<Vec3<f32>>() * 2 + u32_size * 5 + vertex_len + index_len + meshlet_len;
 		let mut bytes = vec![0; len];
 		let mut writer = SliceWriter::new(bytes.as_mut_slice());
 
+		writer.write(self.aabb.min);
+		writer.write(self.aabb.max);
 		writer.write(self.vertices.len() as u32);
 		writer.write(self.indices.len() as u32);
 		writer.write(self.meshlets.len() as u32);
@@ -98,6 +102,8 @@ impl Mesh {
 		let bytes = zstd::decode_all(bytes).unwrap();
 		let mut reader = SliceReader::new(&bytes);
 
+		let min = reader.read::<Vec3<f32>>();
+		let max = reader.read::<Vec3<f32>>();
 		let vertex_count = reader.read::<u32>() as usize;
 		let index_count = reader.read::<u32>() as usize;
 		let meshlet_count = reader.read::<u32>() as usize;
@@ -113,6 +119,7 @@ impl Mesh {
 			vertices,
 			indices,
 			meshlets,
+			aabb: Aabb { min, max },
 		}
 	}
 }

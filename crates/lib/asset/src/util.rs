@@ -18,6 +18,8 @@ impl<'a> SliceReader<'a> {
 		*bytemuck::from_bytes(slice)
 	}
 
+	pub fn finish(self) -> &'a [u8] { self.bytes }
+
 	pub fn is_empty(&self) -> bool { self.bytes.is_empty() }
 }
 

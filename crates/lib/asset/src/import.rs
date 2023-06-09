@@ -155,7 +155,7 @@ where
 					},
 					total,
 				);
-				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, uuid))
+				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, uuid, mesh.aabb))
 			})
 			.collect::<Result<_, _>>()?;
 
@@ -166,12 +166,20 @@ where
 			.map(|mesh| {
 				(
 					mesh.name().unwrap_or("unnamed mesh").to_string(),
-					Model { meshes: Vec::new() },
+					Model {
+						meshes: Vec::new(),
+						aabb: Aabb {
+							min: Vec3::broadcast(f32::INFINITY),
+							max: Vec3::broadcast(f32::NEG_INFINITY),
+						},
+					},
 				)
 			})
 			.collect();
-		for (mesh_id, uuid) in meshes.into_iter() {
-			models[mesh_id].1.meshes.push(uuid);
+		for (mesh_id, uuid, aabb) in meshes.into_iter() {
+			let model = &mut models[mesh_id].1;
+			model.meshes.push(uuid);
+			model.aabb = model.aabb.union(aabb)
 		}
 		let models: Vec<_> = models
 			.into_iter()
@@ -345,6 +353,10 @@ impl Importer {
 			vertices: Vec::with_capacity(vertices.len()),
 			indices: Vec::with_capacity(indices.len()),
 			meshlets: Vec::with_capacity(meshlets.len()),
+			aabb: Aabb {
+				min: Vec3::broadcast(f32::INFINITY),
+				max: Vec3::broadcast(f32::NEG_INFINITY),
+			},
 		};
 		for m in meshlets.iter() {
 			let bounds = meshopt::compute_meshlet_bounds(m, &adapter);
@@ -376,7 +388,7 @@ impl Importer {
 			mesh.indices.extend(m.triangles.iter().copied());
 			mesh.meshlets.push(Meshlet {
 				aabb_min: aabb.min,
-				aabb_extent: extent,
+				aabb_max: aabb.max,
 				index_offset,
 				vertex_offset,
 				tri_count,
@@ -386,7 +398,8 @@ impl Importer {
 					cutoff: bounds.cone_cutoff_s8,
 				},
 				_pad: 0,
-			})
+			});
+			mesh.aabb = mesh.aabb.union(aabb);
 		}
 
 		Ok(mesh)

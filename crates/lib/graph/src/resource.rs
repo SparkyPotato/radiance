@@ -103,6 +103,8 @@ impl Buffer {
 			)))
 		}
 	}
+	
+	pub fn id(&self) -> Option<BufferId> { self.id }
 
 	pub fn inner(&self) -> vk::Buffer { self.inner }
 

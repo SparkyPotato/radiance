@@ -142,10 +142,20 @@ pub struct ImageStage {
 }
 
 impl StagingCtx<'_> {
+	/// Get a command buffer to execute some custom staging commands before the other staging commands.
+	///
+	/// Appropriate synchronization must be performed.
+	pub unsafe fn execute_before(&mut self, ty: QueueType) -> Result<vk::CommandBuffer> { self.pre_buf(ty) }
+
+	/// Get a command buffer to execute some custom staging commands after the other staging commands.
+	///
+	/// Appropriate synchronization must be performed.
+	pub unsafe fn execute_after(&mut self, ty: QueueType) -> Result<vk::CommandBuffer> { self.post_buf(ty) }
+
 	/// Copy data from CPU memory to a GPU buffer.
 	pub fn stage_buffer(&mut self, data: &[u8], dst: vk::Buffer, dst_offset: u64) -> Result<()> {
 		let loc = self.inner.copy(self.device, data)?;
-		let buf = self.pre_buf(QueueType::Transfer)?;
+		let buf = self.post_buf(QueueType::Transfer)?;
 		unsafe {
 			self.device.device().cmd_copy_buffer(
 				buf,
@@ -246,7 +256,7 @@ impl StagingCtx<'_> {
 							.image_memory_barriers(&[to_transfer.as_release_barrier().into()]),
 					);
 				}
-				let tbuf = self.pre_buf(QueueType::Transfer)?;
+				let tbuf = self.post_buf(QueueType::Transfer)?;
 				let barr = to_transfer.as_acquire_barrier();
 				self.device.device().cmd_pipeline_barrier2(
 					tbuf,
@@ -434,16 +444,16 @@ fn submit_queues(
 			compute,
 			transfer,
 		} => {
-			if let Some(graphics) = graphics {
-				submit(device, semaphore, QueueType::Graphics, graphics, wait)?;
+			if let Some(transfer) = transfer {
+				submit(device, semaphore, QueueType::Transfer, transfer, wait)?;
 			}
 
 			if let Some(compute) = compute {
 				submit(device, semaphore, QueueType::Compute, compute, wait)?;
 			}
 
-			if let Some(transfer) = transfer {
-				submit(device, semaphore, QueueType::Transfer, transfer, wait)?;
+			if let Some(graphics) = graphics {
+				submit(device, semaphore, QueueType::Graphics, graphics, wait)?;
 			}
 		},
 		Queues::Single(queue) => {

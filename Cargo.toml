@@ -5,7 +5,7 @@ members = [
 
     "crates/editor",
 ]
-default-members = ["crates/editor"]
+default-members = ["crates/editor", "crates/lib/*"]
 
 resolver = "2"
 

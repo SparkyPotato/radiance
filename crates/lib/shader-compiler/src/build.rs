@@ -9,7 +9,7 @@ impl ShaderBuilder {
 	/// crate.
 	pub fn for_build() -> Self {
 		let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-		println!("cargo:rerun-if-changed={}/shaders", root);
+		println!("cargo:rerun-if-changed=..");
 
 		let mut builder = ShaderBuilder::new().unwrap();
 		builder

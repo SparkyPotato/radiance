@@ -15,7 +15,7 @@ pub mod import;
 pub mod mesh;
 pub mod model;
 pub mod scene;
-mod util;
+pub mod util;
 
 const CONTAINER_VERSION: u32 = 1;
 

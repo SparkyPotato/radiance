@@ -1,12 +1,6 @@
 #include "common.l.hlsl"
 
-struct VertexInput {
-    float2 position;
-    float2 uv;
-    uint color;
-};
-
-float4 unpack_color(uint color) {
+float4 unpack_color(u32 color) {
     return float4(
         float(color & 255),
         float((color >> 8) & 255),
@@ -23,8 +17,8 @@ float4 project_screenspace(float2 screenspace) {
     );
 }
 
-VertexOutput main(uint vertex: SV_VertexID) {
-    VertexInput input = Buffers[Constants.vertex_buffer_id].Load<VertexInput>(vertex * sizeof(VertexInput));
+VertexOutput main(u32 vertex: SV_VertexID) {
+    VertexInput input = Constants.vertex_buffer.load(vertex);
 
     VertexOutput output;
     output.position = project_screenspace(input.position);

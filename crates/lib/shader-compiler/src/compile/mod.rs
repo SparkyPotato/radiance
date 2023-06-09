@@ -49,7 +49,9 @@ impl ShaderBuilder {
 	}
 
 	/// Include files from another shader module.
-	pub fn include(&mut self, source_path: &Path) -> Result<(), Box<dyn Error>> { self.vfs.add_root(source_path, None) }
+	pub fn include(&mut self, source_path: impl AsRef<Path>) -> Result<(), Box<dyn Error>> {
+		self.vfs.add_root(source_path.as_ref(), None)
+	}
 
 	/// Add a new target for building.
 	pub fn target(&mut self, source_path: &Path, output_path: &Path) -> Result<(), Box<dyn Error>> {
@@ -258,6 +260,9 @@ impl<'a> IncludeHandler<'a> {
 impl DxcIncludeHandler for IncludeHandler<'_> {
 	fn load_source(&mut self, filename: String) -> Option<String> {
 		let path = Path::new(&filename);
+		let mut comp = path.components();
+		comp.next().unwrap();
+		let path = comp.as_path();
 		let us = self.vfs.resolve_source(self.curr)?;
 		let curr_dir = us.parent()?;
 		let curr_module = self.curr.get_module();
@@ -268,7 +273,7 @@ impl DxcIncludeHandler for IncludeHandler<'_> {
 			// Current module root
 			None => match self.load(&self.vfs.get_root(curr_module)?.join(path)) {
 				Some(source) => Some(source),
-				None => self.load(&self.vfs.resolve_source(VirtualPath::new(&path.with_extension("")))?),
+				None => self.load(&self.vfs.resolve_source(VirtualPath::new(&path))?),
 			},
 		}
 	}
@@ -288,7 +293,9 @@ impl DependencyInfo {
 	}
 
 	pub fn add(&mut self, file: impl Into<VirtualPathBuf>, depends_on: impl Into<VirtualPathBuf>) {
-		self.inner.entry(depends_on.into()).or_default().insert(file.into());
+		let on = depends_on.into();
+		let file = file.into();
+		self.inner.entry(on).or_default().insert(file);
 	}
 
 	pub fn on(&self, file: impl AsRef<VirtualPath>) -> impl Iterator<Item = &VirtualPath> + '_ {
