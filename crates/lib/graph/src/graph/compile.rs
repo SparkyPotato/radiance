@@ -42,13 +42,14 @@ use crate::{
 	Result,
 };
 
-pub(super) struct CompiledFrame<'pass, 'graph> {
-	pub passes: Vec<PassData<'pass, 'graph>, &'graph Arena>,
+pub(super) struct CompiledFrame<'pass, 'graph, C> {
+	pub passes: Vec<PassData<'pass, 'graph, C>, &'graph Arena>,
 	/// First sync is before the first pass, then interspersed between passes, and then the last sync is after the last
 	/// pass.
 	pub sync: Vec<Sync<'graph>, &'graph Arena>,
 	pub resource_map: ResourceMap<'graph>,
 	pub graph: &'graph mut RenderGraph,
+	pub ctx: C,
 }
 
 pub struct CrossQueueSync<'graph> {
@@ -782,7 +783,7 @@ struct SyncBuilder<'graph> {
 }
 
 impl<'graph> SyncBuilder<'graph> {
-	fn new<'a>(arena: &'graph Arena, passes: &'a [PassData<'a, 'a>]) -> Self {
+	fn new<'a, C>(arena: &'graph Arena, passes: &'a [PassData<'a, 'a, C>]) -> Self {
 		Self {
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
@@ -1040,13 +1041,13 @@ impl ImageUsageOwned<'_> {
 	}
 }
 
-struct Synchronizer<'temp, 'graph> {
+struct Synchronizer<'temp, 'graph, C> {
 	resource_map: &'temp ResourceMap<'graph>,
-	passes: &'temp [PassData<'temp, 'graph>],
+	passes: &'temp [PassData<'temp, 'graph, C>],
 }
 
-impl<'temp, 'graph> Synchronizer<'temp, 'graph> {
-	fn new(resource_map: &'temp ResourceMap<'graph>, passes: &'temp [PassData<'temp, 'graph>]) -> Self {
+impl<'temp, 'graph, C> Synchronizer<'temp, 'graph, C> {
+	fn new(resource_map: &'temp ResourceMap<'graph>, passes: &'temp [PassData<'temp, 'graph, C>]) -> Self {
 		Self { resource_map, passes }
 	}
 
@@ -1249,8 +1250,8 @@ impl<'temp, 'graph> Synchronizer<'temp, 'graph> {
 	}
 }
 
-impl<'pass, 'graph> Frame<'pass, 'graph> {
-	pub(super) fn compile(self, device: &Device) -> Result<CompiledFrame<'pass, 'graph>> {
+impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
+	pub(super) fn compile(self, device: &Device) -> Result<CompiledFrame<'pass, 'graph, C>> {
 		let span = span!(Level::TRACE, "compile graph");
 		let _e = span.enter();
 
@@ -1282,6 +1283,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			sync,
 			resource_map,
 			graph: self.graph,
+			ctx: self.ctx,
 		})
 	}
 }

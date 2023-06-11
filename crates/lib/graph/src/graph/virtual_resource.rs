@@ -16,7 +16,7 @@ use crate::{
 /// Has a corresponding usage of [`BufferUsage`].
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct UploadBufferDesc {
-	pub size: usize,
+	pub size: u64,
 }
 
 /// A description for a GPU buffer.
@@ -24,7 +24,7 @@ pub struct UploadBufferDesc {
 /// Has a corresponding usage of [`BufferUsage`].
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct GpuBufferDesc {
-	pub size: usize,
+	pub size: u64,
 }
 
 /// The usage of a buffer in a render pass.
@@ -291,7 +291,7 @@ pub struct GpuData<'graph, T, U> {
 }
 
 pub enum GpuBufferType<'graph> {
-	Internal(usize),
+	Internal(u64),
 	External(ExternalBufferOwned<'graph>),
 }
 
@@ -302,13 +302,13 @@ pub enum ImageType<'graph> {
 
 pub enum VirtualResourceType<'graph> {
 	Data(NonNull<()>),
-	UploadBuffer(GpuData<'graph, usize, BufferUsageOwned<'graph>>),
+	UploadBuffer(GpuData<'graph, u64, BufferUsageOwned<'graph>>),
 	GpuBuffer(GpuData<'graph, GpuBufferType<'graph>, BufferUsageOwned<'graph>>),
 	Image(GpuData<'graph, ImageType<'graph>, ImageUsageOwned<'graph>>),
 }
 
 impl<'graph> VirtualResourceType<'graph> {
-	unsafe fn upload_buffer(&mut self) -> &mut GpuData<'graph, usize, BufferUsageOwned<'graph>> {
+	unsafe fn upload_buffer(&mut self) -> &mut GpuData<'graph, u64, BufferUsageOwned<'graph>> {
 		match self {
 			VirtualResourceType::UploadBuffer(data) => data,
 			_ => unreachable_unchecked(),

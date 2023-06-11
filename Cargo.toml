@@ -6,6 +6,7 @@ members = [
     "crates/editor",
 ]
 default-members = ["crates/editor", "crates/lib/*"]
+exclude = ["crates/lib/asset-runtime"]
 
 resolver = "2"
 

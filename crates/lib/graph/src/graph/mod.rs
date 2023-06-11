@@ -47,10 +47,10 @@ mod compile;
 mod frame_data;
 mod virtual_resource;
 
-const FRAMES_IN_FLIGHT: usize = 2;
+pub const FRAMES_IN_FLIGHT: usize = 2;
 
 /// A snapshot of the GPU execution state of the render graph.
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub struct ExecutionSnapshot {
 	semaphores: [vk::Semaphore; FRAMES_IN_FLIGHT],
 	values: [u64; FRAMES_IN_FLIGHT],
@@ -130,12 +130,13 @@ impl RenderGraph {
 		})
 	}
 
-	pub fn frame<'pass, 'graph>(&'graph mut self, arena: &'graph Arena) -> Frame<'pass, 'graph> {
+	pub fn frame<'pass, 'graph, C>(&'graph mut self, arena: &'graph Arena, ctx: C) -> Frame<'pass, 'graph, C> {
 		Frame {
 			graph: self,
 			arena,
 			passes: Vec::new_in(arena),
 			virtual_resources: Vec::new_in(arena),
+			ctx,
 		}
 	}
 
@@ -179,20 +180,21 @@ impl RenderGraph {
 }
 
 /// A frame being recorded to run in the render graph.
-pub struct Frame<'pass, 'graph> {
+pub struct Frame<'pass, 'graph, C> {
 	graph: &'graph mut RenderGraph,
 	arena: &'graph Arena,
-	passes: Vec<PassData<'pass, 'graph>, &'graph Arena>,
+	passes: Vec<PassData<'pass, 'graph, C>, &'graph Arena>,
 	virtual_resources: Vec<VirtualResourceData<'graph>, &'graph Arena>,
+	ctx: C,
 }
 
-impl<'pass, 'graph> Frame<'pass, 'graph> {
+impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
 	pub fn graph(&self) -> &RenderGraph { self.graph }
 
 	pub fn arena(&self) -> &'graph Arena { self.arena }
 
 	/// Build a pass with a name.
-	pub fn pass(&mut self, name: &str) -> PassBuilder<'_, 'pass, 'graph> {
+	pub fn pass(&mut self, name: &str) -> PassBuilder<'_, 'pass, 'graph, C> {
 		let arena = self.arena;
 		let name = name.as_bytes().iter().copied().chain([0]);
 		PassBuilder {
@@ -221,6 +223,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			sync,
 			mut resource_map,
 			graph,
+			mut ctx,
 		} = self.compile(device)?;
 
 		let span = span!(Level::TRACE, "run passes");
@@ -255,6 +258,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 					pass: i as u32,
 					resource_map: &mut resource_map,
 					caches: &mut graph.caches,
+					ctx: &mut ctx,
 				});
 
 				#[cfg(debug_assertions)]
@@ -291,14 +295,14 @@ pub struct SemaphoreInfo {
 }
 
 /// A builder for a pass.
-pub struct PassBuilder<'frame, 'pass, 'graph> {
+pub struct PassBuilder<'frame, 'pass, 'graph, C> {
 	name: Vec<u8, &'graph Arena>,
 	wait: Vec<SemaphoreInfo, &'graph Arena>,
 	signal: Vec<SemaphoreInfo, &'graph Arena>,
-	frame: &'frame mut Frame<'pass, 'graph>,
+	frame: &'frame mut Frame<'pass, 'graph, C>,
 }
 
-impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
+impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 	/// Read GPU data that another pass outputs.
 	pub fn input<T: VirtualResource>(&mut self, id: ReadId<T>, usage: T::Usage<'_>) {
 		let id = id.id.wrapping_sub(self.frame.graph.resource_base_id);
@@ -371,7 +375,7 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 	pub fn signal(&mut self, info: SemaphoreInfo) { self.signal.push(info); }
 
 	/// Build the pass with the given callback.
-	pub fn build(self, callback: impl FnOnce(PassContext) + 'pass) {
+	pub fn build(self, callback: impl FnOnce(PassContext<C>) + 'pass) {
 		let pass = PassData {
 			name: self.name,
 			wait: self.wait,
@@ -383,17 +387,18 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 }
 
 /// Context given to the callback for every pass.
-pub struct PassContext<'frame, 'graph> {
+pub struct PassContext<'frame, 'graph, C> {
 	pub arena: &'graph Arena,
 	pub device: &'frame Device,
 	pub buf: vk::CommandBuffer,
+	pub ctx: &'frame mut C,
 	base_id: usize,
 	pass: u32,
 	resource_map: &'frame mut ResourceMap<'graph>,
 	caches: &'frame mut Caches,
 }
 
-impl<'frame, 'graph> PassContext<'frame, 'graph> {
+impl<'frame, 'graph, C> PassContext<'frame, 'graph, C> {
 	/// Get a reference to transient CPU-side data output by another pass.
 	pub fn get_data_ref<T: 'frame>(&mut self, id: RefId<T>) -> &'frame T {
 		let id = id.id.wrapping_sub(self.base_id);
@@ -521,12 +526,12 @@ impl<T: VirtualResource> Clone for ReadId<T> {
 	fn clone(&self) -> Self { *self }
 }
 
-struct PassData<'pass, 'graph> {
+struct PassData<'pass, 'graph, C> {
 	// UTF-8 encoded, null terminated.
 	name: Vec<u8, &'graph Arena>,
 	wait: Vec<SemaphoreInfo, &'graph Arena>,
 	signal: Vec<SemaphoreInfo, &'graph Arena>,
-	callback: Box<dyn FnOnce(PassContext) + 'pass, &'graph Arena>,
+	callback: Box<dyn FnOnce(PassContext<C>) + 'pass, &'graph Arena>,
 }
 
 type ArenaMap<'graph, K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>, &'graph Arena>;

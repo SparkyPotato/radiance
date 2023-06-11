@@ -4,3 +4,6 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
+radiance-graph = { path = "../graph", features = ["bytemuck"] }
+radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"] }
+radiance-util = { path = "../util" }

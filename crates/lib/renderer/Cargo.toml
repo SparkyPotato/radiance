@@ -7,7 +7,7 @@ edition = "2021"
 radiance-shader-compiler = { path = "../shader-compiler", features = ["build-script"] }
 
 [dependencies]
-radiance-asset-runtime = { path = "../asset-runtime" }
+# radiance-asset-runtime = { path = "../asset-runtime" }
 radiance-graph = { path = "../graph", features = ["bytemuck"] }
 radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"] }
 radiance-util = { path = "../util" }

@@ -4,58 +4,60 @@
 
 use ash::vk;
 use bytemuck::NoUninit;
-use radiance_asset::{
-	mesh::{Meshlet, Vertex},
-	util::SliceWriter,
-	Asset,
-	AssetSource,
-	AssetSystem,
-};
+pub use radiance_asset::mesh::{Cone, Vertex};
+use radiance_asset::{util::SliceWriter, Asset, AssetSource, AssetSystem};
 use radiance_graph::{
 	arena::Arena,
-	device::{descriptor::BufferId, Device},
+	device::Device,
 	gpu_allocator::MemoryLocation,
 	resource::{Buffer, BufferDesc},
 };
-use radiance_util::staging::{StageTicket, Staging, StagingCtx};
+use radiance_util::{
+	buffer::StretchyBuffer,
+	staging::{StageTicket, Staging, StagingCtx},
+};
 use rustc_hash::FxHashMap;
+use static_assertions::const_assert_eq;
 use uuid::Uuid;
-use vek::Vec4;
+use vek::{Vec3, Vec4};
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct Meshlet {
+	/// The transformation of the meshlet in world space. The AABB is a cube from `[0, 1]`.
+	pub transform: Vec4<Vec3<f32>>,
+	/// Start index of the meshlet in the global index buffer.
+	pub start_index: u32,
+	/// Start vertex of the meshlet in the global vertex buffer.
+	pub start_vertex: u32,
+	/// Number of triangles in the meshlet. The number of indices will be 3 times this.
+	pub tri_count: u8,
+	/// Number of vertices in the meshlet.
+	pub vert_count: u8,
+	/// Cone of the meshlet relative to the center of the bounding box.
+	pub cone: Cone,
+	pub _pad: u16,
+}
+
+const_assert_eq!(std::mem::size_of::<Meshlet>(), 64);
+const_assert_eq!(std::mem::align_of::<Meshlet>(), 4);
+
+pub struct Range {
+	pub offset: u32,
+	pub count: u32,
+}
 
 pub struct Model {
-	/// Organized as:
-	/// - `meshlet_count`.
-	/// - `vertex_count`.
-	/// - `index_count`.
-	/// - `meshlet_count` meshlets.
-	/// - `vertex_count` vertices.
-	/// - `index_count` indices.
-	pub buffer: Buffer,
-	pub meshlet_count: u32,
-	pub vertex_count: u32,
-	pub index_count: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
-pub struct Instance {
-	/// Columns.
-	pub transform: Vec4<Vec4<f32>>,
-	pub buffer: BufferId,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
-pub struct MeshletPointer {
-	pub instance: u32,
-	pub meshlet: u32,
+	pub meshlets: Range,
+	pub vertices: Range,
+	pub indices: Range,
 }
 
 pub struct Scene {
-	pub instances: Buffer,
-	pub meshlets: Buffer,
-	pub instance_count: u32,
-	pub meshlet_count: u32,
+	/// Buffer of `Meshlet`s.
+	pub meshlets: StretchyBuffer,
+	pub vertices: StretchyBuffer,
+	pub indices: StretchyBuffer,
 }
 
 pub enum LoadedAsset {
@@ -84,7 +86,7 @@ impl AssetRuntime {
 
 	pub fn get(&self, asset: AssetId) -> &LoadedAsset { &self.assets[asset.0 as usize] }
 
-	pub fn load_asset<S: AssetSource>(
+	pub fn load_scene<S: AssetSource>(
 		&mut self, device: &Device, wait: Vec<vk::SemaphoreSubmitInfo, &Arena>, asset: Uuid,
 		system: &mut AssetSystem<S>,
 	) -> Result<(AssetId, StageTicket), S::Error> {
@@ -246,7 +248,7 @@ impl AssetRuntime {
 
 				LoadedAsset::Scene(Scene {
 					instances,
-					meshlets,
+					meshlet_pointers: meshlets,
 					instance_count,
 					meshlet_count,
 				})

@@ -15,6 +15,7 @@ use egui::{
 	TextureOptions,
 	TexturesDelta,
 };
+use radiance_core::{CoreDevice, RenderCore};
 use radiance_graph::{
 	arena::{Arena, IteratorAlloc},
 	device::{
@@ -48,10 +49,10 @@ use rustc_hash::FxHashMap;
 use tracing::{span, Level};
 use vek::Vec2;
 
-const SHADERS: ShaderBlob = shader!("radiance-egui");
+pub const SHADERS: &[ShaderBlob] = &[shader!("radiance-egui")];
 
-const VERTEX_BUFFER_START_CAPACITY: usize = (std::mem::size_of::<Vertex>() * 1024) as _;
-const INDEX_BUFFER_START_CAPACITY: usize = (std::mem::size_of::<u32>() * 1024 * 3) as _;
+const VERTEX_BUFFER_START_CAPACITY: u64 = (std::mem::size_of::<Vertex>() * 1024) as _;
+const INDEX_BUFFER_START_CAPACITY: u64 = (std::mem::size_of::<u32>() * 1024 * 3) as _;
 
 pub struct ScreenDescriptor {
 	pub physical_size: Vec2<u32>,
@@ -59,15 +60,13 @@ pub struct ScreenDescriptor {
 }
 
 pub struct Renderer {
-	staging: Staging,
-	snapshot: ExecutionSnapshot,
 	images: FxHashMap<TextureId, (Image, Vec2<u32>, ImageView, SamplerId)>,
 	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
 	layout: vk::PipelineLayout,
 	pipeline: vk::Pipeline,
 	format: vk::Format,
-	vertex_size: usize,
-	index_size: usize,
+	vertex_size: u64,
+	index_size: u64,
 }
 
 struct PassIO {
@@ -91,10 +90,8 @@ struct PushConstantsDynamic {
 }
 
 impl Renderer {
-	pub fn new(device: &Device, output_format: vk::Format) -> Result<Self> {
+	pub fn new(device: &CoreDevice, core: &RenderCore, output_format: vk::Format) -> Result<Self> {
 		let (layout, pipeline) = unsafe {
-			let rt = ShaderRuntime::new(device.device(), &[SHADERS]);
-
 			let layout = device.device().create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::builder()
 					.set_layouts(&[device.descriptors().layout()])
@@ -119,9 +116,11 @@ impl Renderer {
 					vk::PipelineCache::null(),
 					&[vk::GraphicsPipelineCreateInfo::builder()
 						.stages(&[
-							rt.shader(c_str!("radiance-egui/vertex"), vk::ShaderStageFlags::VERTEX, None)
+							core.shaders
+								.shader(c_str!("radiance-egui/vertex"), vk::ShaderStageFlags::VERTEX, None)
 								.build(),
-							rt.shader(c_str!("radiance-egui/pixel"), vk::ShaderStageFlags::FRAGMENT, None)
+							core.shaders
+								.shader(c_str!("radiance-egui/pixel"), vk::ShaderStageFlags::FRAGMENT, None)
 								.build(),
 						])
 						.vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::builder())
@@ -176,14 +175,10 @@ impl Renderer {
 				)
 				.unwrap()[0];
 
-			rt.destroy(device.device());
-
 			(layout, pipeline)
 		};
 
 		Ok(Self {
-			staging: Staging::new(device)?,
-			snapshot: ExecutionSnapshot::default(),
 			images: FxHashMap::default(),
 			samplers: FxHashMap::default(),
 			layout,
@@ -201,7 +196,6 @@ impl Renderer {
 		let span = span!(Level::TRACE, "setup ui pass");
 		let _e = span.enter();
 
-		self.snapshot = frame.graph().snapshot();
 		let (vertices, indices) = tris
 			.iter()
 			.filter_map(|x| match &x.primitive {
@@ -210,11 +204,11 @@ impl Renderer {
 			})
 			.fold((0, 0), |(v1, i1), (v2, i2)| (v1 + v2, i1 + i2));
 		let vertex_size = vertices * std::mem::size_of::<Vertex>();
-		if vertex_size > self.vertex_size {
+		if vertex_size as u64 > self.vertex_size {
 			self.vertex_size *= 2;
 		}
 		let index_size = indices * std::mem::size_of::<u32>();
-		if index_size > self.index_size {
+		if index_size as u64 > self.index_size {
 			self.index_size *= 2;
 		}
 
@@ -243,7 +237,6 @@ impl Renderer {
 			},
 		);
 
-		self.staging.poll(device).unwrap();
 		if let Some(ticket) = self.generate_images(device, arena, delta) {
 			pass.wait_on(ticket.as_info());
 		}
@@ -253,8 +246,7 @@ impl Renderer {
 
 	/// # Safety
 	/// Appropriate synchronization must be performed.
-	pub unsafe fn destroy(self, device: &Device) {
-		self.staging.destroy(device);
+	pub unsafe fn destroy(self, device: &CoreDevice) {
 		for (_, (image, _, view, _)) in self.images {
 			view.destroy(device);
 			image.destroy(device);
@@ -414,120 +406,116 @@ impl Renderer {
 		}
 	}
 
-	fn generate_images(&mut self, device: &Device, arena: &Arena, delta: TexturesDelta) -> Option<StageTicket> {
+	fn generate_images(
+		&mut self, device: &CoreDevice, core: &mut RenderCore, arena: &Arena, delta: TexturesDelta,
+	) -> Option<StageTicket> {
 		let span = span!(Level::TRACE, "upload ui images");
 		let _e = span.enter();
 
 		let ticket = if !delta.set.is_empty() {
-			let ticket = self
-				.staging
-				.stage(
-					device,
-					self.snapshot.as_submit_info().into_iter().collect_in(arena),
-					|stage| {
-						for (id, data) in delta.set {
-							let (image, size, ..) = self.images.entry(id).or_insert_with(|| {
-								let size = Vec2::new(data.image.width() as u32, data.image.height() as _);
-								let image = Image::create(
-									device,
-									ImageDesc {
-										format: vk::Format::R8G8B8A8_SRGB,
-										size: vk::Extent3D {
-											width: size.x,
-											height: size.y,
-											depth: 1,
-										},
-										levels: 1,
-										layers: 1,
-										samples: vk::SampleCountFlags::TYPE_1,
-										usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-										..Default::default()
-									},
-								)
-								.unwrap();
-
-								let view = ImageView::create(
-									device,
-									ImageViewDesc {
-										image: image.handle(),
-										view_type: vk::ImageViewType::TYPE_2D,
-										format: vk::Format::R8G8B8A8_SRGB,
-										usage: ImageViewUsage::Sampled,
-										aspect: vk::ImageAspectFlags::COLOR,
-									},
-								)
-								.unwrap();
-
-								fn map_filter(filter: TextureFilter) -> vk::Filter {
-									match filter {
-										TextureFilter::Nearest => vk::Filter::NEAREST,
-										TextureFilter::Linear => vk::Filter::LINEAR,
-									}
-								}
-
-								let (_, id) = self.samplers.entry(data.options).or_insert_with(|| unsafe {
-									let sampler = device
-										.device()
-										.create_sampler(
-											&vk::SamplerCreateInfo::builder()
-												.mag_filter(map_filter(data.options.magnification))
-												.min_filter(map_filter(data.options.minification))
-												.mipmap_mode(vk::SamplerMipmapMode::LINEAR),
-											None,
-										)
-										.unwrap();
-
-									let id = device.descriptors().get_sampler(device, sampler);
-
-									(sampler, id)
-								});
-
-								(image, size, view, *id)
-							});
-
-							let pos = data.pos.unwrap_or([0, 0]);
-							let vec: Vec<Color32, &Arena>;
-							let image_subresource = vk::ImageSubresourceLayers {
-								aspect_mask: vk::ImageAspectFlags::COLOR,
-								mip_level: 0,
-								base_array_layer: 0,
-								layer_count: 1,
-							};
-							stage.stage_image(
-								match &data.image {
-									ImageData::Color(c) => cast_slice(&c.pixels),
-									ImageData::Font(f) => {
-										vec = f.srgba_pixels(None).collect_in(arena);
-										cast_slice(&vec)
-									},
-								},
-								image.handle(),
-								ImageStage {
-									buffer_row_length: 0,
-									buffer_image_height: 0,
-									image_subresource,
-									image_offset: vk::Offset3D {
-										x: pos[0] as i32,
-										y: pos[1] as i32,
-										z: 0,
-									},
-									image_extent: vk::Extent3D {
-										width: data.image.width() as u32,
-										height: data.image.height() as u32,
+			let ticket = core
+				.stage(device, |stage| {
+					for (id, data) in delta.set {
+						let (image, size, ..) = self.images.entry(id).or_insert_with(|| {
+							let size = Vec2::new(data.image.width() as u32, data.image.height() as _);
+							let image = Image::create(
+								device,
+								ImageDesc {
+									format: vk::Format::R8G8B8A8_SRGB,
+									size: vk::Extent3D {
+										width: size.x,
+										height: size.y,
 										depth: 1,
 									},
+									levels: 1,
+									layers: 1,
+									samples: vk::SampleCountFlags::TYPE_1,
+									usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+									..Default::default()
 								},
-								pos == [0, 0]
-									&& *size == Vec2::new(data.image.width() as u32, data.image.height() as _),
-								QueueType::Graphics,
-								&[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
-								&[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
-							)?;
-						}
+							)
+							.unwrap();
 
-						Ok(())
-					},
-				)
+							let view = ImageView::create(
+								device,
+								ImageViewDesc {
+									image: image.handle(),
+									view_type: vk::ImageViewType::TYPE_2D,
+									format: vk::Format::R8G8B8A8_SRGB,
+									usage: ImageViewUsage::Sampled,
+									aspect: vk::ImageAspectFlags::COLOR,
+								},
+							)
+							.unwrap();
+
+							fn map_filter(filter: TextureFilter) -> vk::Filter {
+								match filter {
+									TextureFilter::Nearest => vk::Filter::NEAREST,
+									TextureFilter::Linear => vk::Filter::LINEAR,
+								}
+							}
+
+							let (_, id) = self.samplers.entry(data.options).or_insert_with(|| unsafe {
+								let sampler = device
+									.device()
+									.create_sampler(
+										&vk::SamplerCreateInfo::builder()
+											.mag_filter(map_filter(data.options.magnification))
+											.min_filter(map_filter(data.options.minification))
+											.mipmap_mode(vk::SamplerMipmapMode::LINEAR),
+										None,
+									)
+									.unwrap();
+
+								let id = device.descriptors().get_sampler(device, sampler);
+
+								(sampler, id)
+							});
+
+							(image, size, view, *id)
+						});
+
+						let pos = data.pos.unwrap_or([0, 0]);
+						let vec: Vec<Color32, &Arena>;
+						let image_subresource = vk::ImageSubresourceLayers {
+							aspect_mask: vk::ImageAspectFlags::COLOR,
+							mip_level: 0,
+							base_array_layer: 0,
+							layer_count: 1,
+						};
+						stage.stage_image(
+							match &data.image {
+								ImageData::Color(c) => cast_slice(&c.pixels),
+								ImageData::Font(f) => {
+									vec = f.srgba_pixels(None).collect_in(arena);
+									cast_slice(&vec)
+								},
+							},
+							image.handle(),
+							ImageStage {
+								buffer_row_length: 0,
+								buffer_image_height: 0,
+								image_subresource,
+								image_offset: vk::Offset3D {
+									x: pos[0] as i32,
+									y: pos[1] as i32,
+									z: 0,
+								},
+								image_extent: vk::Extent3D {
+									width: data.image.width() as u32,
+									height: data.image.height() as u32,
+									depth: 1,
+								},
+							},
+							pos == [0, 0] && *size == Vec2::new(data.image.width() as u32, data.image.height() as _),
+							QueueType::Graphics,
+							&[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
+							&[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
+						)?;
+					}
+
+					Ok(())
+				})
 				.unwrap();
 			Some(ticket)
 		} else {

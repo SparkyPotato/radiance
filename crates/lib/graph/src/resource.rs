@@ -32,7 +32,7 @@ pub trait Resource: Default + Sized {
 /// A description for a buffer.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct BufferDesc {
-	pub size: usize,
+	pub size: u64,
 	pub usage: vk::BufferUsageFlags,
 }
 
@@ -47,7 +47,7 @@ pub struct Buffer {
 impl Buffer {
 	pub fn create(device: &Device, desc: BufferDesc, location: MemoryLocation) -> Result<Self> {
 		let info = vk::BufferCreateInfo::builder()
-			.size(desc.size as u64)
+			.size(desc.size)
 			.usage(desc.usage)
 			.sharing_mode(vk::SharingMode::CONCURRENT);
 
@@ -103,7 +103,7 @@ impl Buffer {
 			)))
 		}
 	}
-	
+
 	pub fn id(&self) -> Option<BufferId> { self.id }
 
 	pub fn inner(&self) -> vk::Buffer { self.inner }
@@ -131,7 +131,7 @@ pub struct UploadBufferHandle {
 /// A buffer for uploading data from the CPU to the GPU.
 #[derive(Default)]
 pub struct UploadBuffer {
-	inner: Buffer,
+	pub inner: Buffer,
 }
 
 impl Resource for UploadBuffer {
@@ -166,7 +166,7 @@ pub struct GpuBufferHandle {
 /// A buffer on the GPU.
 #[derive(Default)]
 pub struct GpuBuffer {
-	inner: Buffer,
+	pub inner: Buffer,
 }
 
 impl Resource for GpuBuffer {

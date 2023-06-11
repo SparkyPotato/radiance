@@ -123,7 +123,7 @@ impl Staging {
 }
 
 pub struct StagingCtx<'a> {
-	device: &'a Device,
+	pub device: &'a Device,
 	inner: &'a mut CircularBuffer,
 	queues: &'a mut Queues<CommandPool>,
 	pre_bufs: Queues<Option<vk::CommandBuffer>>,
@@ -323,7 +323,7 @@ struct BufferLoc<B> {
 
 impl CircularBuffer {
 	/// 4 MB.
-	const BUFFER_SIZE: usize = 1024 * 1024 * 4;
+	const BUFFER_SIZE: u64 = 1024 * 1024 * 4;
 
 	fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
@@ -368,7 +368,7 @@ impl CircularBuffer {
 			self.tail.offset = 0;
 			if self.tail.buffer == self.head.buffer {
 				// We've wrapped back to the head, so we need to allocate a new buffer.
-				self.insert_buffer(device, size)?;
+				self.insert_buffer(device, size as u64)?;
 			}
 		}
 
@@ -386,7 +386,7 @@ impl CircularBuffer {
 		})
 	}
 
-	fn insert_buffer(&mut self, device: &Device, size: usize) -> Result<()> {
+	fn insert_buffer(&mut self, device: &Device, size: u64) -> Result<()> {
 		self.buffers.insert(
 			self.tail.buffer,
 			Buffer::create(

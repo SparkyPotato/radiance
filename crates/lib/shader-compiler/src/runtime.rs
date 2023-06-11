@@ -32,9 +32,9 @@ pub struct ShaderRuntime {
 }
 
 impl ShaderRuntime {
-	pub fn new(device: &ash::Device, modules: &[ShaderBlob]) -> Self {
+	pub fn new<'s>(device: &ash::Device, modules: impl IntoIterator<Item = &'s ShaderBlob>) -> Self {
 		let modules = modules
-			.iter()
+			.into_iter()
 			.map(|shader| {
 				let module = unsafe {
 					device.create_shader_module(
