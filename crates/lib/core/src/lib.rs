@@ -3,7 +3,7 @@ use std::ops::Deref;
 use radiance_graph::{
 	arena::{Arena, IteratorAlloc},
 	device::Device,
-	graph::{ExecutionSnapshot, Frame, RenderGraph},
+	graph::{ExecutionSnapshot, Frame, PassBuilder, PassContext, RenderGraph},
 	Result,
 };
 use radiance_shader_compiler::runtime::{ShaderBlob, ShaderRuntime};
@@ -12,6 +12,8 @@ use radiance_util::{
 	pipeline::PipelineCache,
 	staging::{StageTicket, Staging, StagingCtx},
 };
+
+pub mod pipeline;
 
 pub struct CoreDevice {
 	pub device: Device,
@@ -33,12 +35,16 @@ impl Deref for CoreDevice {
 
 pub type CoreFrame<'pass, 'graph> = Frame<'pass, 'graph, &'graph mut RenderCore>;
 
+pub type CorePass<'frame, 'graph> = PassContext<'frame, 'graph, &'graph mut RenderCore>;
+
+pub type CoreBuilder<'frame, 'pass, 'graph> = PassBuilder<'frame, 'pass, 'graph, &'graph mut RenderCore>;
+
 pub struct RenderCore {
 	pub shaders: ShaderRuntime,
 	pub cache: PipelineCache,
 	pub staging: Staging,
 	pub delete: DeletionQueue,
-	last_frame_snapshot: ExecutionSnapshot,
+	pub last_frame_snapshot: ExecutionSnapshot,
 }
 
 impl RenderCore {
@@ -56,7 +62,7 @@ impl RenderCore {
 	}
 
 	pub fn frame<'pass, 'graph>(
-		&'passmut self, device: &'graph CoreDevice, graph: &'graph mut RenderGraph,
+		&'graph mut self, device: &'graph CoreDevice, graph: &'graph mut RenderGraph,
 	) -> Result<CoreFrame<'pass, 'graph>> {
 		self.staging.poll(device)?;
 		let snap = graph.snapshot();
@@ -67,7 +73,7 @@ impl RenderCore {
 	}
 
 	pub fn stage(
-		&mut self, device: &CoreDevice, exec: impl FnOnce(&mut StagingCtx) -> Result<()>,
+		&mut self, device: &CoreDevice, exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> Result<()>,
 	) -> Result<StageTicket> {
 		self.staging.stage(
 			device,
@@ -75,14 +81,32 @@ impl RenderCore {
 				.as_submit_info()
 				.into_iter()
 				.collect_in(&device.arena),
-			exec,
+			|ctx| exec(ctx, &mut self.delete),
 		)
 	}
 
+	/// # Safety
+	/// Appropriate synchronization must be performed before calling this function.
 	pub unsafe fn destroy(self, device: &CoreDevice) {
 		self.delete.destroy(device);
 		self.staging.destroy(device);
 		self.cache.destroy(device);
 		self.shaders.destroy(device.device());
+	}
+}
+
+pub trait PassBuilderExt {
+	fn stage(
+		&mut self, device: &CoreDevice, exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> Result<()>,
+	) -> Result<()>;
+}
+
+impl PassBuilderExt for CoreBuilder<'_, '_, '_> {
+	fn stage(
+		&mut self, device: &CoreDevice, exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> Result<()>,
+	) -> Result<()> {
+		let ticket = self.ctx().stage(device, exec)?;
+		self.wait_on(ticket.as_info());
+		Ok(())
 	}
 }

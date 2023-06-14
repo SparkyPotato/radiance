@@ -193,6 +193,8 @@ impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
 
 	pub fn arena(&self) -> &'graph Arena { self.arena }
 
+	pub fn ctx(&mut self) -> &mut C { &mut self.ctx }
+
 	/// Build a pass with a name.
 	pub fn pass(&mut self, name: &str) -> PassBuilder<'_, 'pass, 'graph, C> {
 		let arena = self.arena;
@@ -303,6 +305,9 @@ pub struct PassBuilder<'frame, 'pass, 'graph, C> {
 }
 
 impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
+	/// Get the frame context.
+	pub fn ctx(&mut self) -> &mut C { &mut self.frame.ctx }
+
 	/// Read GPU data that another pass outputs.
 	pub fn input<T: VirtualResource>(&mut self, id: ReadId<T>, usage: T::Usage<'_>) {
 		let id = id.id.wrapping_sub(self.frame.graph.resource_base_id);
@@ -375,7 +380,7 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 	pub fn signal(&mut self, info: SemaphoreInfo) { self.signal.push(info); }
 
 	/// Build the pass with the given callback.
-	pub fn build(self, callback: impl FnOnce(PassContext<C>) + 'pass) {
+	pub fn build(self, callback: impl FnOnce(PassContext<'_, 'graph, C>) + 'pass) {
 		let pass = PassData {
 			name: self.name,
 			wait: self.wait,
@@ -531,7 +536,7 @@ struct PassData<'pass, 'graph, C> {
 	name: Vec<u8, &'graph Arena>,
 	wait: Vec<SemaphoreInfo, &'graph Arena>,
 	signal: Vec<SemaphoreInfo, &'graph Arena>,
-	callback: Box<dyn FnOnce(PassContext<C>) + 'pass, &'graph Arena>,
+	callback: Box<dyn FnOnce(PassContext<'_, 'graph, C>) + 'pass, &'graph Arena>,
 }
 
 type ArenaMap<'graph, K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>, &'graph Arena>;

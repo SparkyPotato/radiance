@@ -72,4 +72,6 @@ impl StretchyBuffer {
 	pub fn inner(&self) -> &GpuBuffer { &self.inner }
 
 	pub fn len(&self) -> u64 { self.len }
+
+	pub unsafe fn destroy(self, queue: &mut DeletionQueue) { queue.delete(self.inner); }
 }

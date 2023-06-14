@@ -2,24 +2,20 @@
 
 //! Bridge between raw assets and cached assets on the GPU or CPU.
 
+use std::ops::Range;
+
 use ash::vk;
-use bytemuck::NoUninit;
+use bytemuck::{cast_slice, NoUninit};
 pub use radiance_asset::mesh::{Cone, Vertex};
-use radiance_asset::{util::SliceWriter, Asset, AssetSource, AssetSystem};
-use radiance_graph::{
-	arena::Arena,
-	device::Device,
-	gpu_allocator::MemoryLocation,
-	resource::{Buffer, BufferDesc},
-};
-use radiance_util::{
-	buffer::StretchyBuffer,
-	staging::{StageTicket, Staging, StagingCtx},
-};
+use radiance_asset::{mesh, Asset, AssetSource, AssetSystem};
+use radiance_core::{CoreDevice, RenderCore};
+use radiance_graph::resource::BufferDesc;
+use radiance_util::{buffer::StretchyBuffer, staging::StageTicket};
 use rustc_hash::FxHashMap;
 use static_assertions::const_assert_eq;
+use tracing::span;
 use uuid::Uuid;
-use vek::{Vec3, Vec4};
+use vek::{num_traits::Inv, Mat4, Vec3, Vec4};
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
@@ -42,223 +38,160 @@ pub struct Meshlet {
 const_assert_eq!(std::mem::size_of::<Meshlet>(), 64);
 const_assert_eq!(std::mem::align_of::<Meshlet>(), 4);
 
-pub struct Range {
-	pub offset: u32,
-	pub count: u32,
-}
-
-pub struct Model {
-	pub meshlets: Range,
-	pub vertices: Range,
-	pub indices: Range,
-}
-
 pub struct Scene {
-	/// Buffer of `Meshlet`s.
 	pub meshlets: StretchyBuffer,
 	pub vertices: StretchyBuffer,
 	pub indices: StretchyBuffer,
 }
 
-pub enum LoadedAsset {
-	Model(Model),
-	Scene(Scene),
+struct Model {
+	vertices: Range<usize>,
+	indices: Range<usize>,
+	meshlets: Vec<mesh::Meshlet>,
 }
 
-/// ID of a loaded asset.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct AssetId(u32);
-
 pub struct AssetRuntime {
-	id_map: FxHashMap<Uuid, AssetId>,
-	assets: Vec<LoadedAsset>,
-	staging: Staging,
+	scenes: FxHashMap<Uuid, Scene>,
 }
 
 impl AssetRuntime {
-	pub fn new(device: &Device) -> radiance_graph::Result<Self> {
-		Ok(Self {
-			id_map: FxHashMap::default(),
-			assets: Vec::new(),
-			staging: Staging::new(device)?,
-		})
+	pub const INDEX_SIZE: u64 = std::mem::size_of::<u32>() as u64;
+	pub const MESHLET_SIZE: u64 = std::mem::size_of::<Meshlet>() as u64;
+	pub const START_INDEX_COUNT: u64 = Self::START_MESHLET_COUNT * 64 * 3;
+	pub const START_MESHLET_COUNT: u64 = 8192;
+	pub const START_VERTEX_COUNT: u64 = Self::START_MESHLET_COUNT * 124;
+	pub const VERTEX_SIZE: u64 = std::mem::size_of::<Vertex>() as u64;
+
+	pub fn new() -> Self {
+		Self {
+			scenes: FxHashMap::default(),
+		}
 	}
 
-	pub fn get(&self, asset: AssetId) -> &LoadedAsset { &self.assets[asset.0 as usize] }
+	pub fn unload_scene(&mut self, core: &mut RenderCore, asset: Uuid) {
+		if let Some(scene) = self.scenes.remove(&asset) {
+			unsafe {
+				scene.vertices.destroy(&mut core.delete);
+				scene.indices.destroy(&mut core.delete);
+				scene.meshlets.destroy(&mut core.delete);
+			}
+		}
+	}
 
 	pub fn load_scene<S: AssetSource>(
-		&mut self, device: &Device, wait: Vec<vk::SemaphoreSubmitInfo, &Arena>, asset: Uuid,
-		system: &mut AssetSystem<S>,
-	) -> Result<(AssetId, StageTicket), S::Error> {
-		let mut out = Ok(AssetId(0));
-		let ticket = self
-			.staging
-			.stage(device, wait, |ctx| {
-				out = Self::load_inner(&mut self.id_map, &mut self.assets, device, ctx, asset, system);
+		&mut self, device: &CoreDevice, core: &mut RenderCore, asset: Uuid, system: &mut AssetSystem<S>,
+	) -> Result<Option<StageTicket>, S::Error> {
+		let s = span!(tracing::Level::INFO, "load_scene", scene = %asset);
+		let _e = s.enter();
+
+		if self.scenes.contains_key(&asset) {
+			return Ok(None);
+		}
+
+		let asset = system.load(asset)?;
+		let scene = match asset {
+			Asset::Scene(scene) => scene,
+			_ => unreachable!("Scene asset is not a scene"),
+		};
+
+		let mut out = Scene {
+			meshlets: StretchyBuffer::new(
+				device,
+				BufferDesc {
+					size: Self::START_MESHLET_COUNT * Self::MESHLET_SIZE,
+					usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+				},
+			)
+			.unwrap(),
+			indices: StretchyBuffer::new(
+				device,
+				BufferDesc {
+					size: Self::START_INDEX_COUNT * Self::INDEX_SIZE,
+					usage: vk::BufferUsageFlags::INDEX_BUFFER,
+				},
+			)
+			.unwrap(),
+			vertices: StretchyBuffer::new(
+				device,
+				BufferDesc {
+					size: Self::START_VERTEX_COUNT * Self::VERTEX_SIZE,
+					usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+				},
+			)
+			.unwrap(),
+		};
+
+		let mut model_map = FxHashMap::default();
+		let mut meshlets = Vec::new();
+		let mut vertices = Vec::new();
+		let mut indices = Vec::new();
+		for node in scene.nodes.iter() {
+			let model = if let Some(m) = model_map.get(&node.model) {
+				m
+			} else {
+				let model = match system.load(node.model)? {
+					Asset::Model(m) => m,
+					_ => unreachable!("Model asset is not a model"),
+				};
+				let vertex_start = vertices.len();
+				let index_start = indices.len();
+				let mut meshlets = Vec::new();
+				for mesh in model.meshes {
+					let m = match system.load(mesh)? {
+						Asset::Mesh(m) => m,
+						_ => unreachable!("Mesh asset is not a mesh"),
+					};
+
+					let vertex_offset = vertices.len() as u32;
+					let index_offset = indices.len() as u32;
+					vertices.extend(m.vertices);
+					indices.extend(m.indices.into_iter().map(|x| x as u16));
+					meshlets.extend(m.meshlets.into_iter().map(|mut m| {
+						m.vertex_offset += vertex_offset;
+						m.index_offset += index_offset;
+						m
+					}));
+				}
+
+				model_map.insert(
+					node.model,
+					Model {
+						vertices: vertex_start..vertices.len(),
+						indices: index_start..indices.len(),
+						meshlets,
+					},
+				);
+				model_map.get(&node.model).unwrap()
+			};
+
+			meshlets.extend(model.meshlets.iter().map(|x| {
+				let start_index = model.indices.start as u32 + x.index_offset;
+				let start_vertex = model.vertices.start as u32 + x.vertex_offset;
+
+				let extent = x.aabb_max - x.aabb_min;
+				let transform = node.transform * Mat4::translation_3d(-x.aabb_min) * Mat4::scaling_3d(extent.inv());
+
+				Meshlet {
+					transform: transform.cols.map(|x| x.xyz()),
+					start_index,
+					start_vertex,
+					tri_count: x.tri_count,
+					vert_count: x.vert_count,
+					cone: x.cone,
+					_pad: 0,
+				}
+			}));
+		}
+
+		let ticket = core
+			.stage(device, |ctx, delete| {
+				out.vertices.push(ctx, delete, cast_slice(&vertices))?;
+				out.indices.push(ctx, delete, cast_slice(&indices))?;
+				out.meshlets.push(ctx, delete, cast_slice(&meshlets))?;
+
 				Ok(())
 			})
 			.unwrap();
-		out.map(|x| (x, ticket))
-	}
-
-	fn load_inner<S: AssetSource>(
-		map: &mut FxHashMap<Uuid, AssetId>, assets: &mut Vec<LoadedAsset>, device: &Device, ctx: &mut StagingCtx,
-		asset: Uuid, system: &mut AssetSystem<S>,
-	) -> Result<AssetId, S::Error> {
-		if let Some(&x) = map.get(&asset) {
-			return Ok(x);
-		}
-
-		let uuid = asset;
-		let asset = system.load(asset)?;
-		let asset = match asset {
-			Asset::Mesh(_) => unreachable!("Meshes are not loaded directly"),
-			Asset::Model(m) => {
-				let meshes: Vec<_> = m
-					.meshes
-					.into_iter()
-					.map(|x| {
-						system.load(x).map(|x| match x {
-							Asset::Mesh(m) => m,
-							_ => unreachable!("Model mesh is not a mesh"),
-						})
-					})
-					.collect::<Result<_, _>>()?;
-				let meshlet_count = meshes.iter().map(|x| x.meshlets.len() as u32).sum::<u32>();
-				let vertex_count = meshes.iter().map(|x| x.vertices.len() as u32).sum::<u32>();
-				let index_count = meshes.iter().map(|x| x.indices.len() as u32).sum::<u32>();
-				let mut bytes = vec![
-					0;
-					std::mem::size_of::<u32>() * 3
-						+ std::mem::size_of::<Meshlet>() * meshlet_count as usize
-						+ std::mem::size_of::<Vertex>() * vertex_count as usize
-						+ std::mem::size_of::<u32>() * index_count as usize
-				];
-				let mut writer = SliceWriter::new(&mut bytes);
-				writer.write(meshlet_count);
-				writer.write(vertex_count);
-				writer.write(index_count);
-				let mut vertex_offset = 0;
-				let mut index_offset = 0;
-				for mesh in meshes.iter() {
-					for &meshlet in mesh.meshlets.iter() {
-						let meshlet = Meshlet {
-							vertex_offset: vertex_offset + meshlet.vertex_offset,
-							index_offset: index_offset + meshlet.index_offset,
-							..meshlet
-						};
-						writer.write(meshlet);
-					}
-					vertex_offset += mesh.vertices.len() as u32;
-				}
-
-				for mesh in meshes.iter() {
-					writer.write_slice(&mesh.vertices);
-				}
-
-				let mut vertex_offset = 0;
-				for mesh in meshes.iter() {
-					for &meshlet in mesh.meshlets.iter() {
-						for &index in mesh.indices[meshlet.index_offset as usize
-							..meshlet.index_offset as usize + meshlet.tri_count as usize * 3]
-							.iter()
-						{
-							writer.write(index as u32 + vertex_offset + meshlet.vertex_offset);
-						}
-					}
-					vertex_offset += mesh.vertices.len() as u32;
-				}
-
-				let buffer = Buffer::create(
-					device,
-					BufferDesc {
-						size: bytes.len(),
-						usage: vk::BufferUsageFlags::TRANSFER_DST
-							| vk::BufferUsageFlags::STORAGE_BUFFER
-							| vk::BufferUsageFlags::INDEX_BUFFER,
-					},
-					MemoryLocation::GpuOnly,
-				)
-				.unwrap();
-				ctx.stage_buffer(&bytes, buffer.inner(), 0).unwrap();
-				LoadedAsset::Model(Model {
-					buffer,
-					meshlet_count,
-					vertex_count,
-					index_count,
-				})
-			},
-			Asset::Scene(s) => {
-				let instances = s
-					.nodes
-					.into_iter()
-					.map(|x| Self::load_inner(map, assets, device, ctx, x.model, system).map(|id| (x.transform, id)))
-					.collect::<Result<Vec<_>, _>>()?;
-				let instance_count = instances.len() as u32;
-				let meshlet_count = instances
-					.iter()
-					.map(|(_, id)| match &assets[id.0 as usize] {
-						LoadedAsset::Model(x) => x.meshlet_count,
-						_ => unreachable!("Scene node is not a model"),
-					})
-					.sum::<u32>();
-
-				let mut instance_bytes = vec![0; std::mem::size_of::<Instance>() * instances.len()];
-				let mut instance_writer = SliceWriter::new(&mut instance_bytes);
-				let mut meshlet_bytes = vec![0; std::mem::size_of::<MeshletPointer>() * meshlet_count as usize];
-				let mut meshlet_writer = SliceWriter::new(&mut meshlet_bytes);
-				for (instance, (transform, id)) in instances.into_iter().enumerate() {
-					let m = match &assets[id.0 as usize] {
-						LoadedAsset::Model(x) => x,
-						_ => unreachable!("Scene node is not a model"),
-					};
-					instance_writer.write(Instance {
-						transform: transform.cols,
-						buffer: m.buffer.id().unwrap(),
-					});
-					for meshlet in 0..m.meshlet_count {
-						meshlet_writer.write(MeshletPointer {
-							instance: instance as u32,
-							meshlet,
-						});
-					}
-				}
-
-				let instances = Buffer::create(
-					device,
-					BufferDesc {
-						size: instance_bytes.len(),
-						usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::STORAGE_BUFFER,
-					},
-					MemoryLocation::GpuOnly,
-				)
-				.unwrap();
-				ctx.stage_buffer(&instance_bytes, instances.inner(), 0).unwrap();
-
-				let meshlets = Buffer::create(
-					device,
-					BufferDesc {
-						size: meshlet_bytes.len(),
-						usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::STORAGE_BUFFER,
-					},
-					MemoryLocation::GpuOnly,
-				)
-				.unwrap();
-				ctx.stage_buffer(&meshlet_bytes, meshlets.inner(), 0).unwrap();
-
-				LoadedAsset::Scene(Scene {
-					instances,
-					meshlet_pointers: meshlets,
-					instance_count,
-					meshlet_count,
-				})
-			},
-		};
-
-		let id = AssetId(assets.len() as u32);
-		assets.push(asset);
-		map.insert(uuid, id);
-
-		Ok(id)
+		Ok(Some(ticket))
 	}
 }

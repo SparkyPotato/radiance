@@ -783,7 +783,7 @@ struct SyncBuilder<'graph> {
 }
 
 impl<'graph> SyncBuilder<'graph> {
-	fn new<'a, C>(arena: &'graph Arena, passes: &'a [PassData<'a, 'a, C>]) -> Self {
+	fn new<'temp, 'pass, C>(arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph, C>]) -> Self {
 		Self {
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
@@ -1041,13 +1041,13 @@ impl ImageUsageOwned<'_> {
 	}
 }
 
-struct Synchronizer<'temp, 'graph, C> {
+struct Synchronizer<'temp, 'pass, 'graph, C> {
 	resource_map: &'temp ResourceMap<'graph>,
-	passes: &'temp [PassData<'temp, 'graph, C>],
+	passes: &'temp [PassData<'pass, 'graph, C>],
 }
 
-impl<'temp, 'graph, C> Synchronizer<'temp, 'graph, C> {
-	fn new(resource_map: &'temp ResourceMap<'graph>, passes: &'temp [PassData<'temp, 'graph, C>]) -> Self {
+impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
+	fn new(resource_map: &'temp ResourceMap<'graph>, passes: &'temp [PassData<'pass, 'graph, C>]) -> Self {
 		Self { resource_map, passes }
 	}
 

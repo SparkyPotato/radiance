@@ -1,6 +1,7 @@
 use egui::Context;
+use radiance_core::{CoreDevice, CoreFrame, RenderCore};
 use radiance_egui::ScreenDescriptor;
-use radiance_graph::{device::Device, graph::Frame, Result};
+use radiance_graph::Result;
 use vek::Vec2;
 use winit::{event::WindowEvent, event_loop::EventLoop};
 
@@ -14,7 +15,7 @@ pub struct UiHandler {
 }
 
 impl UiHandler {
-	pub fn new(device: &Device, event_loop: &EventLoop<()>, window: &Window) -> Result<Self> {
+	pub fn new(device: &CoreDevice, core: &RenderCore, event_loop: &EventLoop<()>, window: &Window) -> Result<Self> {
 		let ctx = Context::default();
 		let (defs, fonts) = Fonts::defs();
 		ctx.set_fonts(defs);
@@ -22,7 +23,7 @@ impl UiHandler {
 		Ok(Self {
 			ctx,
 			platform_state: egui_winit::State::new(event_loop),
-			renderer: radiance_egui::Renderer::new(device, window.format())?,
+			renderer: radiance_egui::Renderer::new(device, core, window.format())?,
 			fonts,
 		})
 	}
@@ -30,7 +31,8 @@ impl UiHandler {
 	pub fn fonts(&self) -> &Fonts { &self.fonts }
 
 	pub fn run<'pass>(
-		&'pass mut self, frame: &mut Frame<'pass, '_>, device: &Device, window: &Window, run: impl FnOnce(&Context),
+		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, window: &Window,
+		run: impl FnOnce(&Context),
 	) -> Result<u32> {
 		let (image, id) = {
 			tracy::zone!("swapchain acquire");
@@ -51,8 +53,8 @@ impl UiHandler {
 		};
 
 		self.renderer.render(
-			frame,
 			device,
+			frame,
 			tris,
 			output.textures_delta,
 			ScreenDescriptor {
@@ -67,5 +69,5 @@ impl UiHandler {
 
 	pub fn on_event(&mut self, event: &WindowEvent) { let _ = self.platform_state.on_event(&self.ctx, event); }
 
-	pub unsafe fn destroy(self, device: &Device) { self.renderer.destroy(device); }
+	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
 }

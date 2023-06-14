@@ -1,12 +1,13 @@
 use radiance_graph::{
 	device::Device,
 	graph::FRAMES_IN_FLIGHT,
-	resource::{Buffer, GpuBuffer, Image, Resource as R, UploadBuffer},
+	resource::{Buffer, GpuBuffer, Image, ImageView, Resource as R, UploadBuffer},
 };
 
 pub enum Resource {
 	Buffer(Buffer),
 	Image(Image),
+	ImageView(ImageView),
 }
 
 pub trait IntoResource {
@@ -23,6 +24,10 @@ impl IntoResource for GpuBuffer {
 
 impl IntoResource for Image {
 	fn into_resource(self) -> Resource { Resource::Image(self) }
+}
+
+impl IntoResource for ImageView {
+	fn into_resource(self) -> Resource { Resource::ImageView(self) }
 }
 
 pub struct DeletionQueue {
@@ -53,6 +58,7 @@ impl DeletionQueue {
 				match x {
 					Resource::Buffer(x) => x.destroy(device),
 					Resource::Image(x) => x.destroy(device),
+					Resource::ImageView(x) => x.destroy(device),
 				}
 			}
 		}
@@ -64,6 +70,7 @@ impl DeletionQueue {
 			match x {
 				Resource::Buffer(x) => unsafe { x.destroy(device) },
 				Resource::Image(x) => unsafe { x.destroy(device) },
+				Resource::ImageView(x) => unsafe { x.destroy(device) },
 			}
 		}
 	}

@@ -30,3 +30,45 @@ impl PipelineCache {
 		}
 	}
 }
+
+pub fn no_cull() -> vk::PipelineRasterizationStateCreateInfoBuilder<'static> {
+	vk::PipelineRasterizationStateCreateInfo::builder()
+		.polygon_mode(vk::PolygonMode::FILL)
+		.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+		.cull_mode(vk::CullModeFlags::NONE)
+		.line_width(1.0)
+}
+
+pub fn simple_blend(states: &[vk::PipelineColorBlendAttachmentState]) -> vk::PipelineColorBlendStateCreateInfoBuilder {
+	vk::PipelineColorBlendStateCreateInfo::builder().attachments(states)
+}
+
+pub fn no_blend() -> vk::PipelineColorBlendAttachmentState {
+	vk::PipelineColorBlendAttachmentState::builder()
+		.color_write_mask(
+			vk::ColorComponentFlags::R
+				| vk::ColorComponentFlags::G
+				| vk::ColorComponentFlags::B
+				| vk::ColorComponentFlags::A,
+		)
+		.blend_enable(false)
+		.build()
+}
+
+pub fn default_blend() -> vk::PipelineColorBlendAttachmentState {
+	vk::PipelineColorBlendAttachmentState::builder()
+		.color_write_mask(
+			vk::ColorComponentFlags::R
+				| vk::ColorComponentFlags::G
+				| vk::ColorComponentFlags::B
+				| vk::ColorComponentFlags::A,
+		)
+		.blend_enable(true)
+		.src_color_blend_factor(vk::BlendFactor::ONE)
+		.dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+		.color_blend_op(vk::BlendOp::ADD)
+		.src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
+		.dst_alpha_blend_factor(vk::BlendFactor::ONE)
+		.alpha_blend_op(vk::BlendOp::ADD)
+		.build()
+}
