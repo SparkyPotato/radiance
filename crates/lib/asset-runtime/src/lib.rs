@@ -7,7 +7,7 @@ use std::ops::Range;
 use ash::vk;
 use bytemuck::{cast_slice, NoUninit};
 pub use radiance_asset::mesh::{Cone, Vertex};
-use radiance_asset::{mesh, Asset, AssetSource, AssetSystem};
+use radiance_asset::{mesh, scene, Asset, AssetSource, AssetSystem};
 use radiance_core::{CoreDevice, RenderCore};
 use radiance_graph::resource::BufferDesc;
 use radiance_util::{buffer::StretchyBuffer, staging::StageTicket};
@@ -15,7 +15,7 @@ use rustc_hash::FxHashMap;
 use static_assertions::const_assert_eq;
 use tracing::span;
 use uuid::Uuid;
-use vek::{num_traits::Inv, Mat4, Vec3, Vec4};
+use vek::{Mat4, Vec3, Vec4};
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
@@ -35,6 +35,13 @@ pub struct Meshlet {
 	pub _pad: u16,
 }
 
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct Camera {
+	pub view: Vec4<Vec3<f32>>,
+	pub projection: Vec4<Vec3<f32>>,
+}
+
 const_assert_eq!(std::mem::size_of::<Meshlet>(), 64);
 const_assert_eq!(std::mem::align_of::<Meshlet>(), 4);
 
@@ -42,6 +49,7 @@ pub struct Scene {
 	pub meshlets: StretchyBuffer,
 	pub vertices: StretchyBuffer,
 	pub indices: StretchyBuffer,
+	pub cameras: Vec<scene::Camera>,
 }
 
 struct Model {
@@ -55,7 +63,7 @@ pub struct AssetRuntime {
 }
 
 impl AssetRuntime {
-	pub const INDEX_SIZE: u64 = std::mem::size_of::<u32>() as u64;
+	pub const INDEX_SIZE: u64 = std::mem::size_of::<u16>() as u64;
 	pub const MESHLET_SIZE: u64 = std::mem::size_of::<Meshlet>() as u64;
 	pub const START_INDEX_COUNT: u64 = Self::START_MESHLET_COUNT * 64 * 3;
 	pub const START_MESHLET_COUNT: u64 = 8192;
@@ -71,25 +79,27 @@ impl AssetRuntime {
 	pub fn unload_scene(&mut self, core: &mut RenderCore, asset: Uuid) {
 		if let Some(scene) = self.scenes.remove(&asset) {
 			unsafe {
-				scene.vertices.destroy(&mut core.delete);
-				scene.indices.destroy(&mut core.delete);
-				scene.meshlets.destroy(&mut core.delete);
+				scene.vertices.delete(&mut core.delete);
+				scene.indices.delete(&mut core.delete);
+				scene.meshlets.delete(&mut core.delete);
 			}
 		}
 	}
 
+	pub fn get_scene(&self, asset: Uuid) -> Option<&Scene> { self.scenes.get(&asset) }
+
 	pub fn load_scene<S: AssetSource>(
-		&mut self, device: &CoreDevice, core: &mut RenderCore, asset: Uuid, system: &mut AssetSystem<S>,
+		&mut self, device: &CoreDevice, core: &mut RenderCore, scene: Uuid, system: &mut AssetSystem<S>,
 	) -> Result<Option<StageTicket>, S::Error> {
-		let s = span!(tracing::Level::INFO, "load_scene", scene = %asset);
+		let s = span!(tracing::Level::INFO, "load_scene", scene = %scene);
 		let _e = s.enter();
 
-		if self.scenes.contains_key(&asset) {
+		if self.scenes.contains_key(&scene) {
 			return Ok(None);
 		}
 
-		let asset = system.load(asset)?;
-		let scene = match asset {
+		let uuid = scene;
+		let scene = match system.load(scene)? {
 			Asset::Scene(scene) => scene,
 			_ => unreachable!("Scene asset is not a scene"),
 		};
@@ -119,6 +129,7 @@ impl AssetRuntime {
 				},
 			)
 			.unwrap(),
+			cameras: scene.cameras,
 		};
 
 		let mut model_map = FxHashMap::default();
@@ -169,7 +180,9 @@ impl AssetRuntime {
 				let start_vertex = model.vertices.start as u32 + x.vertex_offset;
 
 				let extent = x.aabb_max - x.aabb_min;
-				let transform = node.transform * Mat4::translation_3d(-x.aabb_min) * Mat4::scaling_3d(extent.inv());
+				let scale = Mat4::scaling_3d(extent);
+				let translate = Mat4::translation_3d(x.aabb_min);
+				let transform = node.transform * translate * scale;
 
 				Meshlet {
 					transform: transform.cols.map(|x| x.xyz()),
@@ -192,6 +205,19 @@ impl AssetRuntime {
 				Ok(())
 			})
 			.unwrap();
+
+		self.scenes.insert(uuid, out);
+
 		Ok(Some(ticket))
+	}
+
+	pub unsafe fn destroy(self, device: &CoreDevice) {
+		for (_, scene) in self.scenes {
+			unsafe {
+				scene.vertices.destroy(device);
+				scene.indices.destroy(device);
+				scene.meshlets.destroy(device);
+			}
+		}
 	}
 }

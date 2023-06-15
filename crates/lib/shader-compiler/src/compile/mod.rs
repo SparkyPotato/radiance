@@ -1,15 +1,6 @@
-use std::{
-	borrow::Borrow,
-	error::Error,
-	ffi::OsStr,
-	fs::File,
-	io::{BufReader, Read},
-	path::{Path, PathBuf},
-	process::{Command, Stdio},
-};
+use std::{borrow::Borrow, error::Error, fs::File, io::BufReader, path::Path};
 
 use hassle_rs::{Dxc, DxcCompiler3, DxcIncludeHandler, DxcLibrary};
-use rspirv::{binary::Assemble, dr::Operand};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -20,6 +11,7 @@ pub mod vfs;
 
 pub struct ShaderBuilder {
 	pub(crate) vfs: VirtualFileSystem,
+	debug: bool,
 	dependencies: DependencyInfo,
 	compiler: DxcCompiler3,
 	library: DxcLibrary,
@@ -27,13 +19,14 @@ pub struct ShaderBuilder {
 }
 
 impl ShaderBuilder {
-	pub fn new() -> Result<Self, Box<dyn Error>> {
+	pub fn new(debug: bool) -> Result<Self, Box<dyn Error>> {
 		let dxc = Dxc::new(None)?;
 		let compiler = dxc.create_compiler3()?;
 		let library = dxc.create_library()?;
 
 		Ok(Self {
 			vfs: VirtualFileSystem::new(),
+			debug,
 			dependencies: DependencyInfo::default(),
 			compiler,
 			library,
@@ -71,6 +64,11 @@ impl ShaderBuilder {
 				"-enable-16bit-types",
 			]
 			.into_iter()
+			.chain(
+				if self.debug { Some(["-Zi", "-Od"]) } else { None }
+					.into_iter()
+					.flatten(),
+			)
 			.map(|x| x.to_string())
 			.chain(Some(format!("-T {}", ty.target_profile())))
 			.collect();
@@ -92,33 +90,7 @@ impl ShaderBuilder {
 
 			let output = self.vfs.resolve_output(&virtual_path).unwrap();
 			std::fs::create_dir_all(output.parent().unwrap()).unwrap();
-
-			let mut spirv = rspirv::dr::load_bytes(bytecode).unwrap();
-			if spirv.entry_points.len() != 1 {
-				return Err(format!("Shader `{}` must have exactly one entry point", file.display()));
-			}
-
-			let mut x = PathBuf::from(format!("{}", virtual_path.display()));
-			x.set_extension("");
-			let name = x.to_str().unwrap().to_string();
-			let entry = spirv.entry_points.iter_mut().next().unwrap();
-			let n = entry
-				.operands
-				.iter_mut()
-				.find_map(|x| match x {
-					Operand::LiteralString(s) => Some(s),
-					_ => None,
-				})
-				.unwrap();
-			*n = name;
-			let bytecode = spirv.assemble();
-			std::fs::write(output, unsafe {
-				std::slice::from_raw_parts(
-					bytecode.as_ptr() as *const u8,
-					bytecode.len() * std::mem::size_of::<u32>(),
-				)
-			})
-			.unwrap()
+			std::fs::write(output, bytecode).unwrap();
 		}
 
 		Ok(())
@@ -127,7 +99,7 @@ impl ShaderBuilder {
 	/// Compile all shaders in all modules.
 	///
 	/// Returns `true` if any shaders were compiled.
-	pub fn compile_all(&mut self) -> Result<bool, Vec<String>> {
+	pub fn compile_all(&mut self) -> Result<(), Vec<String>> {
 		let mut errors = Vec::new();
 		let mut compile_queue = Vec::new();
 
@@ -156,67 +128,11 @@ impl ShaderBuilder {
 			}
 		}
 
-		let compiled = !compile_queue.is_empty();
 		for file in compile_queue {
 			eprintln!("Compiling {}", file.display());
 
 			if let Err(e) = self.compile_file_physical(&file) {
 				errors.push(e)
-			}
-		}
-
-		if errors.is_empty() {
-			Ok(compiled)
-		} else {
-			Err(errors)
-		}
-	}
-
-	// Link all modules into a single SPIRV modules.
-	pub fn link(&mut self) -> Result<(), Vec<String>> {
-		let mut errors = Vec::new();
-
-		for (name, _, module_out) in self.vfs.compilable_modules() {
-			let compile = || {
-				let files: Vec<_> = WalkDir::new(module_out)
-					.into_iter()
-					.filter_map(|e| e.ok())
-					.filter_map(|e| match e.path().extension().and_then(|x| x.to_str()) {
-						Some("spv") => Some(e.path().as_os_str().to_owned()),
-						_ => None,
-					})
-					.collect();
-				let out_path = module_out.parent().unwrap().join(format!("{}.spv", name));
-				let ret = Command::new("spirv-link")
-					.stdout(Stdio::null())
-					.stderr(Stdio::piped())
-					.args(
-						[
-							OsStr::new("--target-env"),
-							OsStr::new("vulkan1.3"),
-							OsStr::new("-o"),
-							out_path.as_os_str(),
-						]
-						.into_iter()
-						.chain(files.iter().map(|x| x.as_os_str())),
-					)
-					.spawn()
-					.map_err(|x| x.to_string())?;
-
-				let mut stderr = String::new();
-				ret.stderr
-					.unwrap()
-					.read_to_string(&mut stderr)
-					.map_err(|x| x.to_string())?;
-				if !stderr.is_empty() {
-					Err(stderr)
-				} else {
-					Ok(())
-				}
-			};
-
-			if let Err(e) = compile() {
-				errors.push(e);
 			}
 		}
 

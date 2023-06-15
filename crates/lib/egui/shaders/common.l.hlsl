@@ -11,12 +11,3 @@ struct VertexOutput {
     float2 uv: UV;
     float4 color: COLOR;
 };
-
-struct PushConstants {
-    uint2 screen_size;
-    Buf<VertexInput> vertex_buffer;
-    Tex2D image;
-    Sampler sampler;
-};
-
-PUSH PushConstants Constants;

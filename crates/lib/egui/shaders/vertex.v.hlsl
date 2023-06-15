@@ -1,5 +1,12 @@
 #include "common.l.hlsl"
 
+struct PushConstants {
+    uint2 screen_size;
+    Buf<VertexInput> vertex_buffer;
+};
+
+PUSH PushConstants Constants;
+
 float4 unpack_color(u32 color) {
     return float4(
         float(color & 255),

@@ -1,19 +1,4 @@
-#include "radiance-core/interface.l.hlsl"
-
-struct Cone {
-    // 0, 1, 2: axis
-    // 3: cutoff
-    u32 data;
-};
-
-struct Meshlet {
-	float3x4 transform;
-	u32 start_index;
-	u32 start_vertex;
-	u16 tri_and_vert_count;
-	Cone cone;
-	u16 _pad;
-};
+#include "radiance-passes/mesh/data.l.hlsl"
 
 struct Command {
     u32 index_count;
@@ -46,12 +31,12 @@ void main(uint3 id: SV_DispatchThreadID) {
 
     Command command;
 
-    u32 tri_count = meshlet.tri_and_vert_count >> 8;
+    u32 tri_count = meshlet.tri_and_vert_count & 0xff;
     command.index_count = tri_count * 3;
     command.instance_count = 1;
     command.first_index = meshlet.start_index;
     command.vertex_offset = i32(meshlet.start_vertex);
-    command.first_instance = index;
+    command.first_instance = index + 1;
 
     Constants.commands.store(out_index, command);
 }

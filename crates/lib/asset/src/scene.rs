@@ -36,20 +36,109 @@ impl Node {
 	}
 }
 
+pub enum Projection {
+	Perspective { yfov: f32, near: f32, far: Option<f32> },
+	Orthographic { height: f32, near: f32, far: f32 },
+}
+
+pub struct Camera {
+	pub name: String,
+	pub view: Mat4<f32>,
+	pub projection: Projection,
+}
+
+impl Camera {
+	fn size(&self) -> usize {
+		std::mem::size_of::<u32>()
+			+ self.name.len()
+			+ std::mem::size_of::<Mat4<f32>>()
+			+ std::mem::size_of::<u8>()
+			+ std::mem::size_of::<f32>() * 3
+	}
+
+	/// - 1 u32: length of name.
+	/// - name.
+	/// - 64 bytes: transform.
+	/// - 1 u8: type of projection.
+	/// - 4 f32: projection.
+	fn write(&self, writer: &mut SliceWriter) {
+		writer.write(self.name.len() as u32);
+		writer.write_slice(self.name.as_bytes());
+		writer.write(self.view.cols);
+		match self.projection {
+			Projection::Perspective { yfov, near, far } => {
+				writer.write(0u8);
+				writer.write(yfov);
+				writer.write(near);
+				writer.write(far.unwrap_or(f32::NAN));
+			},
+			Projection::Orthographic { height, near, far } => {
+				writer.write(1u8);
+				writer.write(height);
+				writer.write(near);
+				writer.write(far);
+			},
+		}
+	}
+
+	fn read(reader: &mut SliceReader) -> Self {
+		let name_len = reader.read::<u32>() as usize;
+		let name = String::from_utf8(reader.read_slice(name_len).to_vec()).unwrap();
+		let view = Mat4::from_col_array(reader.read_slice(16).try_into().unwrap());
+		let ty = reader.read::<u8>();
+		let projection = match ty {
+			0 => {
+				let yfov = reader.read::<f32>();
+				let near = reader.read::<f32>();
+				let far = reader.read::<f32>();
+				Projection::Perspective {
+					yfov,
+					near,
+					far: if far.is_nan() { None } else { Some(far) },
+				}
+			},
+			1 => {
+				let height = reader.read::<f32>();
+				let near = reader.read::<f32>();
+				let far = reader.read::<f32>();
+				Projection::Orthographic { height, near, far }
+			},
+			_ => unreachable!("invalid asset"),
+		};
+
+		Self { name, view, projection }
+	}
+}
+
 pub struct Scene {
 	pub nodes: Vec<Node>,
+	pub cameras: Vec<Camera>,
 }
 
 impl Scene {
 	/// - 1 u32: node count.
 	/// - nodes.
+	/// - 1 u32: camera count.
+	/// - cameras.
+	///
+	/// Compressed by zstd.
 	pub fn to_bytes(&self) -> Vec<u8> {
-		let mut bytes = vec![0; std::mem::size_of::<u32>() + self.nodes.iter().map(|x| x.size()).sum::<usize>()];
+		let mut bytes = vec![
+			0;
+			std::mem::size_of::<u32>() * 2
+				+ self.nodes.iter().map(|x| x.size()).sum::<usize>()
+				+ self.cameras.iter().map(|x| x.size()).sum::<usize>()
+		];
 		let mut writer = SliceWriter::new(&mut bytes);
 
 		writer.write(self.nodes.len() as u32);
 		for node in &self.nodes {
 			node.write(&mut writer);
+		}
+
+		writer.write(self.cameras.len() as u32);
+		for camera in &self.cameras {
+			camera.write(&mut writer);
 		}
 
 		zstd::encode_all(bytes.as_slice(), 8).unwrap()
@@ -65,6 +154,12 @@ impl Scene {
 			nodes.push(Node::read(&mut reader));
 		}
 
-		Self { nodes }
+		let camera_count = reader.read::<u32>() as usize;
+		let mut cameras = Vec::with_capacity(camera_count);
+		for _ in 0..camera_count {
+			cameras.push(Camera::read(&mut reader));
+		}
+
+		Self { nodes, cameras }
 	}
 }

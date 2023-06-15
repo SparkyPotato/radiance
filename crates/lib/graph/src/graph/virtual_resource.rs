@@ -6,7 +6,7 @@ pub use crate::sync::{BufferUsage as BufferUsageType, ImageUsage as ImageUsageTy
 use crate::{
 	arena::{Arena, IteratorAlloc},
 	device::Device,
-	graph::{compile::Resource, ArenaMap, Caches},
+	graph::{compile::Resource, ArenaMap, Caches, ReadId},
 	resource::{GpuBufferHandle, ImageView, ImageViewDesc, ImageViewUsage, UploadBufferHandle},
 	sync::UsageType,
 };
@@ -263,6 +263,7 @@ impl ResourceLifetime {
 	pub fn independent(self, other: Self) -> bool { self.start > other.end || self.end < other.start }
 }
 
+#[derive(Clone)]
 pub struct VirtualResourceData<'graph> {
 	pub lifetime: ResourceLifetime,
 	pub ty: VirtualResourceType<'graph>,
@@ -273,6 +274,7 @@ pub trait VirtualResourceDesc {
 
 	fn ty<'graph>(
 		self, write_usage: <Self::Resource as VirtualResource>::Usage<'_>, arena: &'graph Arena,
+		resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, base_id: usize,
 	) -> VirtualResourceType<'graph>;
 }
 
@@ -284,22 +286,26 @@ pub trait VirtualResource {
 	unsafe fn add_read_usage(ty: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>);
 }
 
+#[derive(Clone)]
 pub struct GpuData<'graph, T, U> {
 	pub desc: T,
 	pub write_usage: U,
 	pub read_usages: ArenaMap<'graph, u32, U>,
 }
 
+#[derive(Clone)]
 pub enum GpuBufferType<'graph> {
 	Internal(u64),
 	External(ExternalBufferOwned<'graph>),
 }
 
+#[derive(Clone)]
 pub enum ImageType<'graph> {
 	Internal(ImageDesc),
 	External(ExternalImageOwned<'graph>),
 }
 
+#[derive(Clone)]
 pub enum VirtualResourceType<'graph> {
 	Data(NonNull<()>),
 	UploadBuffer(GpuData<'graph, u64, BufferUsageOwned<'graph>>),
@@ -344,7 +350,9 @@ impl VirtualResource for UploadBufferHandle {
 impl VirtualResourceDesc for UploadBufferDesc {
 	type Resource = UploadBufferHandle;
 
-	fn ty<'graph>(self, write_usage: BufferUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(
+		self, write_usage: BufferUsage<'_>, arena: &'graph Arena, _: &mut Vec<VirtualResourceData, &Arena>, _: usize,
+	) -> VirtualResourceType<'graph> {
 		VirtualResourceType::UploadBuffer(GpuData {
 			desc: self.size,
 			write_usage: write_usage.to_owned_arena(arena),
@@ -367,7 +375,10 @@ impl VirtualResource for GpuBufferHandle {
 impl VirtualResourceDesc for GpuBufferDesc {
 	type Resource = GpuBufferHandle;
 
-	fn ty<'graph>(self, write_usage: BufferUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(
+		self, write_usage: BufferUsage<'_>, arena: &'graph Arena,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
+	) -> VirtualResourceType<'graph> {
 		VirtualResourceType::GpuBuffer(GpuData {
 			desc: GpuBufferType::Internal(self.size),
 			write_usage: write_usage.to_owned_arena(arena),
@@ -427,7 +438,10 @@ impl VirtualResource for ImageView {
 impl VirtualResourceDesc for ImageDesc {
 	type Resource = ImageView;
 
-	fn ty<'graph>(self, usage: ImageUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(
+		self, usage: ImageUsage<'_>, arena: &'graph Arena, _: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
+		_: usize,
+	) -> VirtualResourceType<'graph> {
 		VirtualResourceType::Image(GpuData {
 			desc: ImageType::Internal(self),
 			write_usage: usage.to_owned_arena(arena),
@@ -439,7 +453,10 @@ impl VirtualResourceDesc for ImageDesc {
 impl VirtualResourceDesc for ExternalBuffer<'_> {
 	type Resource = GpuBufferHandle;
 
-	fn ty<'graph>(self, write_usage: BufferUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(
+		self, write_usage: BufferUsage<'_>, arena: &'graph Arena,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
+	) -> VirtualResourceType<'graph> {
 		VirtualResourceType::GpuBuffer(GpuData {
 			desc: GpuBufferType::External(self.to_owned_arena(arena)),
 			write_usage: write_usage.to_owned_arena(arena),
@@ -451,9 +468,42 @@ impl VirtualResourceDesc for ExternalBuffer<'_> {
 impl VirtualResourceDesc for ExternalImage<'_> {
 	type Resource = ImageView;
 
-	fn ty<'graph>(self, write_usage: ImageUsage<'_>, arena: &'graph Arena) -> VirtualResourceType<'graph> {
+	fn ty<'graph>(
+		self, write_usage: ImageUsage<'_>, arena: &'graph Arena,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
+	) -> VirtualResourceType<'graph> {
 		VirtualResourceType::Image(GpuData {
 			desc: ImageType::External(self.to_owned_arena(arena)),
+			write_usage: write_usage.to_owned_arena(arena),
+			read_usages: ArenaMap::with_hasher_in(Default::default(), arena),
+		})
+	}
+}
+
+impl VirtualResourceDesc for ReadId<ImageView> {
+	type Resource = ImageView;
+
+	fn ty<'graph>(
+		self, write_usage: ImageUsage<'_>, arena: &'graph Arena,
+		resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, base_id: usize,
+	) -> VirtualResourceType<'graph> {
+		VirtualResourceType::Image(GpuData {
+			desc: unsafe { resources[self.id - base_id].ty.image().desc.clone() },
+			write_usage: write_usage.to_owned_arena(arena),
+			read_usages: ArenaMap::with_hasher_in(Default::default(), arena),
+		})
+	}
+}
+
+impl VirtualResourceDesc for ReadId<GpuBufferHandle> {
+	type Resource = GpuBufferHandle;
+
+	fn ty<'graph>(
+		self, write_usage: BufferUsage<'_>, arena: &'graph Arena,
+		resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, base_id: usize,
+	) -> VirtualResourceType<'graph> {
+		VirtualResourceType::GpuBuffer(GpuData {
+			desc: unsafe { resources[self.id - base_id].ty.gpu_buffer().desc.clone() },
 			write_usage: write_usage.to_owned_arena(arena),
 			read_usages: ArenaMap::with_hasher_in(Default::default(), arena),
 		})

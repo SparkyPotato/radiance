@@ -2,9 +2,11 @@
 //!
 //! It provides raw access to assets, without any sort of caching or GPU resource management.
 
+use std::fmt::Debug;
+
 use rustc_hash::FxHashMap;
 use tracing::{event, Level};
-use uuid::Uuid;
+pub use uuid::Uuid;
 
 use crate::{mesh::Mesh, model::Model, scene::Scene};
 
@@ -134,7 +136,7 @@ impl AssetHeader {
 
 /// A source of an asset.
 pub trait AssetSource {
-	type Error;
+	type Error: Debug;
 
 	/// A human-readable name of the asset, if any.
 	fn human_name(&self) -> Option<&str>;
@@ -218,6 +220,18 @@ impl<S: AssetSource> AssetSystem<S> {
 			AssetType::Scene => Ok(Asset::Scene(Scene::from_bytes(&data))),
 			_ => unimplemented!(),
 		}
+	}
+
+	pub fn assets_of_type(&self, ty: AssetType) -> impl Iterator<Item = Uuid> + '_ {
+		self.assets.iter().filter_map(
+			move |(uuid, meta)| {
+				if meta.header.ty == ty {
+					Some(*uuid)
+				} else {
+					None
+				}
+			},
+		)
 	}
 }
 

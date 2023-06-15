@@ -1,0 +1,11 @@
+[package]
+name = "radiance-shader-compiler-macros"
+version = "0.0.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+walkdir = "2.3.3"
+quote = "1.0.27"

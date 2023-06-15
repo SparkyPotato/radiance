@@ -43,7 +43,10 @@ use radiance_graph::{
 	resource::{Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, UploadBufferHandle},
 	Result,
 };
-use radiance_shader_compiler::{c_str, runtime::ShaderBlob, shader};
+use radiance_shader_compiler::{
+	c_str,
+	runtime::{shader, ShaderBlob},
+};
 use radiance_util::{
 	pipeline::{default_blend, no_cull, simple_blend},
 	staging::ImageStage,
@@ -146,7 +149,7 @@ impl Renderer {
 		})
 	}
 
-	pub fn render<'pass, D: VirtualResourceDesc<Resource = ImageView>>(
+	pub fn run<'pass, D: VirtualResourceDesc<Resource = ImageView>>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, tris: Vec<ClippedPrimitive>,
 		delta: TexturesDelta, screen: ScreenDescriptor, out: D,
 	) {

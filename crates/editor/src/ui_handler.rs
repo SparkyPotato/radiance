@@ -8,7 +8,7 @@ use winit::{event::WindowEvent, event_loop::EventLoop};
 use crate::{ui::Fonts, window::Window};
 
 pub struct UiHandler {
-	ctx: Context,
+	pub ctx: Context,
 	platform_state: egui_winit::State,
 	renderer: radiance_egui::Renderer,
 	fonts: Fonts,
@@ -30,16 +30,20 @@ impl UiHandler {
 
 	pub fn fonts(&self) -> &Fonts { &self.fonts }
 
+	pub fn begin_frame(&mut self, window: &Window) {
+		self.ctx
+			.begin_frame(self.platform_state.take_egui_input(&window.window));
+	}
+
 	pub fn run<'pass>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, window: &Window,
-		run: impl FnOnce(&Context),
 	) -> Result<u32> {
 		let (image, id) = {
 			tracy::zone!("swapchain acquire");
 			window.acquire()?
 		};
 
-		let output = self.ctx.run(self.platform_state.take_egui_input(&window.window), run);
+		let output = self.ctx.end_frame();
 
 		{
 			tracy::zone!("handle window output");
@@ -52,7 +56,7 @@ impl UiHandler {
 			self.ctx.tessellate(output.shapes)
 		};
 
-		self.renderer.render(
+		self.renderer.run(
 			device,
 			frame,
 			tris,

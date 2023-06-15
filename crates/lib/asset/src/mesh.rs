@@ -66,6 +66,7 @@ impl Mesh {
 	/// - 5 u32s: vertex count, index count, meshlet count, vertex bytes, index bytes.
 	/// - meshopt encoded vertex buffer.
 	/// - meshopt encoded index buffer.
+	/// - padding for alignment.
 	/// - meshlets.
 	///
 	/// Everything is little endian, compressed by zstd.
@@ -79,7 +80,8 @@ impl Mesh {
 		let index_len = indices.len();
 		let meshlet_len = std::mem::size_of::<Meshlet>() * self.meshlets.len();
 
-		let len = std::mem::size_of::<Vec3<f32>>() * 2 + u32_size * 5 + vertex_len + index_len + meshlet_len;
+		let rem = u32_size - (vertex_len + index_len) % u32_size;
+		let len = std::mem::size_of::<Vec3<f32>>() * 2 + u32_size * 5 + vertex_len + index_len + meshlet_len + rem;
 		let mut bytes = vec![0; len];
 		let mut writer = SliceWriter::new(bytes.as_mut_slice());
 
@@ -93,6 +95,7 @@ impl Mesh {
 
 		writer.write_slice(&vertices);
 		writer.write_slice(&indices);
+		writer.write_slice(&[0u8, 0, 0][0..rem]);
 		writer.write_slice(&self.meshlets);
 
 		zstd::encode_all(bytes.as_slice(), 8).unwrap()
@@ -101,6 +104,8 @@ impl Mesh {
 	pub(super) fn from_bytes(bytes: &[u8]) -> Self {
 		let bytes = zstd::decode_all(bytes).unwrap();
 		let mut reader = SliceReader::new(&bytes);
+
+		let u32_size = std::mem::size_of::<u32>();
 
 		let min = reader.read::<Vec3<f32>>();
 		let max = reader.read::<Vec3<f32>>();
@@ -113,6 +118,8 @@ impl Mesh {
 		let vertices = meshopt::decode_vertex_buffer(reader.read_slice(vertex_len), vertex_count).unwrap();
 		let indices: Vec<u32> = meshopt::decode_index_buffer(reader.read_slice(index_len), index_count).unwrap();
 		let indices: Vec<_> = indices.into_iter().map(|x| x as u8).collect();
+		let rem = u32_size - (vertex_len + index_len) % u32_size;
+		reader.read_slice::<u8>(rem);
 		let meshlets = reader.read_slice(meshlet_count).to_vec();
 
 		Self {

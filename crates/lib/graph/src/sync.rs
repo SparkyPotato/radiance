@@ -241,7 +241,7 @@ impl From<UsageType> for AccessInfo {
 			UsageType::ShaderStorageRead(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
 				access_mask: vk::AccessFlags2::SHADER_STORAGE_READ,
-				image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::TransferRead => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::TRANSFER,

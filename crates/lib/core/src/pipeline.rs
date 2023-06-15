@@ -8,6 +8,7 @@ use crate::{CoreDevice, RenderCore};
 pub struct GraphicsPipelineDesc<'a> {
 	pub shaders: &'a [vk::PipelineShaderStageCreateInfo],
 	pub raster: &'a vk::PipelineRasterizationStateCreateInfo,
+	pub depth: &'a vk::PipelineDepthStencilStateCreateInfo,
 	pub multisample: &'a vk::PipelineMultisampleStateCreateInfo,
 	pub blend: &'a vk::PipelineColorBlendStateCreateInfo,
 	pub dynamic: &'a [vk::DynamicState],
@@ -46,6 +47,31 @@ impl Default for GraphicsPipelineDesc<'_> {
 			line_width: 1.0,
 		};
 
+		const STENCIL: vk::StencilOpState = vk::StencilOpState {
+			fail_op: vk::StencilOp::REPLACE,
+			pass_op: vk::StencilOp::REPLACE,
+			depth_fail_op: vk::StencilOp::REPLACE,
+			compare_op: vk::CompareOp::NEVER,
+			compare_mask: 0,
+			write_mask: 0,
+			reference: 0,
+		};
+
+		const DEPTH: vk::PipelineDepthStencilStateCreateInfo = vk::PipelineDepthStencilStateCreateInfo {
+			s_type: vk::PipelineDepthStencilStateCreateInfo::STRUCTURE_TYPE,
+			p_next: std::ptr::null(),
+			flags: vk::PipelineDepthStencilStateCreateFlags::empty(),
+			depth_test_enable: 0,
+			depth_write_enable: 0,
+			depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+			depth_bounds_test_enable: 0,
+			stencil_test_enable: 0,
+			front: STENCIL,
+			back: STENCIL,
+			min_depth_bounds: 0.0,
+			max_depth_bounds: 1.0,
+		};
+
 		const MULTISAMPLE: vk::PipelineMultisampleStateCreateInfo = vk::PipelineMultisampleStateCreateInfo {
 			s_type: vk::PipelineMultisampleStateCreateInfo::STRUCTURE_TYPE,
 			p_next: std::ptr::null(),
@@ -67,6 +93,7 @@ impl Default for GraphicsPipelineDesc<'_> {
 			blend: &BLEND,
 			// Values that can be defaulted below.
 			raster: &RASTER,
+			depth: &DEPTH,
 			multisample: &MULTISAMPLE,
 			dynamic: &[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR],
 		}
@@ -93,13 +120,16 @@ impl RenderCore {
 								.scissors(&[vk::Rect2D::builder().build()]),
 						)
 						.rasterization_state(desc.raster)
+						.depth_stencil_state(desc.depth)
 						.multisample_state(desc.multisample)
 						.color_blend_state(desc.blend)
 						.dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(desc.dynamic))
 						.layout(desc.layout)
 						.push_next(
 							&mut vk::PipelineRenderingCreateInfo::builder()
-								.color_attachment_formats(desc.color_attachments),
+								.color_attachment_formats(desc.color_attachments)
+								.depth_attachment_format(desc.depth_attachment)
+								.stencil_attachment_format(desc.stencil_attachment),
 						)
 						.build()],
 					None,

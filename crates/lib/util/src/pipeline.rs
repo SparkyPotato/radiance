@@ -31,6 +31,13 @@ impl PipelineCache {
 	}
 }
 
+pub fn reverse_depth() -> vk::PipelineDepthStencilStateCreateInfoBuilder<'static> {
+	vk::PipelineDepthStencilStateCreateInfo::builder()
+		.depth_test_enable(true)
+		.depth_write_enable(true)
+		.depth_compare_op(vk::CompareOp::GREATER)
+}
+
 pub fn no_cull() -> vk::PipelineRasterizationStateCreateInfoBuilder<'static> {
 	vk::PipelineRasterizationStateCreateInfo::builder()
 		.polygon_mode(vk::PolygonMode::FILL)

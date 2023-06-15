@@ -1,14 +1,8 @@
 use std::ffi::CStr;
 
 use ash::vk;
+pub use radiance_shader_compiler_macros::shader;
 use rustc_hash::FxHashMap;
-
-#[macro_export]
-macro_rules! shader {
-	($name:literal) => {
-		$crate::runtime::ShaderBlob::new($name, include_bytes!(env!(concat!($name, "_OUTPUT_PATH"))))
-	};
-}
 
 #[macro_export]
 macro_rules! c_str {
@@ -18,13 +12,12 @@ macro_rules! c_str {
 }
 
 pub struct ShaderBlob {
-	name: &'static str,
-	spirv: &'static [u8],
+	modules: &'static [(&'static str, &'static [u8])],
 }
 
 impl ShaderBlob {
 	/// Create a static shader blob. Use the `shader!` macro instead, passing the module name to it.
-	pub const fn new(name: &'static str, spirv: &'static [u8]) -> Self { Self { name, spirv } }
+	pub const fn new(modules: &'static [(&'static str, &'static [u8])]) -> Self { Self { modules } }
 }
 
 pub struct ShaderRuntime {
@@ -35,20 +28,22 @@ impl ShaderRuntime {
 	pub fn new<'s>(device: &ash::Device, modules: impl IntoIterator<Item = &'s ShaderBlob>) -> Self {
 		let modules = modules
 			.into_iter()
-			.map(|shader| {
+			.flat_map(|x| x.modules.iter())
+			.map(|(name, spirv)| {
 				let module = unsafe {
 					device.create_shader_module(
 						&vk::ShaderModuleCreateInfo::builder().code(std::slice::from_raw_parts(
-							shader.spirv.as_ptr() as *const u32,
-							shader.spirv.len() / 4,
+							spirv.as_ptr() as *const u32,
+							spirv.len() / 4,
 						)),
 						None,
 					)
 				}
 				.unwrap();
-				(shader.name, module)
+				(*name, module)
 			})
 			.collect();
+
 		Self { modules }
 	}
 
@@ -63,13 +58,12 @@ impl ShaderRuntime {
 	pub fn shader<'a>(
 		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
 	) -> vk::PipelineShaderStageCreateInfoBuilder {
-		let utf8 = name.to_str().expect("shader module name is not valid utf8");
-		let module = utf8.split('/').next().expect("expected shader module name");
-		let module = self.modules.get(module).expect("shader module not found");
+		let name = name.to_str().expect("shader module name is not valid utf8");
+		let module = self.modules.get(name).expect("shader module not found");
 		let info = vk::PipelineShaderStageCreateInfo::builder()
 			.stage(stage)
 			.module(*module)
-			.name(name);
+			.name(c_str!("main"));
 		if let Some(spec) = specialization {
 			info.specialization_info(spec)
 		} else {

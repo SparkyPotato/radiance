@@ -336,7 +336,7 @@ impl Device {
 		unsafe { instance.get_physical_device_features2(device, &mut features) }
 
 		// Check if the device supports the features required.
-		if features.features.sampler_anisotropy == false as _ {
+		if features.features.sampler_anisotropy == false as _ || features.features.shader_int16 == false as _ {
 			return None;
 		}
 		if features12.descriptor_indexing == false as _
@@ -350,6 +350,7 @@ impl Device {
 			|| features12.shader_sampled_image_array_non_uniform_indexing == false as _
 			|| features12.shader_storage_image_array_non_uniform_indexing == false as _
 			|| features12.timeline_semaphore == false as _
+			|| features12.draw_indirect_count == false as _
 		{
 			return None;
 		}
@@ -420,7 +421,9 @@ impl Device {
 		trace!("using device extensions: {:?}", extensions);
 		let extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
 
-		let features = vk::PhysicalDeviceFeatures::builder().sampler_anisotropy(true);
+		let features = vk::PhysicalDeviceFeatures::builder()
+			.sampler_anisotropy(true)
+			.shader_int16(true);
 		let mut features12 = vk::PhysicalDeviceVulkan12Features::builder()
 			.descriptor_indexing(true)
 			.runtime_descriptor_array(true)
@@ -432,7 +435,8 @@ impl Device {
 			.shader_storage_buffer_array_non_uniform_indexing(true)
 			.shader_sampled_image_array_non_uniform_indexing(true)
 			.shader_storage_image_array_non_uniform_indexing(true)
-			.timeline_semaphore(true);
+			.timeline_semaphore(true)
+			.draw_indirect_count(true);
 		let mut features13 = vk::PhysicalDeviceVulkan13Features::builder()
 			.dynamic_rendering(true)
 			.synchronization2(true);

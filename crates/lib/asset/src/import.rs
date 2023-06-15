@@ -9,8 +9,7 @@ use bytemuck::NoUninit;
 use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
-	image,
-	scene::Transform,
+	camera::Projection,
 	Accessor,
 	Document,
 	Primitive,
@@ -20,14 +19,16 @@ use meshopt::VertexDataAdapter;
 use rayon::prelude::*;
 use tracing::{span, Level};
 use uuid::Uuid;
-use vek::{Aabb, Mat4, Quaternion, Vec2, Vec3, Vec4};
+use vek::{Aabb, Mat4, Vec2, Vec3};
 
 use crate::{
 	mesh::{Cone, Mesh, Meshlet, Vertex},
 	model::Model,
-	scene::{Node, Scene},
+	scene,
+	scene::{Camera, Node, Scene},
 	util::SliceReader,
 	AssetHeader,
+	AssetMetadata,
 	AssetSink,
 	AssetSystem,
 	AssetType,
@@ -103,10 +104,9 @@ where
 
 		let c = &mut ctx;
 		type Error<S, I> = ImportError<<S as AssetSink>::Error, <I as ImportContext>::Error>;
-		type Res<T, S, I> = Result<T, Error<S, I>>;
 
-		let (gltf, buffers, images) = gltf::import(path)?;
-		let imp = Importer { gltf, buffers, images };
+		let (gltf, buffers, ..) = gltf::import(path)?;
+		let imp = Importer { gltf, buffers }; // images };d
 
 		let total = ImportProgress {
 			meshes: imp.gltf.meshes().flat_map(|x| x.primitives()).count(),
@@ -155,7 +155,7 @@ where
 					},
 					total,
 				);
-				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, uuid, mesh.aabb))
+				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, mesh.aabb, uuid, sink))
 			})
 			.collect::<Result<_, _>>()?;
 
@@ -176,26 +176,33 @@ where
 				)
 			})
 			.collect();
-		for (mesh_id, uuid, aabb) in meshes.into_iter() {
+		for (mesh_id, aabb, uuid, sink) in meshes.into_iter() {
 			let model = &mut models[mesh_id].1;
 			model.meshes.push(uuid);
-			model.aabb = model.aabb.union(aabb)
+			model.aabb = model.aabb.union(aabb);
+			self.assets.insert(
+				uuid,
+				AssetMetadata {
+					header: AssetHeader {
+						uuid,
+						ty: AssetType::Mesh,
+					},
+					source: sink,
+				},
+			);
 		}
 		let models: Vec<_> = models
 			.into_iter()
 			.enumerate()
 			.map(|(i, (name, model))| {
 				let uuid = Uuid::new_v4();
-				let mut sink = ctx
-					.asset(
-						&name,
-						AssetHeader {
-							uuid,
-							ty: AssetType::Model,
-						},
-					)
-					.map_err(|x| Error::<S, I>::Ctx(x))?;
+				let header = AssetHeader {
+					uuid,
+					ty: AssetType::Model,
+				};
+				let mut sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
 				sink.write_data(&model.to_bytes()).map_err(|x| ImportError::Sink(x))?;
+				self.assets.insert(uuid, AssetMetadata { header, source: sink });
 				ctx.progress(
 					ImportProgress {
 						meshes: total.meshes,
@@ -213,16 +220,13 @@ where
 			let name = scene.name().unwrap_or("unnamed scene");
 			let i = scene.index();
 			let out = imp.scene(&name, scene, &models).map_err(|x| x.map_ignore())?;
-			let mut sink = ctx
-				.asset(
-					&name,
-					AssetHeader {
-						uuid: Uuid::new_v4(),
-						ty: AssetType::Scene,
-					},
-				)
-				.map_err(|x| Error::<S, I>::Ctx(x))?;
+			let header = AssetHeader {
+				uuid: Uuid::new_v4(),
+				ty: AssetType::Scene,
+			};
+			let mut sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
 			sink.write_data(&out.to_bytes()).map_err(|x| ImportError::Sink(x))?;
+			self.assets.insert(header.uuid, AssetMetadata { header, source: sink });
 			ctx.progress(
 				ImportProgress {
 					meshes: total.meshes,
@@ -243,7 +247,7 @@ type ImportResult<T> = Result<T, ImportError<(), ()>>;
 struct Importer {
 	gltf: Document,
 	buffers: Vec<buffer::Data>,
-	images: Vec<image::Data>,
+	// images: Vec<image::Data>,
 }
 
 impl Importer {
@@ -409,47 +413,65 @@ impl Importer {
 		let s = span!(Level::INFO, "importing scene", name = name);
 		let _e = s.enter();
 
+		let mut nodes = 0;
+		let mut cameras = 0;
+		for node in scene.nodes() {
+			if node.mesh().is_some() {
+				nodes += 1;
+			}
+			if node.camera().is_some() {
+				cameras += 1;
+			}
+		}
+
 		let mut out = Scene {
-			nodes: Vec::with_capacity(scene.nodes().count()),
+			nodes: Vec::with_capacity(nodes),
+			cameras: Vec::with_capacity(cameras),
 		};
 
 		for node in scene.nodes() {
-			self.node(node, Mat4::identity(), models, &mut out.nodes);
+			self.node(node, Mat4::identity(), models, &mut out);
 		}
 
 		Ok(out)
 	}
 
-	fn node(&self, node: gltf::Node, transform: Mat4<f32>, models: &[Uuid], out: &mut Vec<Node>) {
-		let node = node.mesh().map(|model| {
+	fn node(&self, node: gltf::Node, transform: Mat4<f32>, models: &[Uuid], out: &mut Scene) {
+		let this_transform = Mat4::from_col_arrays(node.transform().matrix());
+		let transform = transform * this_transform;
+
+		let model = node.mesh().map(|model| {
+			let name = node.name().unwrap_or("unnamed node").to_string();
 			let model = models[model.index()];
-			let this_transform = match node.transform() {
-				Transform::Decomposed {
-					translation,
-					rotation,
-					scale,
-				} => {
-					let translation = Vec3::from_slice(&translation);
-					let rotation = Quaternion::from_vec4(Vec4::from_slice(&rotation));
-					let scale = Vec3::from_slice(&scale);
-					let (angle, axis) = rotation.into_angle_axis();
-					Mat4::<f32>::translation_3d(translation) * Mat4::scaling_3d(scale) * Mat4::rotation_3d(angle, axis)
-				},
-				Transform::Matrix { matrix } => Mat4::from_col_arrays(matrix),
-			};
-			let transform = transform * this_transform;
 
-			for child in node.children() {
-				self.node(child, transform, models, out);
-			}
-
-			Node {
-				name: node.name().unwrap_or("unnamed node").to_string(),
-				transform,
-				model,
-			}
+			Node { name, transform, model }
 		});
-		out.extend(node);
+		out.nodes.extend(model);
+
+		let camera = node.camera().map(|camera| {
+			let name = camera.name().unwrap_or("unnamed camera").to_string();
+			let view = transform.inverted();
+			let projection = match camera.projection() {
+				Projection::Perspective(p) => {
+					let yfov = p.yfov();
+					let near = p.znear();
+					let far = p.zfar();
+					scene::Projection::Perspective { yfov, near, far }
+				},
+				Projection::Orthographic(o) => {
+					let height = o.ymag();
+					let near = o.znear();
+					let far = o.zfar();
+					scene::Projection::Orthographic { height, near, far }
+				},
+			};
+			Camera { name, view, projection }
+		});
+		out.cameras.extend(camera);
+
+		for child in node.children() {
+			self.node(child, transform, models, out);
+		}
 	}
 
 	pub fn accessor(&self, accessor: Accessor) -> ImportResult<(&[u8], DataType, Dimensions)> {

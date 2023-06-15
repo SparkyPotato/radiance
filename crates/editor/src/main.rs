@@ -22,6 +22,7 @@ struct State {
 	device: CoreDevice,
 	graph: ManuallyDrop<RenderGraph>,
 	core: ManuallyDrop<RenderCore>,
+	state: ManuallyDrop<UiState>,
 	ui: ManuallyDrop<UiHandler>,
 	window: ManuallyDrop<Window>,
 }
@@ -31,9 +32,13 @@ impl State {
 		let (device, surface) = unsafe { Device::with_window(&window, event_loop)? };
 		let device = CoreDevice::new(device)?;
 		let graph = ManuallyDrop::new(RenderGraph::new(&device)?);
-		let core = ManuallyDrop::new(RenderCore::new(&device, &[radiance_egui::SHADERS])?);
+		let core = ManuallyDrop::new(RenderCore::new(
+			&device,
+			&[radiance_egui::SHADERS, radiance_passes::SHADERS],
+		)?);
 		let window = ManuallyDrop::new(Window::new(&device, &graph, window, surface)?);
 		let ui = ManuallyDrop::new(UiHandler::new(&device, &core, event_loop, &window)?);
+		let state = ManuallyDrop::new(UiState::new(&device, &core, ui.fonts().clone())?);
 
 		Ok(Self {
 			device,
@@ -41,6 +46,7 @@ impl State {
 			core,
 			ui,
 			window,
+			state,
 		})
 	}
 }
@@ -51,6 +57,7 @@ impl Drop for State {
 			let _ = self.device.device().device_wait_idle();
 
 			ManuallyDrop::take(&mut self.graph).destroy(&self.device);
+			ManuallyDrop::take(&mut self.state).destroy(&self.device);
 			ManuallyDrop::take(&mut self.core).destroy(&self.device);
 			ManuallyDrop::take(&mut self.ui).destroy(&self.device);
 			ManuallyDrop::take(&mut self.window).destroy(&self.device);
@@ -77,17 +84,15 @@ fn main() {
 		.unwrap();
 
 	let mut state = State::new(&event_loop, window).unwrap();
-	let mut ui = UiState::new(state.ui.fonts().clone());
 
 	event_loop.run(move |event, _, flow| match event {
 		Event::MainEventsCleared => state.window.request_redraw(),
 		Event::RedrawRequested(_) => {
 			let mut frame = state.core.frame(&state.device, &mut state.graph).unwrap();
 
-			let id = state
-				.ui
-				.run(&state.device, &mut frame, &state.window, |ctx| ui.render(ctx))
-				.unwrap();
+			state.ui.begin_frame(&state.window);
+			state.state.render(&state.device, &mut frame, &state.ui.ctx);
+			let id = state.ui.run(&state.device, &mut frame, &state.window).unwrap();
 
 			frame.run(&state.device).unwrap();
 			state.window.present(&state.device, id).unwrap();

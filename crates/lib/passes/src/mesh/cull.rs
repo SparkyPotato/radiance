@@ -6,6 +6,7 @@ use radiance_graph::{
 	device::descriptor::BufferId,
 	graph::{BufferUsage, BufferUsageType, GpuBufferDesc, ReadId, Shader, WriteId},
 	resource::{GpuBufferHandle, Resource},
+	sync::{GlobalBarrier, UsageType},
 	Result,
 };
 use radiance_shader_compiler::c_str;
@@ -22,21 +23,21 @@ pub struct CullOutput {
 
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
-struct PushConstants {
-	meshlets: BufferId,
-	commands: BufferId,
-	util: BufferId,
-	meshlet_count: u32,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
-struct Command {
+pub struct Command {
 	index_count: u32,
 	instance_count: u32,
 	first_index: u32,
 	vertex_offset: i32,
 	first_instance: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, NoUninit)]
+struct PushConstants {
+	meshlets: BufferId,
+	commands: BufferId,
+	util: BufferId,
+	meshlet_count: u32,
 }
 
 struct PassIO {
@@ -63,12 +64,12 @@ impl Cull {
 			device,
 			layout,
 			core.shaders
-				.shader(c_str!("radiance-passes/cull"), vk::ShaderStageFlags::COMPUTE, None),
+				.shader(c_str!("radiance-passes/mesh/cull"), vk::ShaderStageFlags::COMPUTE, None),
 		)?;
 		Ok(Self { layout, pipeline })
 	}
 
-	pub fn render<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene) -> CullOutput {
+	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene) -> CullOutput {
 		let mut pass = frame.pass("cull");
 		let meshlet_count = scene.meshlets.len() / std::mem::size_of::<Meshlet>() as u64;
 		let (read_c, write_c) = pass.output(
@@ -117,7 +118,6 @@ impl Cull {
 			let dev = ctx.device.device();
 			let buf = ctx.buf;
 
-			dev.cmd_fill_buffer(buf, draw_count.buffer, 0, 4, 0);
 			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
 			dev.cmd_push_constants(
 				buf,
@@ -131,8 +131,32 @@ impl Cull {
 					meshlet_count: io.meshlet_count,
 				}),
 			);
+			dev.cmd_bind_descriptor_sets(
+				buf,
+				vk::PipelineBindPoint::COMPUTE,
+				self.layout,
+				0,
+				&[ctx.device.descriptors().set()],
+				&[],
+			);
+
+			dev.cmd_fill_buffer(buf, draw_count.buffer, 0, 4, 0);
+			dev.cmd_pipeline_barrier2(
+				buf,
+				&vk::DependencyInfo::builder().memory_barriers(&[GlobalBarrier {
+					previous_usages: &[UsageType::TransferWrite],
+					next_usages: &[
+						UsageType::ShaderStorageRead(Shader::Compute),
+						UsageType::ShaderStorageWrite(Shader::Compute),
+					],
+				}
+				.into()]),
+			);
+
 			let workgroups = (io.meshlet_count + 63) / 64;
-			dev.cmd_dispatch(buf, workgroups, 1, 1);
+			if workgroups != 0 {
+				dev.cmd_dispatch(buf, workgroups, 1, 1);
+			}
 		}
 	}
 

@@ -73,5 +73,7 @@ impl StretchyBuffer {
 
 	pub fn len(&self) -> u64 { self.len }
 
-	pub unsafe fn destroy(self, queue: &mut DeletionQueue) { queue.delete(self.inner); }
+	pub unsafe fn delete(self, queue: &mut DeletionQueue) { queue.delete(self.inner); }
+
+	pub unsafe fn destroy(self, device: &Device) { self.inner.destroy(device); }
 }

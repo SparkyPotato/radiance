@@ -12,7 +12,7 @@ use crate::ui::{
 
 #[derive(Default)]
 pub struct AssetManager {
-	system: Option<FsSystem>,
+	pub system: Option<FsSystem>,
 	cursor: PathBuf,
 }
 

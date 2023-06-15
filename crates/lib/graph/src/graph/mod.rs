@@ -326,7 +326,12 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 		let real_id = self.frame.virtual_resources.len();
 		let id = real_id.wrapping_add(self.frame.graph.resource_base_id);
 
-		let ty = desc.ty(usage, self.frame.arena);
+		let ty = desc.ty(
+			usage,
+			self.frame.arena,
+			&mut self.frame.virtual_resources,
+			self.frame.graph.resource_base_id,
+		);
 
 		self.frame.virtual_resources.push(VirtualResourceData {
 			lifetime: ResourceLifetime::singular(self.frame.passes.len() as _),
