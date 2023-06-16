@@ -59,7 +59,10 @@ impl ShaderRuntime {
 		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
 	) -> vk::PipelineShaderStageCreateInfoBuilder {
 		let name = name.to_str().expect("shader module name is not valid utf8");
-		let module = self.modules.get(name).expect("shader module not found");
+		let module = self
+			.modules
+			.get(name)
+			.unwrap_or_else(|| panic!("shader module {} not found", name));
 		let info = vk::PipelineShaderStageCreateInfo::builder()
 			.stage(stage)
 			.module(*module)

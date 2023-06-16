@@ -19,7 +19,7 @@ impl StretchyBuffer {
 		let inner = GpuBuffer::create(
 			device,
 			BufferDesc {
-				usage: vk::BufferUsageFlags::TRANSFER_DST | desc.usage,
+				usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | desc.usage,
 				..desc
 			},
 		)?;
@@ -41,26 +41,31 @@ impl StretchyBuffer {
 
 	pub fn reserve(&mut self, ctx: &mut StagingCtx, queue: &mut DeletionQueue, bytes: u64) -> Result<()> {
 		if self.inner.inner.size() < bytes {
-			let new_size = bytes * 2;
+			let mut new_size = self.inner.inner.size();
+			while new_size < bytes {
+				new_size *= 2;
+			}
 			let new_buffer = GpuBuffer::create(
 				ctx.device,
 				BufferDesc {
 					size: new_size as _,
-					usage: vk::BufferUsageFlags::TRANSFER_DST | self.usage,
+					usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | self.usage,
 				},
 			)?;
 			unsafe {
-				let buf = ctx.execute_before(QueueType::Transfer)?;
-				ctx.device.device().cmd_copy_buffer(
-					buf,
-					self.inner.inner.inner(),
-					new_buffer.inner.inner(),
-					&[vk::BufferCopy {
-						src_offset: 0,
-						dst_offset: 0,
-						size: self.len as _,
-					}],
-				);
+				if self.len > 0 {
+					let buf = ctx.execute_before(QueueType::Transfer)?;
+					ctx.device.device().cmd_copy_buffer(
+						buf,
+						self.inner.inner.inner(),
+						new_buffer.inner.inner(),
+						&[vk::BufferCopy {
+							src_offset: 0,
+							dst_offset: 0,
+							size: self.len as _,
+						}],
+					);
+				}
 				let old = std::mem::replace(&mut self.inner, new_buffer);
 				queue.delete(old);
 			}

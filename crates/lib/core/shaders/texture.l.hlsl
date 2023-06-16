@@ -27,7 +27,7 @@ struct Tex2D {
     uint2 pixel_of_uv(float2 uv, u32 mip = 0) {
         float2 dim = float2(dimensions(mip));
         float x = round(uv.x * dim.x - 0.5f);
-        float y = round((1.f - uv.y) * dim.y - 0.5f);
+        float y = round(uv.y * dim.y - 0.5f);
         return uint2(x, y);
     }
 };

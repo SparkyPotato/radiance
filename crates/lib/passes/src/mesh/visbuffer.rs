@@ -47,7 +47,6 @@ struct PassIO {
 	cull: CullOutput,
 	visbuffer: WriteId<ImageView>,
 	depth: WriteId<ImageView>,
-	size: Vec2<u32>,
 }
 
 impl VisBuffer {
@@ -163,7 +162,6 @@ impl VisBuffer {
 					cull,
 					visbuffer: v_w,
 					depth: d_w,
-					size,
 				},
 			)
 		});
@@ -177,20 +175,23 @@ impl VisBuffer {
 		let mut camera = pass.write(io.camera);
 		let visbuffer = pass.write(io.visbuffer);
 		let depth = pass.write(io.depth);
-		let buf = pass.buf;
+
 		let dev = pass.device.device();
+		let buf = pass.buf;
 
 		unsafe {
 			camera.data.as_mut().copy_from_slice(bytes_of(&io.camera_mat.cols));
 
+			let area = vk::Rect2D::builder()
+				.extent(vk::Extent2D {
+					width: visbuffer.size.width,
+					height: visbuffer.size.height,
+				})
+				.build();
 			dev.cmd_begin_rendering(
 				buf,
 				&vk::RenderingInfo::builder()
-					.render_area(
-						vk::Rect2D::builder()
-							.extent(vk::Extent2D::builder().width(io.size.x).height(io.size.y).build())
-							.build(),
-					)
+					.render_area(area)
 					.layer_count(1)
 					.color_attachments(&[vk::RenderingAttachmentInfo::builder()
 						.image_view(visbuffer.view)
@@ -220,19 +221,13 @@ impl VisBuffer {
 				&[vk::Viewport {
 					x: 0.0,
 					y: 0.0,
-					width: io.size.x as f32,
-					height: io.size.y as f32,
+					width: visbuffer.size.width as f32,
+					height: visbuffer.size.height as f32,
 					min_depth: 0.0,
 					max_depth: 1.0,
 				}],
 			);
-			dev.cmd_set_scissor(
-				buf,
-				0,
-				&[vk::Rect2D::builder()
-					.extent(vk::Extent2D::builder().width(io.size.x).height(io.size.y).build())
-					.build()],
-			);
+			dev.cmd_set_scissor(buf, 0, &[area]);
 			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 			dev.cmd_bind_descriptor_sets(
 				buf,
@@ -253,7 +248,7 @@ impl VisBuffer {
 					camera: camera.id.unwrap(),
 				}),
 			);
-			dev.cmd_bind_index_buffer(buf, io.indices, 0, vk::IndexType::UINT16);
+			dev.cmd_bind_index_buffer(buf, io.indices, 0, vk::IndexType::UINT8_EXT);
 
 			dev.cmd_draw_indexed_indirect_count(
 				buf,

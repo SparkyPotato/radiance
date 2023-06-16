@@ -161,6 +161,7 @@ impl Resource for UploadBuffer {
 pub struct GpuBufferHandle {
 	pub buffer: vk::Buffer,
 	pub id: Option<BufferId>,
+	pub size: u64,
 }
 
 /// A buffer on the GPU.
@@ -177,6 +178,7 @@ impl Resource for GpuBuffer {
 		GpuBufferHandle {
 			buffer: self.inner.inner,
 			id: self.inner.id,
+			size: self.inner.size(),
 		}
 	}
 
@@ -312,6 +314,7 @@ pub struct ImageViewDesc {
 	pub format: vk::Format,
 	pub usage: ImageViewUsage,
 	pub aspect: vk::ImageAspectFlags,
+	pub size: vk::Extent3D,
 }
 
 /// A GPU-side image view.
@@ -321,6 +324,7 @@ pub struct ImageView {
 	pub view: vk::ImageView,
 	pub id: Option<ImageId>,
 	pub storage_id: Option<StorageImageId>,
+	pub size: vk::Extent3D, 
 }
 
 impl Resource for ImageView {
@@ -366,6 +370,7 @@ impl Resource for ImageView {
 				view,
 				id,
 				storage_id,
+				size: desc.size,
 			})
 		}
 	}

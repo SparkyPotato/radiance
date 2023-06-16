@@ -1,3 +1,5 @@
+#include "radiance-core/types.l.hlsl"
+
 #include "screen.l.hlsl"
 
 VertexOutput main(u32 vertex: SV_VertexID) {

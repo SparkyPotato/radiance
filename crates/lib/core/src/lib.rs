@@ -6,7 +6,7 @@ use radiance_graph::{
 	graph::{ExecutionSnapshot, Frame, PassBuilder, PassContext, RenderGraph},
 	Result,
 };
-use radiance_shader_compiler::runtime::{ShaderBlob, ShaderRuntime};
+use radiance_shader_compiler::runtime::{shader, ShaderBlob, ShaderRuntime};
 use radiance_util::{
 	deletion::DeletionQueue,
 	pipeline::PipelineCache,
@@ -14,6 +14,8 @@ use radiance_util::{
 };
 
 pub mod pipeline;
+
+pub const SHADERS: ShaderBlob = shader!("radiance-core");
 
 pub struct CoreDevice {
 	pub device: Device,

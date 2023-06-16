@@ -116,8 +116,13 @@ pub struct SyncedResource<'graph, H, U: Usage> {
 	pub next_usage: Option<ExternalSync<Vec<U::Inner, &'graph Arena>>>,
 }
 
-type BufferResource<'graph> = SyncedResource<'graph, GpuBufferHandle, BufferUsageOwned<'graph>>;
-type ImageResource<'graph> = SyncedResource<'graph, vk::Image, ImageUsageOwned<'graph>>;
+pub struct Image {
+	pub inner: vk::Image,
+	pub size: vk::Extent3D,
+}
+
+pub type BufferResource<'graph> = SyncedResource<'graph, GpuBufferHandle, BufferUsageOwned<'graph>>;
+pub type ImageResource<'graph> = SyncedResource<'graph, Image, ImageUsageOwned<'graph>>;
 
 /// Concrete render graph resources.
 pub enum Resource<'graph> {
@@ -356,7 +361,10 @@ impl<'graph> VirtualResourceType<'graph> {
 
 				ResourceDescType::ExternalImage(ImageResource {
 					resource: GpuResource {
-						handle: img.handle,
+						handle: Image {
+							inner: img.handle,
+							size: img.size,
+						},
 						usages,
 					},
 					prev_usage: img.prev_usage,
@@ -588,11 +596,14 @@ impl<'graph> ResourceAliaser<'graph> {
 				images.push(i as _);
 				Resource::Image(SyncedResource {
 					resource: GpuResource {
-						handle: graph
-							.caches
-							.images
-							.get(device, desc.handle)
-							.expect("failed to allocate image"),
+						handle: Image {
+							inner: graph
+								.caches
+								.images
+								.get(device, desc.handle)
+								.expect("failed to allocate image"),
+							size: desc.handle.size,
+						},
 						usages: desc.usages,
 					},
 					prev_usage: None,
@@ -800,6 +811,17 @@ impl<'graph> SyncBuilder<'graph> {
 		}
 	}
 
+	/// Create a barrier for an image's initial layout transition.
+	///
+	/// This outputs the barrier before the first pass to aid with barrier merging and reducing the number of barriers
+	/// required.
+	fn init_barrier(&mut self, image: vk::Image, aspect: vk::ImageAspectFlags, access: AccessInfo) {
+		if access.image_layout != vk::ImageLayout::UNDEFINED {
+			let dep_info = &mut self.sync[0].queue;
+			Self::insert_info(dep_info, image, aspect, AccessInfo::default(), access, None);
+		}
+	}
+
 	/// Create a barrier between two passes.
 	///
 	/// If a global barrier is required, pass `Image::null()` and `ImageAspectFlags::empty()`. If no layout transition
@@ -944,9 +966,7 @@ impl<'graph> SyncBuilder<'graph> {
 			next_access.stage_mask = vk::PipelineStageFlags2::ALL_COMMANDS;
 		}
 
-		// Don't need to check if `image` is null, because `AccessInfo::image_layout` will always be undefined if a
-		// global barrier is required.
-		if prev_access.image_layout == next_access.image_layout && qfot.is_none() {
+		if prev_access.image_layout == next_access.image_layout && qfot.is_none() || image == vk::Image::null() {
 			// No transition or QFOT required, use a global barrier instead.
 			let access = dep_info
 				.barriers
@@ -958,7 +978,6 @@ impl<'graph> SyncBuilder<'graph> {
 			access.from |= prev_access.access_mask;
 			access.to |= next_access.access_mask;
 		} else {
-			debug_assert!(image != vk::Image::null(), "Image layout transition without an image");
 			let old = dep_info.image_barriers.insert(
 				image,
 				InProgressImageBarrier {
@@ -1057,7 +1076,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 		let mut sync = SyncBuilder::new(self.resource_map.arena(), self.passes);
 
 		for buffer in self.resource_map.buffers() {
-			let mut usages = buffer.resource.usages.iter();
+			let mut usages = buffer.resource.usages.iter().peekable();
 			let (mut prev_pass, mut prev_access) = {
 				let (&pass, usage) = usages.next().unwrap();
 
@@ -1072,9 +1091,8 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 						next_access,
 					);
 				}
-
-				let prev_access = if let Some(next_usage) = &buffer.next_usage {
-					let prev_access = usage.as_prev();
+				let prev_access = usage.as_prev();
+				if let Some(next_usage) = &buffer.next_usage {
 					let next_sync = next_usage.as_next(prev_access);
 					sync.signal_external_sync(
 						vk::Image::null(),
@@ -1083,10 +1101,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 						prev_access,
 						next_sync,
 					);
-					prev_access
-				} else {
-					AccessInfo::default()
-				};
+				}
 
 				debug_assert!(
 					sync.sync[SyncBuilder::after_pass(pass) as usize]
@@ -1100,7 +1115,6 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 				(pass, prev_access)
 			};
 
-			let mut usages = usages.peekable();
 			while let Some((&pass, usage)) = usages.next() {
 				let next_pass = pass;
 				let mut next_access = usage.as_next(prev_access);
@@ -1148,7 +1162,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 		}
 
 		for image in self.resource_map.images() {
-			let mut usages = image.resource.usages.iter();
+			let mut usages = image.resource.usages.iter().peekable();
 			let (mut prev_pass, mut prev_access) = {
 				let (&pass, usage) = usages.next().unwrap();
 
@@ -1156,16 +1170,20 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 					let (_, is_only_write) = usage.is_write();
 					let prev_sync = prev_usage.as_prev(is_only_write);
 					let next_access = usage.as_next(prev_sync.usage);
-					sync.wait_external_sync(image.resource.handle, usage.aspect, pass, prev_sync, next_access);
+					sync.wait_external_sync(image.resource.handle.inner, usage.aspect, pass, prev_sync, next_access);
+				} else {
+					// There's no external sync, but we still have to layout transition.
+					sync.init_barrier(
+						image.resource.handle.inner,
+						usage.aspect,
+						usage.as_next(AccessInfo::default()),
+					);
 				}
 
-				let prev_access = if let Some(next_usage) = &image.next_usage {
-					let prev_access = usage.as_prev();
+				let prev_access = usage.as_prev();
+				if let Some(next_usage) = &image.next_usage {
 					let next_sync = next_usage.as_next(prev_access);
-					sync.signal_external_sync(image.resource.handle, usage.aspect, pass, prev_access, next_sync);
-					prev_access
-				} else {
-					AccessInfo::default()
+					sync.signal_external_sync(image.resource.handle.inner, usage.aspect, pass, prev_access, next_sync);
 				};
 
 				debug_assert!(
@@ -1180,7 +1198,6 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 				(pass, prev_access)
 			};
 
-			let mut usages = usages.peekable();
 			while let Some((&pass, usage)) = usages.next() {
 				let next_pass = pass;
 				let mut next_access = usage.as_next(prev_access);
@@ -1194,7 +1211,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 						prev_access.image_layout = vk::ImageLayout::UNDEFINED;
 					}
 					sync.barrier(
-						image.resource.handle,
+						image.resource.handle.inner,
 						usage.aspect,
 						prev_pass,
 						prev_access,
@@ -1223,7 +1240,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 					}
 
 					sync.barrier(
-						image.resource.handle,
+						image.resource.handle.inner,
 						aspect,
 						prev_pass,
 						prev_access,

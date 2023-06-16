@@ -324,19 +324,24 @@ impl Device {
 	) -> Option<(Queues<u32>, String)> {
 		let properties = unsafe { instance.get_physical_device_properties(device) };
 
-		if properties.api_version < ash::vk::make_api_version(0, 1, 3, 0) {
+		if properties.api_version < vk::make_api_version(0, 1, 3, 0) {
 			return None;
 		}
 
 		let mut features13 = vk::PhysicalDeviceVulkan13Features::default();
 		let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
+		let mut uint8_index = vk::PhysicalDeviceIndexTypeUint8FeaturesEXT::default();
 		let mut features = vk::PhysicalDeviceFeatures2::builder()
 			.push_next(&mut features12)
-			.push_next(&mut features13);
+			.push_next(&mut features13)
+			.push_next(&mut uint8_index);
 		unsafe { instance.get_physical_device_features2(device, &mut features) }
 
 		// Check if the device supports the features required.
-		if features.features.sampler_anisotropy == false as _ || features.features.shader_int16 == false as _ {
+		if features.features.sampler_anisotropy == false as _
+			|| features.features.shader_int16 == false as _
+			|| features.features.geometry_shader == false as _
+		{
 			return None;
 		}
 		if features12.descriptor_indexing == false as _
@@ -354,7 +359,13 @@ impl Device {
 		{
 			return None;
 		}
-		if features13.dynamic_rendering == false as _ || features13.synchronization2 == false as _ {
+		if features13.dynamic_rendering == false as _
+			|| features13.synchronization2 == false as _
+			|| features13.shader_demote_to_helper_invocation == false as _
+		{
+			return None;
+		}
+		if uint8_index.index_type_uint8 == false as _ {
 			return None;
 		}
 
@@ -412,18 +423,18 @@ impl Device {
 		instance: &ash::Instance, surface: Option<(&khr::Surface, vk::SurfaceKHR)>, user_extensions: &[&'static CStr],
 	) -> Result<(ash::Device, vk::PhysicalDevice, Queues<QueueData>)> {
 		let (physical_device, queues) = Self::select_physical_device(instance, surface)?;
-		let mut extensions = if surface.is_some() {
-			vec![khr::Swapchain::name()]
-		} else {
-			Vec::new()
-		};
+		let mut extensions = vec![vk::ExtIndexTypeUint8Fn::name()];
+		if surface.is_some() {
+			extensions.push(khr::Swapchain::name())
+		}
 		extensions.extend_from_slice(user_extensions);
 		trace!("using device extensions: {:?}", extensions);
 		let extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
 
 		let features = vk::PhysicalDeviceFeatures::builder()
 			.sampler_anisotropy(true)
-			.shader_int16(true);
+			.shader_int16(true)
+			.geometry_shader(true);
 		let mut features12 = vk::PhysicalDeviceVulkan12Features::builder()
 			.descriptor_indexing(true)
 			.runtime_descriptor_array(true)
@@ -439,12 +450,15 @@ impl Device {
 			.draw_indirect_count(true);
 		let mut features13 = vk::PhysicalDeviceVulkan13Features::builder()
 			.dynamic_rendering(true)
-			.synchronization2(true);
+			.synchronization2(true)
+			.shader_demote_to_helper_invocation(true);
+		let mut uint8_index = vk::PhysicalDeviceIndexTypeUint8FeaturesEXT::builder().index_type_uint8(true);
 		let info = vk::DeviceCreateInfo::builder()
 			.enabled_extension_names(&extensions)
 			.enabled_features(&features)
 			.push_next(&mut features12)
-			.push_next(&mut features13);
+			.push_next(&mut features13)
+			.push_next(&mut uint8_index);
 
 		let device = unsafe {
 			match queues {

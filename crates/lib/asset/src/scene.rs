@@ -12,25 +12,37 @@ pub struct Node {
 
 impl Node {
 	fn size(&self) -> usize {
-		std::mem::size_of::<u32>() + self.name.len() + std::mem::size_of::<Mat4<f32>>() + std::mem::size_of::<Uuid>()
+		let extra = self.name.len() % 4;
+		let fill = if extra == 0 { 0 } else { 4 - extra };
+		std::mem::size_of::<u32>()
+			+ self.name.len()
+			+ std::mem::size_of::<Mat4<f32>>()
+			+ std::mem::size_of::<Uuid>()
+			+ fill
 	}
 
-	/// - 1 u32: length of name.
-	/// - name.
 	/// - 16 bytes: transform.
 	/// - 16 bytes: model UUID.
+	/// - 1 u32: length of name.
+	/// - name.
 	fn write(&self, writer: &mut SliceWriter) {
-		writer.write(self.name.len() as u32);
-		writer.write_slice(self.name.as_bytes());
 		writer.write_slice(bytes_of(&self.transform.cols));
 		writer.write_slice(self.model.as_bytes());
+		writer.write(self.name.len() as u32);
+		writer.write_slice(self.name.as_bytes());
+		let extra = self.name.len() % 4;
+		let fill = if extra == 0 { 0 } else { 4 - extra };
+		writer.write_slice(&[0u8, 0, 0][0..fill]);
 	}
 
 	fn read(reader: &mut SliceReader) -> Self {
-		let name_len = reader.read::<u32>() as usize;
-		let name = String::from_utf8(reader.read_slice(name_len).to_vec()).unwrap();
 		let transform = Mat4::from_col_array(reader.read_slice(16).try_into().unwrap());
 		let model = Uuid::from_slice(reader.read_slice(16)).unwrap();
+		let name_len = reader.read::<u32>() as usize;
+		let name = String::from_utf8(reader.read_slice(name_len).to_vec()).unwrap();
+		let extra = name_len % 4;
+		let fill = if extra == 0 { 0 } else { 4 - extra };
+		reader.read_slice::<u8>(fill);
 
 		Self { name, transform, model }
 	}
@@ -49,43 +61,47 @@ pub struct Camera {
 
 impl Camera {
 	fn size(&self) -> usize {
+		let extra = self.name.len() % 4;
+		let fill = if extra == 0 { 0 } else { 4 - extra };
 		std::mem::size_of::<u32>()
 			+ self.name.len()
 			+ std::mem::size_of::<Mat4<f32>>()
 			+ std::mem::size_of::<u8>()
 			+ std::mem::size_of::<f32>() * 3
+			+ fill
 	}
 
+	/// - 64 bytes: transform.
+	/// - 1 u32: type of projection.
+	/// - 4 f32: projection.
 	/// - 1 u32: length of name.
 	/// - name.
-	/// - 64 bytes: transform.
-	/// - 1 u8: type of projection.
-	/// - 4 f32: projection.
 	fn write(&self, writer: &mut SliceWriter) {
-		writer.write(self.name.len() as u32);
-		writer.write_slice(self.name.as_bytes());
 		writer.write(self.view.cols);
 		match self.projection {
 			Projection::Perspective { yfov, near, far } => {
-				writer.write(0u8);
+				writer.write(0u32);
 				writer.write(yfov);
 				writer.write(near);
 				writer.write(far.unwrap_or(f32::NAN));
 			},
 			Projection::Orthographic { height, near, far } => {
-				writer.write(1u8);
+				writer.write(1u32);
 				writer.write(height);
 				writer.write(near);
 				writer.write(far);
 			},
 		}
+		writer.write(self.name.len() as u32);
+		writer.write_slice(self.name.as_bytes());
+		let extra = self.name.len() % 4;
+		let fill = if extra == 0 { 0 } else { 4 - extra };
+		writer.write_slice(&[0u8, 0, 0][0..fill]);
 	}
 
 	fn read(reader: &mut SliceReader) -> Self {
-		let name_len = reader.read::<u32>() as usize;
-		let name = String::from_utf8(reader.read_slice(name_len).to_vec()).unwrap();
 		let view = Mat4::from_col_array(reader.read_slice(16).try_into().unwrap());
-		let ty = reader.read::<u8>();
+		let ty = reader.read::<u32>();
 		let projection = match ty {
 			0 => {
 				let yfov = reader.read::<f32>();
@@ -105,6 +121,11 @@ impl Camera {
 			},
 			_ => unreachable!("invalid asset"),
 		};
+		let name_len = reader.read::<u32>() as usize;
+		let name = String::from_utf8(reader.read_slice(name_len).to_vec()).unwrap();
+		let extra = name_len % 4;
+		let fill = if extra == 0 { 0 } else { 4 - extra };
+		reader.read_slice::<u8>(fill);
 
 		Self { name, view, projection }
 	}

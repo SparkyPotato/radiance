@@ -34,7 +34,7 @@ impl State {
 		let graph = ManuallyDrop::new(RenderGraph::new(&device)?);
 		let core = ManuallyDrop::new(RenderCore::new(
 			&device,
-			&[radiance_egui::SHADERS, radiance_passes::SHADERS],
+			&[radiance_core::SHADERS, radiance_egui::SHADERS, radiance_passes::SHADERS],
 		)?);
 		let window = ManuallyDrop::new(Window::new(&device, &graph, window, surface)?);
 		let ui = ManuallyDrop::new(UiHandler::new(&device, &core, event_loop, &window)?);

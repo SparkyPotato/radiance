@@ -35,6 +35,7 @@ use radiance_graph::{
 		BufferUsageType,
 		ImageUsage,
 		ImageUsageType,
+		ReadId,
 		Shader,
 		UploadBufferDesc,
 		VirtualResourceDesc,
@@ -66,7 +67,7 @@ pub struct ScreenDescriptor {
 }
 
 pub struct Renderer {
-	images: FxHashMap<TextureId, (Image, Vec2<u32>, ImageView, SamplerId)>,
+	images: FxHashMap<u64, (Image, Vec2<u32>, ImageView, SamplerId)>,
 	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
 	layout: vk::PipelineLayout,
 	pipeline: vk::Pipeline,
@@ -198,6 +199,26 @@ impl Renderer {
 
 		self.generate_images(device, &mut pass, delta);
 
+		unsafe {
+			for tris in tris.iter() {
+				match &tris.primitive {
+					Primitive::Mesh(m) => match m.texture_id {
+						TextureId::User(x) => pass.input::<ImageView>(
+							ReadId::from_raw(x as _),
+							ImageUsage {
+								format: vk::Format::R8G8B8A8_SRGB,
+								usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
+								view_type: vk::ImageViewType::TYPE_2D,
+								aspect: vk::ImageAspectFlags::COLOR,
+							},
+						),
+						_ => {},
+					},
+					_ => {},
+				}
+			}
+		}
+
 		pass.build(move |ctx| unsafe { self.execute(ctx, PassIO { vertex, index, out }, &tris, &screen) });
 	}
 
@@ -311,16 +332,27 @@ impl Renderer {
 							},
 						}],
 					);
-					let (_, _, image, sampler) = &self.images[&m.texture_id];
+					let (image, sampler) = match m.texture_id {
+						TextureId::Managed(x) => {
+							let (_, _, image, sampler) = &self.images[&x];
+							(image.id.unwrap(), *sampler)
+						},
+						TextureId::User(x) => {
+							let image: ImageView = pass.read(ReadId::from_raw(x as _));
+							let sampler = self.samplers[&TextureOptions {
+								magnification: TextureFilter::Linear,
+								minification: TextureFilter::Linear,
+							}]
+								.1;
+							(image.id.unwrap(), sampler)
+						},
+					};
 					pass.device.device().cmd_push_constants(
 						pass.buf,
 						self.layout,
 						vk::ShaderStageFlags::FRAGMENT,
 						std::mem::size_of::<PushConstantsStatic>() as u32,
-						bytes_of(&PushConstantsDynamic {
-							image: image.id.unwrap(),
-							sampler: *sampler,
-						}),
+						bytes_of(&PushConstantsDynamic { image, sampler }),
 					);
 					pass.device
 						.device()
@@ -368,17 +400,22 @@ impl Renderer {
 		if !delta.set.is_empty() {
 			pass.stage(device, |stage, _| {
 				for (id, data) in delta.set {
-					let (image, size, ..) = self.images.entry(id).or_insert_with(|| {
+					let x = match id {
+						TextureId::Managed(x) => x,
+						TextureId::User(_) => continue,
+					};
+					let (image, size, ..) = self.images.entry(x).or_insert_with(|| {
 						let size = Vec2::new(data.image.width() as u32, data.image.height() as _);
+						let extent = vk::Extent3D {
+							width: size.x,
+							height: size.y,
+							depth: 1,
+						};
 						let image = Image::create(
 							device,
 							ImageDesc {
 								format: vk::Format::R8G8B8A8_SRGB,
-								size: vk::Extent3D {
-									width: size.x,
-									height: size.y,
-									depth: 1,
-								},
+								size: extent,
 								levels: 1,
 								layers: 1,
 								samples: vk::SampleCountFlags::TYPE_1,
@@ -392,6 +429,7 @@ impl Renderer {
 							device,
 							ImageViewDesc {
 								image: image.handle(),
+								size: extent,
 								view_type: vk::ImageViewType::TYPE_2D,
 								format: vk::Format::R8G8B8A8_SRGB,
 								usage: ImageViewUsage::Sampled,
@@ -472,7 +510,11 @@ impl Renderer {
 		}
 
 		for free in delta.free {
-			let (image, _, view, _) = self.images.remove(&free).unwrap();
+			let x = match free {
+				TextureId::Managed(x) => x,
+				TextureId::User(_) => continue,
+			};
+			let (image, _, view, _) = self.images.remove(&x).unwrap();
 			unsafe {
 				pass.ctx().delete.delete(view);
 				pass.ctx().delete.delete(image);
@@ -506,3 +548,5 @@ impl ScissorRect {
 		}
 	}
 }
+
+pub fn to_texture_id(r: ReadId<ImageView>) -> TextureId { TextureId::User(r.into_raw() as _) }

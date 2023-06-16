@@ -317,7 +317,7 @@ impl FsSystem {
 					if let Ok(asset) = FsAsset::load(path) {
 						system.add(asset).ok()
 					} else {
-						None
+						panic!("bad asset");
 					}
 				},
 				_ => None,

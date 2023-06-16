@@ -1,5 +1,6 @@
 use ash::{
 	extensions::khr,
+	vk,
 	vk::{
 		ColorSpaceKHR,
 		CompositeAlphaFlagsKHR,
@@ -39,6 +40,7 @@ pub struct Window {
 	available: Semaphore,
 	rendered: Semaphore,
 	format: Format,
+	size: vk::Extent3D,
 }
 
 impl Window {
@@ -59,6 +61,7 @@ impl Window {
 			available: semaphore(device),
 			rendered: semaphore(device),
 			format: Format::UNDEFINED,
+			size: vk::Extent3D::default(),
 		};
 		this.make(device, graph)?;
 		Ok(this)
@@ -74,6 +77,10 @@ impl Window {
 			Ok((
 				ExternalImage {
 					handle: self.images[id as usize],
+					size: self.size,
+					levels: 1,
+					layers: 1,
+					samples: vk::SampleCountFlags::TYPE_1,
 					prev_usage: Some(ExternalSync {
 						semaphore: self.available,
 						usage: &[ImageUsageType::Present],
@@ -186,6 +193,11 @@ impl Window {
 				.unwrap();
 			self.images = self.swapchain_ext.get_swapchain_images(self.swapchain).unwrap();
 			self.format = format;
+			self.size = vk::Extent3D {
+				width: size.width,
+				height: size.height,
+				depth: 1,
+			};
 		}
 
 		Ok(())

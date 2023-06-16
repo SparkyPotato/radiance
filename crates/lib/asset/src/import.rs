@@ -389,7 +389,7 @@ impl Importer {
 				normal: (x.normal * Vec3::broadcast(32767.0)).map(|x| x.round() as i16),
 				uv: (x.uv * Vec2::broadcast(65535.0)).map(|x| x.round() as u16),
 			}));
-			mesh.indices.extend(m.triangles.iter().copied());
+			mesh.indices.extend(m.triangles.iter().map(|&x| x as u32));
 			mesh.meshlets.push(Meshlet {
 				aabb_min: aabb.min,
 				aabb_max: aabb.max,

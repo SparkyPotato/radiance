@@ -6,7 +6,6 @@ use radiance_graph::{
 	device::descriptor::BufferId,
 	graph::{BufferUsage, BufferUsageType, GpuBufferDesc, ReadId, Shader, WriteId},
 	resource::{GpuBufferHandle, Resource},
-	sync::{GlobalBarrier, UsageType},
 	Result,
 };
 use radiance_shader_compiler::c_str;
@@ -43,7 +42,7 @@ struct PushConstants {
 struct PassIO {
 	meshlets: BufferId,
 	commands: WriteId<GpuBufferHandle>,
-	draw_count: WriteId<GpuBufferHandle>,
+	draw_count: ReadId<GpuBufferHandle>,
 	meshlet_count: u32,
 }
 
@@ -70,7 +69,30 @@ impl Cull {
 	}
 
 	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene) -> CullOutput {
+		let mut pass = frame.pass("clear buffer");
+		let (read_u, write_u) = pass.output(
+			GpuBufferDesc {
+				size: std::mem::size_of::<u32>() as u64,
+			},
+			BufferUsage {
+				usages: &[BufferUsageType::TransferWrite],
+			},
+		);
+		pass.build(move |mut ctx| unsafe {
+			let buf = ctx.write(write_u);
+			ctx.device.device().cmd_fill_buffer(ctx.buf, buf.buffer, 0, 4, 0);
+		});
+
 		let mut pass = frame.pass("cull");
+		pass.input(
+			read_u,
+			BufferUsage {
+				usages: &[
+					BufferUsageType::ShaderStorageRead(Shader::Compute),
+					BufferUsageType::ShaderStorageWrite(Shader::Compute),
+				],
+			},
+		);
 		let meshlet_count = scene.meshlets.len() / std::mem::size_of::<Meshlet>() as u64;
 		let (read_c, write_c) = pass.output(
 			GpuBufferDesc {
@@ -80,17 +102,6 @@ impl Cull {
 				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Compute)],
 			},
 		);
-		let (read_u, write_u) = pass.output(
-			GpuBufferDesc {
-				size: std::mem::size_of::<u32>() as u64,
-			},
-			BufferUsage {
-				usages: &[
-					BufferUsageType::TransferWrite,
-					BufferUsageType::ShaderStorageWrite(Shader::Compute),
-				],
-			},
-		);
 
 		pass.build(move |ctx| {
 			self.execute(
@@ -98,7 +109,7 @@ impl Cull {
 				PassIO {
 					meshlets: scene.meshlets.inner().handle().id.unwrap(),
 					commands: write_c,
-					draw_count: write_u,
+					draw_count: read_u,
 					meshlet_count: meshlet_count as u32,
 				},
 			)
@@ -112,7 +123,7 @@ impl Cull {
 
 	fn execute(&self, mut ctx: CorePass, io: PassIO) {
 		let commands = ctx.write(io.commands);
-		let draw_count = ctx.write(io.draw_count);
+		let draw_count = ctx.read(io.draw_count);
 
 		unsafe {
 			let dev = ctx.device.device();
@@ -138,19 +149,6 @@ impl Cull {
 				0,
 				&[ctx.device.descriptors().set()],
 				&[],
-			);
-
-			dev.cmd_fill_buffer(buf, draw_count.buffer, 0, 4, 0);
-			dev.cmd_pipeline_barrier2(
-				buf,
-				&vk::DependencyInfo::builder().memory_barriers(&[GlobalBarrier {
-					previous_usages: &[UsageType::TransferWrite],
-					next_usages: &[
-						UsageType::ShaderStorageRead(Shader::Compute),
-						UsageType::ShaderStorageWrite(Shader::Compute),
-					],
-				}
-				.into()]),
 			);
 
 			let workgroups = (io.meshlet_count + 63) / 64;

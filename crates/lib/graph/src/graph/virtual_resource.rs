@@ -134,8 +134,11 @@ pub struct ExternalBufferOwned<'graph> {
 /// Has a corresponding usage of [`ImageUsage`].
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ExternalImage<'a> {
-	/// The image. Image views are created to this image.
-	pub handle: ash::vk::Image,
+	pub handle: vk::Image,
+	pub size: vk::Extent3D,
+	pub levels: u32,
+	pub layers: u32,
+	pub samples: vk::SampleCountFlags,
 	/// The external usage of the image before the render pass is executed.
 	pub prev_usage: Option<ExternalSync<&'a [ImageUsageType]>>,
 	/// The external usage of the image after the render pass is executed. This is usually not required.
@@ -144,7 +147,11 @@ pub struct ExternalImage<'a> {
 
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ExternalImageOwned<'graph> {
-	pub handle: ash::vk::Image,
+	pub handle: vk::Image,
+	pub size: vk::Extent3D,
+	pub levels: u32,
+	pub layers: u32,
+	pub samples: vk::SampleCountFlags,
 	pub prev_usage: Option<ExternalSync<Vec<ImageUsageType, &'graph Arena>>>,
 	pub next_usage: Option<ExternalSync<Vec<ImageUsageType, &'graph Arena>>>,
 }
@@ -220,6 +227,10 @@ impl ToOwnedArena for ExternalImage<'_> {
 	fn to_owned_arena<'a>(&self, arena: &'a Arena) -> Self::Owned<'a> {
 		ExternalImageOwned {
 			handle: self.handle,
+			size: self.size,
+			levels: self.levels,
+			layers: self.layers,
+			samples: self.samples,
 			prev_usage: self.prev_usage.map(|x| x.to_owned_arena(arena)),
 			next_usage: self.next_usage.map(|x| x.to_owned_arena(arena)),
 		}
@@ -293,16 +304,37 @@ pub struct GpuData<'graph, T, U> {
 	pub read_usages: ArenaMap<'graph, u32, U>,
 }
 
-#[derive(Clone)]
 pub enum GpuBufferType<'graph> {
 	Internal(u64),
 	External(ExternalBufferOwned<'graph>),
 }
 
-#[derive(Clone)]
+impl Clone for GpuBufferType<'_> {
+	fn clone(&self) -> Self {
+		match self {
+			GpuBufferType::Internal(size) => GpuBufferType::Internal(*size),
+			GpuBufferType::External(desc) => GpuBufferType::Internal(desc.handle.size),
+		}
+	}
+}
+
 pub enum ImageType<'graph> {
 	Internal(ImageDesc),
 	External(ExternalImageOwned<'graph>),
+}
+
+impl Clone for ImageType<'_> {
+	fn clone(&self) -> Self {
+		match self {
+			ImageType::Internal(desc) => ImageType::Internal(*desc),
+			ImageType::External(desc) => ImageType::Internal(ImageDesc {
+				size: desc.size,
+				levels: desc.levels,
+				layers: desc.layers,
+				samples: desc.samples,
+			}),
+		}
+	}
 }
 
 #[derive(Clone)]
@@ -399,7 +431,8 @@ impl VirtualResource for ImageView {
 			.get(
 				device,
 				ImageViewDesc {
-					image: res.handle,
+					image: res.handle.inner,
+					size: res.handle.size,
 					view_type: usage.view_type,
 					format: usage.format,
 					usage: {

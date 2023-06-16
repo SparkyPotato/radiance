@@ -88,10 +88,10 @@ impl Default for GraphicsPipelineDesc<'_> {
 			layout: vk::PipelineLayout::null(),
 			shaders: &[],
 			color_attachments: &[],
-			depth_attachment: vk::Format::UNDEFINED,
-			stencil_attachment: vk::Format::UNDEFINED,
 			blend: &BLEND,
 			// Values that can be defaulted below.
+			depth_attachment: vk::Format::UNDEFINED,
+			stencil_attachment: vk::Format::UNDEFINED,
 			raster: &RASTER,
 			depth: &DEPTH,
 			multisample: &MULTISAMPLE,

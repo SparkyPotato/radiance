@@ -25,6 +25,7 @@ pub use crate::graph::{
 		ImageUsageType,
 		Shader,
 		UploadBufferDesc,
+		VirtualResource,
 		VirtualResourceDesc,
 		VirtualResourceType,
 	},
@@ -36,7 +37,7 @@ use crate::{
 		cache::{ResourceCache, ResourceList, UniqueCache},
 		compile::{CompiledFrame, DataState, ResourceMap},
 		frame_data::{FrameData, Submitter},
-		virtual_resource::{ResourceLifetime, VirtualResource, VirtualResourceData},
+		virtual_resource::{ResourceLifetime, VirtualResourceData},
 	},
 	resource::{Event, GpuBuffer, GpuBufferHandle, Image, ImageView, UploadBuffer, UploadBufferHandle},
 	Result,
@@ -529,6 +530,17 @@ pub struct WriteId<T: VirtualResource> {
 pub struct ReadId<T: VirtualResource> {
 	id: usize,
 	_marker: PhantomData<T>,
+}
+
+impl<T: VirtualResource> ReadId<T> {
+	pub fn into_raw(self) -> usize { self.id }
+
+	pub unsafe fn from_raw(id: usize) -> Self {
+		Self {
+			id,
+			_marker: PhantomData,
+		}
+	}
 }
 
 impl<T: VirtualResource> Copy for ReadId<T> {}

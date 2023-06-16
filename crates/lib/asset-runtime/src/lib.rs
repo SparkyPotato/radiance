@@ -156,7 +156,7 @@ impl AssetRuntime {
 					let vertex_offset = vertices.len() as u32;
 					let index_offset = indices.len() as u32;
 					vertices.extend(m.vertices);
-					indices.extend(m.indices.into_iter().map(|x| x as u16));
+					indices.extend(m.indices.into_iter().map(|x| x as u8));
 					meshlets.extend(m.meshlets.into_iter().map(|mut m| {
 						m.vertex_offset += vertex_offset;
 						m.index_offset += index_offset;
