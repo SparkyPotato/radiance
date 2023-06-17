@@ -341,6 +341,8 @@ impl Device {
 		if features.features.sampler_anisotropy == false as _
 			|| features.features.shader_int16 == false as _
 			|| features.features.geometry_shader == false as _
+			|| features.features.draw_indirect_first_instance == false as _
+			|| features.features.multi_draw_indirect == false as _
 		{
 			return None;
 		}
@@ -434,7 +436,9 @@ impl Device {
 		let features = vk::PhysicalDeviceFeatures::builder()
 			.sampler_anisotropy(true)
 			.shader_int16(true)
-			.geometry_shader(true);
+			.geometry_shader(true)
+			.multi_draw_indirect(true)
+			.draw_indirect_first_instance(true);
 		let mut features12 = vk::PhysicalDeviceVulkan12Features::builder()
 			.descriptor_indexing(true)
 			.runtime_descriptor_array(true)

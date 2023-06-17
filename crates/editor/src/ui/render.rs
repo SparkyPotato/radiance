@@ -65,7 +65,7 @@ impl Renderer {
 					0.0, 0.0, 0.0, 0.1, //
 					0.0, 0.0, -1.0, 0.0, //
 				);
-				let view = Mat4::look_at_rh(Vec3::broadcast(3.0), Vec3::broadcast(0.0), Vec3::unit_y());
+				let view = Mat4::look_at_rh(Vec3::broadcast(10.0), Vec3::broadcast(0.0), Vec3::unit_y());
 				let visbuffer =
 					self.visbuffer
 						.run(frame, scene, cull, Vec2::new(size.x as u32, size.y as u32), proj * view);

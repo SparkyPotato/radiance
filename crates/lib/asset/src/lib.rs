@@ -8,7 +8,12 @@ use rustc_hash::FxHashMap;
 use tracing::{event, Level};
 pub use uuid::Uuid;
 
-use crate::{mesh::Mesh, model::Model, scene::Scene};
+use crate::{
+	mesh::Mesh,
+	model::Model,
+	scene::Scene,
+	util::{SliceReader, SliceWriter},
+};
 
 #[cfg(feature = "fs")]
 pub mod fs;
@@ -79,7 +84,7 @@ impl Asset {
 /// 4 bytes: container version?
 /// 16 bytes: UUID
 /// 4 bytes: asset type
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 #[repr(C)]
 pub struct AssetHeader {
 	/// UUID of the asset.
@@ -97,39 +102,36 @@ impl AssetHeader {
 	/// If `check_version` is `true`, the container version is checked to be equal to the current version, and the total
 	/// size of the slice must reflect this.
 	pub fn parse(bytes: &[u8], check_magic: bool, check_version: bool) -> Option<Self> {
-		let mut offset = 0;
+		let mut reader = SliceReader::new(bytes);
 		if check_magic {
-			if &bytes[0..6] != b"RADASS" {
+			if reader.read_slice::<u8>(6) != b"RADASS" {
 				return None;
 			}
-			offset += 6;
 		}
 		if check_version {
-			if u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap()) != CONTAINER_VERSION {
+			if reader.read::<u32>() != CONTAINER_VERSION {
 				return None;
 			}
-			offset += 4;
 		}
 
-		let uuid = Uuid::from_slice(&bytes[offset..offset + 16]).unwrap();
-		offset += 16;
-		let ty = u32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap())
-			.try_into()
-			.ok()?;
+		let uuid = Uuid::from_slice(reader.read_slice(16)).unwrap();
+		let ty = reader.read::<u32>().try_into().ok()?;
 
 		Some(Self { uuid, ty })
 	}
 
 	pub fn to_bytes(self, with_magic: bool, with_version: bool) -> Vec<u8> {
-		let mut bytes = Vec::with_capacity(30);
+		let len = with_magic.then_some(6).unwrap_or(0) + with_version.then_some(4).unwrap_or(0) + 16 + 4;
+		let mut bytes = vec![0; len];
+		let mut writer = SliceWriter::new(&mut bytes);
 		if with_magic {
-			bytes.extend_from_slice(b"RADASS");
+			writer.write_slice(b"RADASS");
 		}
 		if with_version {
-			bytes.extend_from_slice(&CONTAINER_VERSION.to_le_bytes());
+			writer.write(CONTAINER_VERSION)
 		}
-		bytes.extend_from_slice(self.uuid.as_bytes());
-		bytes.extend_from_slice(&u32::from(self.ty).to_le_bytes());
+		writer.write_slice(self.uuid.as_bytes());
+		writer.write(u32::from(self.ty));
 		bytes
 	}
 }
@@ -212,7 +214,10 @@ impl<S: AssetSource> AssetSystem<S> {
 
 	/// Load an asset.
 	pub fn load(&self, uuid: Uuid) -> Result<Asset, S::Error> {
-		let meta = self.assets.get(&uuid).expect("asset does not exist");
+		let meta = self
+			.assets
+			.get(&uuid)
+			.unwrap_or_else(|| panic!("asset {:?} not found", uuid));
 		let data = meta.source.load_data()?;
 		match meta.header.ty {
 			AssetType::Mesh => Ok(Asset::Mesh(Mesh::from_bytes(&data))),

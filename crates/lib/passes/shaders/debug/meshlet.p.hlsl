@@ -25,7 +25,7 @@ float4 main(VertexOutput input): SV_Target0 {
     u32 value = asuint(Constants.visbuffer.load(pixel));
     VisBufferData data = VisBufferData::decode(value);
 
-    if (data.meshlet_id == 0) {
+    if (data.meshlet_id == 0xffffffff) {
         discard;
     }
 

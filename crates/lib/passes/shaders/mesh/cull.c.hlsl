@@ -36,7 +36,7 @@ void main(uint3 id: SV_DispatchThreadID) {
     command.instance_count = 1;
     command.first_index = meshlet.start_index;
     command.vertex_offset = i32(meshlet.start_vertex);
-    command.first_instance = index + 1;
+    command.first_instance = index;
 
     Constants.commands.store(out_index, command);
 }

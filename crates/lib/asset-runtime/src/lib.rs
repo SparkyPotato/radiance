@@ -26,12 +26,12 @@ pub struct Meshlet {
 	pub start_index: u32,
 	/// Start vertex of the meshlet in the global vertex buffer.
 	pub start_vertex: u32,
+	/// Cone of the meshlet relative to the center of the bounding box.
+	pub cone: Cone,
 	/// Number of triangles in the meshlet. The number of indices will be 3 times this.
 	pub tri_count: u8,
 	/// Number of vertices in the meshlet.
 	pub vert_count: u8,
-	/// Cone of the meshlet relative to the center of the bounding box.
-	pub cone: Cone,
 	pub _pad: u16,
 }
 
@@ -53,8 +53,6 @@ pub struct Scene {
 }
 
 struct Model {
-	vertices: Range<usize>,
-	indices: Range<usize>,
 	meshlets: Vec<mesh::Meshlet>,
 }
 
@@ -144,8 +142,6 @@ impl AssetRuntime {
 					Asset::Model(m) => m,
 					_ => unreachable!("Model asset is not a model"),
 				};
-				let vertex_start = vertices.len();
-				let index_start = indices.len();
 				let mut meshlets = Vec::new();
 				for mesh in model.meshes {
 					let m = match system.load(mesh)? {
@@ -164,21 +160,11 @@ impl AssetRuntime {
 					}));
 				}
 
-				model_map.insert(
-					node.model,
-					Model {
-						vertices: vertex_start..vertices.len(),
-						indices: index_start..indices.len(),
-						meshlets,
-					},
-				);
+				model_map.insert(node.model, Model { meshlets });
 				model_map.get(&node.model).unwrap()
 			};
 
 			meshlets.extend(model.meshlets.iter().map(|x| {
-				let start_index = model.indices.start as u32 + x.index_offset;
-				let start_vertex = model.vertices.start as u32 + x.vertex_offset;
-
 				let extent = x.aabb_max - x.aabb_min;
 				let scale = Mat4::scaling_3d(extent);
 				let translate = Mat4::translation_3d(x.aabb_min);
@@ -186,8 +172,8 @@ impl AssetRuntime {
 
 				Meshlet {
 					transform: transform.cols.map(|x| x.xyz()),
-					start_index,
-					start_vertex,
+					start_index: x.index_offset,
+					start_vertex: x.vertex_offset,
 					tri_count: x.tri_count,
 					vert_count: x.vert_count,
 					cone: x.cone,

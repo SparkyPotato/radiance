@@ -78,7 +78,9 @@ impl AssetSource for FsAsset {
 	fn load_header(&self) -> Result<AssetHeader, Self::Error> {
 		let mut buf = [0; 30];
 		self.file.read_at(0, &mut buf)?;
-		AssetHeader::parse(&buf, true, true).ok_or(io::Error::new(io::ErrorKind::InvalidData, "Invalid asset header"))
+		let header = AssetHeader::parse(&buf, true, true)
+			.ok_or(io::Error::new(io::ErrorKind::InvalidData, "Invalid asset header"))?;
+		Ok(header)
 	}
 
 	fn load_data(&self) -> Result<Vec<u8>, Self::Error> {
@@ -92,8 +94,8 @@ impl AssetSink for FsAsset {
 	type Error = io::Error;
 
 	fn write_data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-		self.file.write_at(30, data)?;
 		self.file.file.set_len(30 + data.len() as u64)?;
+		self.file.write_at(30, data)?;
 		Ok(())
 	}
 }
@@ -137,6 +139,10 @@ where
 		if path.exists() {
 			path = (self.on_conflict)(path);
 		}
+		debug_assert!(
+			!path.exists(),
+			"Conflict resolution function returned a path that already exists"
+		);
 
 		(self.on_import)(&path, header.uuid);
 		FsAsset::create(&path, header)
@@ -287,8 +293,6 @@ impl FsSystem {
 		let root = root.into();
 		let mut system = AssetSystem::new();
 		let mut tree = AssetTree::new(root.components().last().unwrap().as_os_str().to_str().unwrap());
-		#[cfg(feature = "import")]
-		let mut file_conflict_map = FxHashMap::default();
 
 		for file in WalkDir::new(&root)
 			.into_iter()
@@ -298,22 +302,6 @@ impl FsSystem {
 			let path = file.path();
 			let header = match path.extension().and_then(|x| x.to_str()) {
 				Some("radass") => {
-					#[cfg(feature = "import")]
-					{
-						let mut path = path.to_path_buf();
-						let stem = path.file_stem().unwrap().to_str().unwrap().to_string();
-						let mut p = 1u32;
-						loop {
-							let x = format!("{}_{}.radass", stem, p);
-							path.set_file_name(x);
-							p += 1;
-							if path.exists() {
-								file_conflict_map.insert(path.clone(), p);
-							} else {
-								break;
-							}
-						}
-					}
 					if let Ok(asset) = FsAsset::load(path) {
 						system.add(asset).ok()
 					} else {
@@ -334,7 +322,7 @@ impl FsSystem {
 			tree,
 			system,
 			#[cfg(feature = "import")]
-			file_conflict_map,
+			file_conflict_map: FxHashMap::default(),
 		}
 	}
 
@@ -390,12 +378,20 @@ impl FsSystem {
 				on_import: |path, uuid| self.tree.add_asset(path.strip_prefix(&self.root).unwrap(), uuid),
 				on_conflict: |mut path| {
 					if let Some(p) = self.file_conflict_map.get_mut(&path) {
-						*p += 1;
 						let stem = path.file_stem().unwrap().to_str().unwrap();
 						path.set_file_name(format!("{}_{}.radass", stem, *p));
+						*p += 1;
 						path
 					} else {
-						self.file_conflict_map.insert(path.clone(), 0);
+						let mut p = 1;
+						let stem = path.file_stem().unwrap().to_str().unwrap();
+						let len = stem.bytes().rev().take_while(|x| x.is_ascii_digit()).count();
+						let stem = stem[..stem.len() - len].to_string();
+						while path.exists() {
+							path.set_file_name(format!("{}_{}.radass", stem, p));
+							p += 1;
+						}
+						self.file_conflict_map.insert(path.clone(), p);
 						path
 					}
 				},

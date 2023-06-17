@@ -198,9 +198,7 @@ impl VisBuffer {
 						.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
 						.load_op(vk::AttachmentLoadOp::CLEAR)
 						.clear_value(vk::ClearValue {
-							color: vk::ClearColorValue {
-								float32: [0.0, 0.0, 0.0, 1.0],
-							},
+							color: vk::ClearColorValue { uint32: [0, 0, 0, 0] },
 						})
 						.store_op(vk::AttachmentStoreOp::STORE)
 						.build()])
