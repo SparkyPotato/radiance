@@ -33,7 +33,7 @@ pub struct Cone {
 pub struct Meshlet {
 	/// AABB of the meshlet relative to the mesh origin.
 	pub aabb_min: Vec3<f32>,
-	pub aabb_max: Vec3<f32>,
+	pub aabb_extent: Vec3<f32>,
 	/// Offset of the meshlet index buffer relative to the parent mesh index buffer.
 	pub index_offset: u32,
 	/// Offset of the meshlet vertex buffer relative to the parent mesh vertex buffer.

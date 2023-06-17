@@ -1,14 +1,15 @@
 use ash::vk;
-use bytemuck::NoUninit;
-use radiance_asset_runtime::{Meshlet, Scene};
+use bytemuck::{bytes_of, NoUninit};
+use radiance_asset_runtime::{MeshletPointer, Scene};
 use radiance_core::{CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::BufferId,
-	graph::{BufferUsage, BufferUsageType, GpuBufferDesc, ReadId, Shader, WriteId},
-	resource::{GpuBufferHandle, Resource},
+	graph::{BufferUsage, BufferUsageType, GpuBufferDesc, ReadId, Shader, UploadBufferDesc, WriteId},
+	resource::{GpuBufferHandle, Resource, UploadBufferHandle},
 	Result,
 };
 use radiance_shader_compiler::c_str;
+use vek::Mat4;
 
 pub struct Cull {
 	pipeline: vk::Pipeline,
@@ -18,6 +19,7 @@ pub struct Cull {
 pub struct CullOutput {
 	pub commands: ReadId<GpuBufferHandle>,
 	pub draw_count: ReadId<GpuBufferHandle>,
+	pub camera: ReadId<UploadBufferHandle>,
 }
 
 #[repr(C)]
@@ -34,15 +36,22 @@ pub struct Command {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	meshlets: BufferId,
+	instances: BufferId,
+	meshlet_pointers: BufferId,
 	commands: BufferId,
 	util: BufferId,
+	camera: BufferId,
 	meshlet_count: u32,
 }
 
 struct PassIO {
 	meshlets: BufferId,
+	instances: BufferId,
+	meshlet_pointers: BufferId,
 	commands: WriteId<GpuBufferHandle>,
 	draw_count: ReadId<GpuBufferHandle>,
+	camera: WriteId<UploadBufferHandle>,
+	camera_mat: Mat4<f32>,
 	meshlet_count: u32,
 }
 
@@ -68,9 +77,11 @@ impl Cull {
 		Ok(Self { layout, pipeline })
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene) -> CullOutput {
+	pub fn run<'pass>(
+		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, camera_viewproj: Mat4<f32>,
+	) -> CullOutput {
 		let mut pass = frame.pass("clear buffer");
-		let (read_u, write_u) = pass.output(
+		let (util_r, util_w) = pass.output(
 			GpuBufferDesc {
 				size: std::mem::size_of::<u32>() as u64,
 			},
@@ -79,13 +90,14 @@ impl Cull {
 			},
 		);
 		pass.build(move |mut ctx| unsafe {
-			let buf = ctx.write(write_u);
+			let buf = ctx.write(util_w);
 			ctx.device.device().cmd_fill_buffer(ctx.buf, buf.buffer, 0, 4, 0);
 		});
 
 		let mut pass = frame.pass("cull");
+
 		pass.input(
-			read_u,
+			util_r,
 			BufferUsage {
 				usages: &[
 					BufferUsageType::ShaderStorageRead(Shader::Compute),
@@ -93,13 +105,22 @@ impl Cull {
 				],
 			},
 		);
-		let meshlet_count = scene.meshlets.len() / std::mem::size_of::<Meshlet>() as u64;
-		let (read_c, write_c) = pass.output(
+
+		let meshlet_count = scene.meshlet_pointers.len() / std::mem::size_of::<MeshletPointer>() as u64;
+		let (command_r, command_w) = pass.output(
 			GpuBufferDesc {
 				size: meshlet_count * std::mem::size_of::<Command>() as u64,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Compute)],
+			},
+		);
+		let (camera_r, camera_w) = pass.output(
+			UploadBufferDesc {
+				size: std::mem::size_of::<Mat4<f32>>() as u64,
+			},
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageRead(Shader::Vertex)],
 			},
 		);
 
@@ -108,26 +129,33 @@ impl Cull {
 				ctx,
 				PassIO {
 					meshlets: scene.meshlets.inner().handle().id.unwrap(),
-					commands: write_c,
-					draw_count: read_u,
+					instances: scene.instances.inner().handle().id.unwrap(),
+					meshlet_pointers: scene.meshlet_pointers.inner().handle().id.unwrap(),
+					commands: command_w,
+					draw_count: util_r,
 					meshlet_count: meshlet_count as u32,
+					camera: camera_w,
+					camera_mat: camera_viewproj,
 				},
 			)
 		});
 
 		CullOutput {
-			commands: read_c,
-			draw_count: read_u,
+			commands: command_r,
+			draw_count: util_r,
+			camera: camera_r,
 		}
 	}
 
-	fn execute(&self, mut ctx: CorePass, io: PassIO) {
-		let commands = ctx.write(io.commands);
-		let draw_count = ctx.read(io.draw_count);
+	fn execute(&self, mut pass: CorePass, io: PassIO) {
+		let commands = pass.write(io.commands);
+		let draw_count = pass.read(io.draw_count);
+		let mut camera = pass.write(io.camera);
 
 		unsafe {
-			let dev = ctx.device.device();
-			let buf = ctx.buf;
+			let dev = pass.device.device();
+			let buf = pass.buf;
+			camera.data.as_mut().copy_from_slice(bytes_of(&io.camera_mat.cols));
 
 			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
 			dev.cmd_push_constants(
@@ -135,11 +163,14 @@ impl Cull {
 				self.layout,
 				vk::ShaderStageFlags::COMPUTE,
 				0,
-				bytemuck::bytes_of(&PushConstants {
+				bytes_of(&PushConstants {
 					meshlets: io.meshlets,
+					instances: io.instances,
+					meshlet_pointers: io.meshlet_pointers,
 					commands: commands.id.unwrap(),
 					util: draw_count.id.unwrap(),
 					meshlet_count: io.meshlet_count,
+					camera: camera.id.unwrap(),
 				}),
 			);
 			dev.cmd_bind_descriptor_sets(
@@ -147,7 +178,7 @@ impl Cull {
 				vk::PipelineBindPoint::COMPUTE,
 				self.layout,
 				0,
-				&[ctx.device.descriptors().set()],
+				&[pass.device.descriptors().set()],
 				&[],
 			);
 

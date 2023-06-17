@@ -335,7 +335,7 @@ impl Importer {
 			let (vertex_count, remap) = meshopt::generate_vertex_remap(&vertices, Some(&indices));
 			let mut vertices = meshopt::remap_vertex_buffer(&vertices, vertex_count, &remap);
 			let mut indices = meshopt::remap_index_buffer(Some(&indices), vertex_count, &remap);
-			meshopt::optimize_vertex_cache_in_place(&mut indices, vertex_count);
+			meshopt::optimize_vertex_cache_in_place(&mut indices, vertices.len());
 			meshopt::optimize_vertex_fetch_in_place(&mut indices, &mut vertices);
 		}
 
@@ -392,7 +392,7 @@ impl Importer {
 			mesh.indices.extend(m.triangles.iter().map(|&x| x as u32));
 			mesh.meshlets.push(Meshlet {
 				aabb_min: aabb.min,
-				aabb_max: aabb.max,
+				aabb_extent: extent,
 				index_offset,
 				vertex_offset,
 				tri_count,
