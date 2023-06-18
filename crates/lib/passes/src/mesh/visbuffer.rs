@@ -1,6 +1,6 @@
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
-use radiance_asset_runtime::{Meshlet, Scene};
+use radiance_asset_runtime::{MeshletPointer, Scene};
 use radiance_core::{pipeline::GraphicsPipelineDesc, CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::BufferId,
@@ -33,7 +33,7 @@ struct PassIO {
 	indices: vk::Buffer,
 	meshlets: BufferId,
 	instances: BufferId,
-	meshlet_count: u32,
+	total_meshlet_count: u32,
 	cull: CullOutput,
 	visbuffer: WriteId<ImageView>,
 	depth: WriteId<ImageView>,
@@ -138,7 +138,8 @@ impl VisBuffer {
 					instances: scene.instances.inner().inner.id().unwrap(),
 					vertices: scene.vertices.inner().inner.id().unwrap(),
 					indices: scene.indices.inner().inner.inner(),
-					meshlet_count: scene.meshlets.len() as u32 / std::mem::size_of::<Meshlet>() as u32,
+					total_meshlet_count: scene.meshlet_pointers.len() as u32
+						/ std::mem::size_of::<MeshletPointer>() as u32,
 					cull,
 					visbuffer: v_w,
 					depth: d_w,
@@ -233,7 +234,7 @@ impl VisBuffer {
 				0,
 				draw_count.buffer,
 				0,
-				io.meshlet_count,
+				io.total_meshlet_count,
 				std::mem::size_of::<Command>() as _,
 			);
 

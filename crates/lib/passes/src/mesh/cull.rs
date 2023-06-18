@@ -11,6 +11,11 @@ use radiance_graph::{
 use radiance_shader_compiler::c_str;
 use vek::Mat4;
 
+pub struct Camera {
+	pub view: Mat4<f32>,
+	pub proj: Mat4<f32>,
+}
+
 pub struct Cull {
 	pipeline: vk::Pipeline,
 	layout: vk::PipelineLayout,
@@ -51,7 +56,7 @@ struct PassIO {
 	commands: WriteId<GpuBufferHandle>,
 	draw_count: ReadId<GpuBufferHandle>,
 	camera: WriteId<UploadBufferHandle>,
-	camera_mat: Mat4<f32>,
+	camera_data: Camera,
 	meshlet_count: u32,
 }
 
@@ -78,7 +83,7 @@ impl Cull {
 	}
 
 	pub fn run<'pass>(
-		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, camera_viewproj: Mat4<f32>,
+		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, camera: Camera,
 	) -> CullOutput {
 		let mut pass = frame.pass("clear buffer");
 		let (util_r, util_w) = pass.output(
@@ -117,7 +122,7 @@ impl Cull {
 		);
 		let (camera_r, camera_w) = pass.output(
 			UploadBufferDesc {
-				size: std::mem::size_of::<Mat4<f32>>() as u64,
+				size: std::mem::size_of::<Camera>() as u64,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::Vertex)],
@@ -135,7 +140,7 @@ impl Cull {
 					draw_count: util_r,
 					meshlet_count: meshlet_count as u32,
 					camera: camera_w,
-					camera_mat: camera_viewproj,
+					camera_data: camera,
 				},
 			)
 		});
@@ -155,7 +160,9 @@ impl Cull {
 		unsafe {
 			let dev = pass.device.device();
 			let buf = pass.buf;
-			camera.data.as_mut().copy_from_slice(bytes_of(&io.camera_mat.cols));
+			let len = std::mem::size_of::<Mat4<f32>>();
+			camera.data.as_mut()[0..len].copy_from_slice(bytes_of(&io.camera_data.view.cols));
+			camera.data.as_mut()[len..2 * len].copy_from_slice(bytes_of(&io.camera_data.proj.cols));
 
 			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
 			dev.cmd_push_constants(

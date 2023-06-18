@@ -6,7 +6,10 @@ use radiance_egui::to_texture_id;
 use radiance_graph::Result;
 use radiance_passes::{
 	debug::meshlet::DebugMeshlets,
-	mesh::{cull::Cull, visbuffer::VisBuffer},
+	mesh::{
+		cull::{Camera, Cull},
+		visbuffer::VisBuffer,
+	},
 };
 use vek::{Mat4, Vec2, Vec3};
 
@@ -64,9 +67,9 @@ impl Renderer {
 					0.0, 0.0, 0.0, 0.1, //
 					0.0, 0.0, -1.0, 0.0, //
 				);
-				let view = Mat4::<f32>::look_at_rh(Vec3::broadcast(2.0), Vec3::broadcast(0.0), Vec3::unit_y());
+				let view = Mat4::<f32>::look_at_rh(Vec3::broadcast(0.25), Vec3::broadcast(0.0), Vec3::unit_y());
 
-				let cull = self.cull.run(frame, scene, proj * view);
+				let cull = self.cull.run(frame, scene, Camera { view, proj });
 				let visbuffer = self
 					.visbuffer
 					.run(frame, scene, cull, Vec2::new(size.x as u32, size.y as u32));

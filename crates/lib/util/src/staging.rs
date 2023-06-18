@@ -366,7 +366,9 @@ impl CircularBuffer {
 			// We don't have enough space, wrap around.
 			self.tail.buffer = (self.tail.buffer + 1) % self.buffers.len();
 			self.tail.offset = 0;
-			if self.tail.buffer == self.head.buffer {
+			if self.tail.buffer == self.head.buffer
+				|| self.buffers[self.tail.buffer].size() as usize - self.tail.offset < size
+			{
 				// We've wrapped back to the head, so we need to allocate a new buffer.
 				self.insert_buffer(device, size as u64)?;
 			}

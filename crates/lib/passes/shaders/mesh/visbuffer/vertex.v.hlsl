@@ -30,7 +30,9 @@ VertexOutput main(u32 vertex_id: SV_VertexID, u32 instance_id: SV_InstanceID) {
         t[2], t[5], t[8], t[11],
         0.f, 0.f, 0.f, 1.f,
     };
-    float4 position = mul(mul(camera.view_proj, transform), float4(meshlet_pos, 1.f));
+    float4x4 mv = mul(camera.view, transform);
+    float4x4 mvp = mul(camera.proj, mv);
+    float4 position = mul(mvp, float4(meshlet_pos, 1.f));
 
     VertexOutput ret = { position, meshlet_id };
     return ret;

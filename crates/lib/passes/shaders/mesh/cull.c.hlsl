@@ -24,6 +24,7 @@ PUSH PushConstants Constants;
 
 struct Aabb {
     float4 min;
+    float4 extent;
     float4 max;
 };
 
@@ -31,35 +32,39 @@ bool frustrum_cull(float4x4 mvp, Aabb aabb) {
     float4 aabb_min_clip = mul(mvp, aabb.min);
     float4 aabb_max_clip = mul(mvp, aabb.max);
 
-    float4 aabb_min_ndc = aabb_min_clip / aabb_min_clip.w;
-    float4 aabb_max_ndc = aabb_max_clip / aabb_max_clip.w;
+    float3 aabb_min_ndc = aabb_min_clip.xyz / aabb_min_clip.w;
+    float3 aabb_max_ndc = aabb_max_clip.xyz / aabb_max_clip.w;
 
-    return (aabb_min_clip.w > 0.f && aabb_max_clip.w > 0.f)
+    bool in_frustrum = (aabb_min_clip.w > 0.f && aabb_max_clip.w > 0.f)
         && (aabb_min_ndc.x <= 1.f && aabb_max_ndc.x >= -1.f)
         && (aabb_min_ndc.y <= 1.f && aabb_max_ndc.y >= -1.f)
         && (aabb_min_ndc.z <= 1.f && aabb_max_ndc.z >= 0.f);
+
+    return !in_frustrum;
 }
 
-bool cone_cull(float4x4 mvp, u32 cone) {
+bool cone_cull(float4x4 mv, Aabb aabb, u32 cone) {
     u16 axis_x = u16((cone >> 0) & 0xff);
     u16 axis_y = u16((cone >> 8) & 0xff);
     u16 axis_z = u16((cone >> 16) & 0xff);
-    u16 cutoff = u16((cone >> 24) & 0xff);
+    u16 int_cutoff = u16((cone >> 24) & 0xff);
 
-    u16 x_sign = axis_x & 0x80;
-    u16 y_sign = axis_y & 0x80;
-    u16 z_sign = axis_z & 0x80;
-    u16 c_sign = cutoff & 0x80;
+    vector<u16, 4> int_cone = { axis_x, axis_y, axis_z, int_cutoff };
+    vector<u16, 4> sign = (int_cone & 0x80) >> 7;
+    u16 signext = 0xff << 8;
+    vector<u16, 4> signed_cone = (sign * signext) | int_cone;
 
-    u16 signed_x = (x_sign << 8) | axis_x;
-    u16 signed_y = (y_sign << 8) | axis_y;
-    u16 signed_z = (z_sign << 8) | axis_z;
-    u16 signed_cutoff = (c_sign << 8) | cutoff;
+    float4 norm_cone = float4(signed_cone) / 127.f;
+    float3 axis = normalize(norm_cone.xyz);
+    float cutoff = norm_cone.w;
 
-    float4 norm_cone = float4(signed_x, signed_y, signed_z, signed_cutoff) / 127.f;
-    float3 axis = mul(mvp, float4(norm_cone.xyz, 0.f)).xyz;
-    float3 view = float3(0.f, 0.f, 1.f);
-    return dot(axis, view) <= norm_cone.w;
+    float4 aabb_half_extent = aabb.extent * 0.5f;
+    float4 aabb_center = aabb.min + aabb_half_extent;
+    float offset = dot(aabb_half_extent, axis);
+    float4 cone_apex = aabb_center + float4(axis * offset, 0.f);
+    float3 apex_camera = mul(mv, cone_apex).xyz;
+
+    return dot(normalize(apex_camera), axis) >= cutoff;
 }
 
 [numthreads(64, 1, 1)]
@@ -82,20 +87,21 @@ void main(uint3 id: SV_DispatchThreadID) {
         t[2], t[5], t[8], t[11],
         0.f, 0.f, 0.f, 1.f,
     };
-    float4x4 mvp = mul(camera.view_proj, transform);
+    float4x4 mv = mul(camera.view, transform);
+    float4x4 mvp = mul(camera.proj, mv);
 
     float4 aabb_min = float4(meshlet.aabb_min, 1.f);
     float4 aabb_extent = float4(meshlet.aabb_extent, 0.f);
     float4 aabb_max = aabb_min + aabb_extent;
-    Aabb aabb = { aabb_min, aabb_max };
+    Aabb aabb = { aabb_min, aabb_extent, aabb_max };
 
     // Culling.
-    if (!frustrum_cull(mvp, aabb)) {
+    if (frustrum_cull(mvp, aabb)) {
         return;
     }
-    if (!cone_cull(mvp, meshlet.cone)) {
-        return;
-    }
+    //if (cone_cull(mv, aabb, meshlet.cone)) {
+    //    return;
+    //}
 
     Command command;
     command.index_count = 372; // 124 * 3 - always 124 triangles per meshlet.
