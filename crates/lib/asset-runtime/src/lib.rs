@@ -226,7 +226,7 @@ impl AssetRuntime {
 			instances.push(instance);
 			meshlet_pointers.extend(model.meshlets.clone().map(|meshlet| MeshletPointer {
 				instance: instance_id,
-				meshlet,
+				meshlet: meshlet - instance.base_meshlet,
 			}));
 		}
 
