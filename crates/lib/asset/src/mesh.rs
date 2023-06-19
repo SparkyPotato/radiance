@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use static_assertions::const_assert_eq;
-use vek::{Aabb, Vec2, Vec3};
+use vek::{Aabb, Vec2, Vec3, Vec4};
 
 use crate::util::{SliceReader, SliceWriter};
 
@@ -22,11 +22,15 @@ const_assert_eq!(std::mem::align_of::<Vertex>(), 2);
 #[derive(Pod, Zeroable, Copy, Clone)]
 #[repr(C)]
 pub struct Cone {
+	pub apex: Vec4<u8>,
 	/// Signed normalized axis of the cone.
 	pub axis: Vec3<i8>,
 	/// Signed normalized cos(angle / 2).
 	pub cutoff: i8,
 }
+
+const_assert_eq!(std::mem::size_of::<Cone>(), 8);
+const_assert_eq!(std::mem::align_of::<Cone>(), 1);
 
 #[derive(Pod, Zeroable, Copy, Clone)]
 #[repr(C)]
@@ -47,7 +51,7 @@ pub struct Meshlet {
 	pub _pad: u16,
 }
 
-const_assert_eq!(std::mem::size_of::<Meshlet>(), 40);
+const_assert_eq!(std::mem::size_of::<Meshlet>(), 44);
 const_assert_eq!(std::mem::align_of::<Meshlet>(), 4);
 
 /// A mesh asset consisting of meshlets.

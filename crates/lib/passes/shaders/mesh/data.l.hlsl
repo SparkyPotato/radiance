@@ -18,13 +18,16 @@ struct Instance {
     u32 base_meshlet;
 };
 
+struct Cone {
+    u32 apex;
+    u32 axis_cutoff;
+};
+
 /// A meshlet is a collection of 124 triangles and 64 vertices.
 struct Meshlet {
 	f32 aabb_min[3];
 	f32 aabb_extent[3];
-	// 0, 1, 2: axis
-    // 3: cutoff
-	u32 cone;
+	Cone cone;
 };
 
 struct Camera {

@@ -109,13 +109,15 @@ impl AssetHeader {
 			}
 		}
 		if check_version {
-			if reader.read::<u32>() != CONTAINER_VERSION {
+			if u32::from_le_bytes(reader.read_slice::<u8>(4).try_into().unwrap()) != CONTAINER_VERSION {
 				return None;
 			}
 		}
 
 		let uuid = Uuid::from_slice(reader.read_slice(16)).unwrap();
-		let ty = reader.read::<u32>().try_into().ok()?;
+		let ty = u32::from_le_bytes(reader.read_slice::<u8>(4).try_into().unwrap())
+			.try_into()
+			.ok()?;
 
 		Some(Self { uuid, ty })
 	}

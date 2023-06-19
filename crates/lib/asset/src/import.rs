@@ -390,6 +390,9 @@ impl Importer {
 				uv: (x.uv * Vec2::broadcast(65535.0)).map(|x| x.round() as u16),
 			}));
 			mesh.indices.extend(m.triangles.iter().map(|&x| x as u32));
+
+			let world_apex = Vec3::from_slice(&bounds.cone_apex);
+			let apex = ((world_apex - aabb.min) / extent * Vec3::broadcast(255.0)).map(|x| x.round() as u8);
 			mesh.meshlets.push(Meshlet {
 				aabb_min: aabb.min,
 				aabb_extent: extent,
@@ -398,6 +401,7 @@ impl Importer {
 				tri_count,
 				vert_count,
 				cone: Cone {
+					apex: apex.with_w(0),
 					axis: Vec3::from_slice(&bounds.cone_axis_s8),
 					cutoff: bounds.cone_cutoff_s8,
 				},

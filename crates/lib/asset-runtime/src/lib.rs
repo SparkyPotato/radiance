@@ -47,7 +47,7 @@ pub struct Meshlet {
 	pub cone: Cone,
 }
 
-const_assert_eq!(std::mem::size_of::<Meshlet>(), 28);
+const_assert_eq!(std::mem::size_of::<Meshlet>(), 32);
 const_assert_eq!(std::mem::align_of::<Meshlet>(), 4);
 
 pub struct Scene {

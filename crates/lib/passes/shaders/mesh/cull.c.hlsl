@@ -43,28 +43,31 @@ bool frustrum_cull(float4x4 mvp, Aabb aabb) {
     return !in_frustrum;
 }
 
-bool cone_cull(float4x4 mv, Aabb aabb, u32 cone) {
-    u16 axis_x = u16((cone >> 0) & 0xff);
-    u16 axis_y = u16((cone >> 8) & 0xff);
-    u16 axis_z = u16((cone >> 16) & 0xff);
-    u16 int_cutoff = u16((cone >> 24) & 0xff);
+bool cone_cull(float4x4 mv, Aabb aabb, Cone cone) {
+    u16 apex_x = u16((cone.apex >> 0) & 0xff);
+    u16 apex_y = u16((cone.apex >> 8) & 0xff);
+    u16 apex_z = u16((cone.apex >> 16) & 0xff);
+    float3 apex_normalized = float3(apex_x, apex_y, apex_z) / 255.f;
+    float4 apex = aabb.min + aabb.extent * float4(apex_normalized, 0.f);
+
+    u16 axis_x = u16((cone.axis_cutoff >> 0) & 0xff);
+    u16 axis_y = u16((cone.axis_cutoff >> 8) & 0xff);
+    u16 axis_z = u16((cone.axis_cutoff >> 16) & 0xff);
+    u16 int_cutoff = u16((cone.axis_cutoff >> 24) & 0xff);
 
     vector<u16, 4> int_cone = { axis_x, axis_y, axis_z, int_cutoff };
     vector<u16, 4> sign = (int_cone & 0x80) >> 7;
     u16 signext = 0xff << 8;
-    vector<u16, 4> signed_cone = (sign * signext) | int_cone;
+    vector<i16, 4> signed_cone = vector<i16, 4>((sign * signext) | int_cone);
 
     float4 norm_cone = float4(signed_cone) / 127.f;
     float3 axis = normalize(norm_cone.xyz);
     float cutoff = norm_cone.w;
 
-    float4 aabb_half_extent = aabb.extent * 0.5f;
-    float4 aabb_center = aabb.min + aabb_half_extent;
-    float offset = dot(aabb_half_extent, axis);
-    float4 cone_apex = aabb_center + float4(axis * offset, 0.f);
-    float3 apex_camera = mul(mv, cone_apex).xyz;
+    float3 apex_camera = mul(mv, apex).xyz;
+    float3 axis_camera = mul(mv, float4(axis, 0.f)).xyz;
 
-    return dot(normalize(apex_camera), axis) >= cutoff;
+    return dot(normalize(apex_camera), normalize(axis_camera)) >= cutoff;
 }
 
 [numthreads(64, 1, 1)]
@@ -99,9 +102,9 @@ void main(uint3 id: SV_DispatchThreadID) {
     if (frustrum_cull(mvp, aabb)) {
         return;
     }
-    //if (cone_cull(mv, aabb, meshlet.cone)) {
-    //    return;
-    //}
+    if (cone_cull(mv, aabb, meshlet.cone)) {
+        return;
+    }
 
     Command command;
     command.index_count = 372; // 124 * 3 - always 124 triangles per meshlet.
