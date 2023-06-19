@@ -10,7 +10,7 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 #[repr(transparent)]
-#[derive(Eq, PartialEq, Hash)]
+#[derive(Eq, PartialEq, Hash, Debug)]
 pub struct VirtualPath {
 	inner: Path,
 }
@@ -26,7 +26,7 @@ impl VirtualPath {
 }
 
 #[repr(transparent)]
-#[derive(Eq, PartialEq, Hash, Clone, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Hash, Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct VirtualPathBuf {
 	inner: PathBuf,
@@ -108,7 +108,10 @@ impl VirtualFileSystem {
 		let root = self.source_roots.get(name)?;
 		let path = components.as_path();
 
-		Some(root.join(path).with_extension("hlsl"))
+		let mut path = root.join(path);
+		let ext = path.extension()?;
+		path.set_extension(format!("{}.hlsl", ext.to_str()?,));
+		Some(path)
 	}
 
 	/// Convert a physical source path to a virtual path.
@@ -134,7 +137,10 @@ impl VirtualFileSystem {
 		let root = self.output_roots.get(name)?.as_ref()?;
 		let path = components.as_path();
 
-		Some(root.join(path).with_extension("spv"))
+		let mut path = root.join(path);
+		let ext = path.extension()?;
+		path.set_extension(format!("{}.spv", ext.to_str()?));
+		Some(path)
 	}
 
 	/// Convert a physical output path to a virtual path.

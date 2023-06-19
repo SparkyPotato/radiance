@@ -34,9 +34,10 @@ impl ShaderBuilder {
 		})
 	}
 
+	/// Load dependencies from a file.
 	pub fn deps(&mut self, file: &Path) -> Result<(), Box<dyn Error>> {
 		let mut file = BufReader::new(File::open(file)?);
-		let deps: DependencyInfo = serde_json::from_reader(&mut file)?;
+		let deps = serde_json::from_reader(&mut file)?;
 		self.dependencies.merge(deps);
 		Ok(())
 	}
@@ -113,17 +114,19 @@ impl ShaderBuilder {
 				let virtual_path = self.vfs.unresolve_source(path).unwrap();
 				let output_path = self.vfs.resolve_output(&virtual_path).unwrap();
 
-				if let Ok(meta) = std::fs::metadata(output_path) {
-					if meta.modified().unwrap() < file.metadata().unwrap().modified().unwrap() {
-						compile_queue.push(path.to_path_buf());
-						compile_queue.extend(
-							self.dependencies
-								.on(&virtual_path)
-								.map(|x| self.vfs.resolve_source(x).unwrap()),
-						);
-					}
-				} else {
+				let modified = output_path
+					.metadata()
+					.ok()
+					.and_then(|o| file.metadata().ok().map(|f| (f, o)))
+					.map(|(f, o)| f.modified().unwrap() > o.modified().unwrap())
+					.unwrap_or(true);
+				if modified {
 					compile_queue.push(path.to_path_buf());
+					compile_queue.extend(
+						self.dependencies
+							.on(&virtual_path)
+							.map(|x| self.vfs.resolve_source(x).unwrap()),
+					);
 				}
 			}
 		}
@@ -181,21 +184,20 @@ impl DxcIncludeHandler for IncludeHandler<'_> {
 		let path = comp.as_path();
 		let us = self.vfs.resolve_source(self.curr)?;
 		let curr_dir = us.parent()?;
-		let curr_module = self.curr.get_module();
 
 		// Check in current directory
 		match self.load(&curr_dir.join(path)) {
 			Some(source) => Some(source),
-			// Current module root
-			None => match self.load(&self.vfs.get_root(curr_module)?.join(path)) {
-				Some(source) => Some(source),
-				None => self.load(&self.vfs.resolve_source(VirtualPath::new(&path))?),
+			// Global include directories
+			None => {
+				let path = path.with_extension("");
+				self.load(&self.vfs.resolve_source(VirtualPath::new(&path))?)
 			},
 		}
 	}
 }
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
 struct DependencyInfo {
 	inner: FxHashMap<VirtualPathBuf, FxHashSet<VirtualPathBuf>>,

@@ -8,15 +8,15 @@ impl ShaderBuilder {
 	/// Create a new shader module builder for the build script. The name of the shader module is the same name as the
 	/// crate.
 	pub fn for_build() -> Self {
-		println!("cargo:rerun-if-changed=..");
+		println!("cargo:rerun-if-changed=../..");
 
 		let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();
 		let profile = std::env::var("PROFILE").unwrap();
+		let out = std::env::var("OUT_DIR").unwrap();
 
 		let mut builder = ShaderBuilder::new(profile == "debug").unwrap();
-		builder
-			.target(root.as_ref(), std::env::var("OUT_DIR").unwrap().as_ref())
-			.unwrap();
+		let _ = builder.deps(&Path::new(&out).join("dependencies.json"));
+		builder.target(root.as_ref(), out.as_ref()).unwrap();
 
 		builder
 	}
