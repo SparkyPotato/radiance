@@ -24,6 +24,7 @@ pub struct VisBuffer {
 struct PushConstants {
 	meshlets: BufferId,
 	instances: BufferId,
+	meshlet_pointers: BufferId,
 	vertices: BufferId,
 	camera: BufferId,
 }
@@ -33,6 +34,7 @@ struct PassIO {
 	indices: vk::Buffer,
 	meshlets: BufferId,
 	instances: BufferId,
+	meshlet_pointers: BufferId,
 	total_meshlet_count: u32,
 	cull: CullOutput,
 	visbuffer: WriteId<ImageView>,
@@ -136,6 +138,7 @@ impl VisBuffer {
 				PassIO {
 					meshlets: scene.meshlets.inner().inner.id().unwrap(),
 					instances: scene.instances.inner().inner.id().unwrap(),
+					meshlet_pointers: scene.meshlet_pointers.inner().inner.id().unwrap(),
 					vertices: scene.vertices.inner().inner.id().unwrap(),
 					indices: scene.indices.inner().inner.inner(),
 					total_meshlet_count: scene.meshlet_pointers.len() as u32
@@ -222,6 +225,7 @@ impl VisBuffer {
 				bytes_of(&PushConstants {
 					meshlets: io.meshlets,
 					instances: io.instances,
+					meshlet_pointers: io.meshlet_pointers,
 					vertices: io.vertices,
 					camera: camera.id.unwrap(),
 				}),

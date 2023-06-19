@@ -35,12 +35,10 @@ bool frustrum_cull(float4x4 mvp, Aabb aabb) {
     float3 aabb_min_ndc = aabb_min_clip.xyz / aabb_min_clip.w;
     float3 aabb_max_ndc = aabb_max_clip.xyz / aabb_max_clip.w;
 
-    bool in_frustrum = (aabb_min_clip.w > 0.f && aabb_max_clip.w > 0.f)
-        && (aabb_min_ndc.x <= 1.f && aabb_max_ndc.x >= -1.f)
-        && (aabb_min_ndc.y <= 1.f && aabb_max_ndc.y >= -1.f)
-        && (aabb_min_ndc.z <= 1.f && aabb_max_ndc.z >= 0.f);
-
-    return !in_frustrum;
+    return (aabb_min_clip.w <= 0.f || aabb_max_clip.w <= 0.f)
+        || (aabb_min_ndc.x > 1.f || aabb_max_ndc.x < -1.f)
+        || (aabb_min_ndc.y > 1.f || aabb_max_ndc.y < -1.f)
+        || (aabb_min_ndc.z > 1.f || aabb_max_ndc.z < 0.f);
 }
 
 bool cone_cull(float4x4 mv, Aabb aabb, Cone cone) {
@@ -111,7 +109,7 @@ void main(uint3 id: SV_DispatchThreadID) {
     command.instance_count = 1;
     command.first_index = meshlet_id * 372;
     command.vertex_offset = meshlet_id << 6; // Always 64 vertices per meshlet.
-    command.first_instance = pointer.instance;
+    command.first_instance = index;
 
     u32 out_index = Constants.util.atomic_add(0, 1);
     Constants.commands.store(out_index, command);

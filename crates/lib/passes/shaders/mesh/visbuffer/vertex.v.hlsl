@@ -5,14 +5,16 @@
 struct PushConstants {
     Buf<Meshlet> meshlets;
     Buf<Instance> instances;
+    Buf<MeshletPointer> meshlet_pointers;
     Buf<Vertex> vertices;
     Buf<Camera> camera;
 };
 
 PUSH PushConstants Constants;
 
-VertexOutput main(u32 vertex_id: SV_VertexID, u32 instance_id: SV_InstanceID) {
-    Instance instance = Constants.instances.load(instance_id);
+VertexOutput main(u32 vertex_id: SV_VertexID, u32 pointer_id: SV_InstanceID) {
+    MeshletPointer pointer = Constants.meshlet_pointers.load(pointer_id);
+    Instance instance = Constants.instances.load(pointer.instance);
     u32 meshlet_id = vertex_id >> 6; // Always 64 vertices per meshlet.
     Meshlet meshlet = Constants.meshlets.load(meshlet_id);
     Camera camera = Constants.camera.load(0);
@@ -34,6 +36,6 @@ VertexOutput main(u32 vertex_id: SV_VertexID, u32 instance_id: SV_InstanceID) {
     float4x4 mvp = mul(camera.proj, mv);
     float4 position = mul(mvp, float4(meshlet_pos, 1.f));
 
-    VertexOutput ret = { position, meshlet_id };
+    VertexOutput ret = { position, pointer_id };
     return ret;
 }

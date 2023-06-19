@@ -91,7 +91,9 @@ fn main() {
 			let mut frame = state.core.frame(&state.device, &mut state.graph).unwrap();
 
 			state.ui.begin_frame(&state.window);
-			state.state.render(&state.device, &mut frame, &state.ui.ctx);
+			state
+				.state
+				.render(&state.device, &mut frame, &state.ui.ctx, &state.window);
 			let id = state.ui.run(&state.device, &mut frame, &state.window).unwrap();
 
 			frame.run(&state.device).unwrap();

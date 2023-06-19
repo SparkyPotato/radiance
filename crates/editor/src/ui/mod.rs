@@ -11,7 +11,10 @@ use radiance_graph::Result;
 use rfd::FileDialog;
 pub use widgets::Fonts;
 
-use crate::ui::{assets::AssetManager, render::Renderer};
+use crate::{
+	ui::{assets::AssetManager, render::Renderer},
+	window::Window,
+};
 
 pub struct UiState {
 	assets: AssetManager,
@@ -28,7 +31,9 @@ impl UiState {
 		})
 	}
 
-	pub fn render<'pass>(&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context) {
+	pub fn render<'pass>(
+		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
+	) {
 		TopBottomPanel::top("menu").show(ctx, |ui| {
 			menu::bar(ui, |ui| {
 				ui.menu_button("project", |ui| {
@@ -61,7 +66,7 @@ impl UiState {
 
 		self.assets.render(ctx, &self.fonts);
 		self.renderer
-			.render(device, frame, ctx, self.assets.system.as_deref_mut());
+			.render(device, frame, ctx, window, self.assets.system.as_deref_mut());
 	}
 
 	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
