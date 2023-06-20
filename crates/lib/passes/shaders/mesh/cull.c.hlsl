@@ -28,17 +28,30 @@ struct Aabb {
     float4 max;
 };
 
+Aabb transform_aabb(float4x4 transform, Aabb aabb) {
+    float4 center = (aabb.min + aabb.max) * 0.5f;
+    float4 half_extent = aabb.extent * 0.5f;
+
+    float4 transformed_center = mul(transform, center);
+    float3x3 abs_mat = float3x3(abs(transform[0].xyz), abs(transform[1].xyz), abs(transform[2].xyz));
+    float4 transformed_half_extent = float4(mul(abs_mat, half_extent), 0.f);
+
+    float4 transformed_min = transformed_center - transformed_half_extent;
+    float4 transformed_max = transformed_center + transformed_half_extent;
+
+    Aabb ret = { transformed_min, transformed_half_extent * 2.f, transformed_max };
+    return ret;
+}
+
 bool frustrum_cull(float4x4 mvp, Aabb aabb) {
-    float4 aabb_min_clip = mul(mvp, aabb.min);
-    float4 aabb_max_clip = mul(mvp, aabb.max);
+    Aabb clip = transform_aabb(mvp, aabb);
+    float3 ndc_min = clip.min.xyz / clip.min.w;
+    float3 ndc_max = clip.max.xyz / clip.max.w;
 
-    float3 aabb_min_ndc = aabb_min_clip.xyz / aabb_min_clip.w;
-    float3 aabb_max_ndc = aabb_max_clip.xyz / aabb_max_clip.w;
-
-    return (aabb_min_clip.w <= 0.f || aabb_max_clip.w <= 0.f)
-        || (aabb_min_ndc.x > 1.f || aabb_max_ndc.x < -1.f)
-        || (aabb_min_ndc.y > 1.f || aabb_max_ndc.y < -1.f)
-        || (aabb_min_ndc.z > 1.f || aabb_max_ndc.z < 0.f);
+    return (clip.min.w <= 0.f || clip.max.w <= 0.f)
+        || (ndc_min.x > 1.f || ndc_max.x < -1.f)
+        || (ndc_min.y > 1.f || ndc_max.y < -1.f)
+        || (ndc_min.z > 1.f || ndc_max.z < 0.f);
 }
 
 bool cone_cull(float4x4 mv, Aabb aabb, Cone cone) {
