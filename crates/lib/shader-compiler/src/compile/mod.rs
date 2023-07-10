@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, error::Error, fs::File, io::BufReader, path::Path};
 
-use hassle_rs::{Dxc, DxcCompiler3, DxcIncludeHandler, DxcLibrary};
+use hassle_rs::{Dxc, DxcCompiler, DxcIncludeHandler, DxcLibrary};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -13,7 +13,7 @@ pub struct ShaderBuilder {
 	pub(crate) vfs: VirtualFileSystem,
 	debug: bool,
 	dependencies: DependencyInfo,
-	compiler: DxcCompiler3,
+	compiler: DxcCompiler,
 	library: DxcLibrary,
 	_dxc: Dxc,
 }
@@ -21,7 +21,7 @@ pub struct ShaderBuilder {
 impl ShaderBuilder {
 	pub fn new(debug: bool) -> Result<Self, Box<dyn Error>> {
 		let dxc = Dxc::new(None)?;
-		let compiler = dxc.create_compiler3()?;
+		let compiler = dxc.create_compiler()?;
 		let library = dxc.create_library()?;
 
 		Ok(Self {
@@ -77,7 +77,19 @@ impl ShaderBuilder {
 			let mut handler = IncludeHandler::new(&self.vfs, &mut self.dependencies, &virtual_path);
 
 			let shader = std::fs::read_to_string(file).map_err(|x| x.to_string())?;
-			let bytecode: Vec<u8> = match self.compiler.compile(&shader, &args, Some(&mut handler)) {
+			let blob = self
+				.library
+				.create_blob_with_encoding_from_str(&shader)
+				.map_err(|x| x.to_string())?;
+			let bytecode: Vec<u8> = match self.compiler.compile(
+				&blob,
+				&file.file_name().unwrap().to_string_lossy(),
+				"main",
+				ty.target_profile(),
+				&args,
+				Some(&mut handler),
+				&[],
+			) {
 				Ok(result) => {
 					let result_blob = result.get_result().unwrap();
 					result_blob.to_vec()

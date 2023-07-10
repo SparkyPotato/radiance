@@ -324,7 +324,7 @@ pub struct ImageView {
 	pub view: vk::ImageView,
 	pub id: Option<ImageId>,
 	pub storage_id: Option<StorageImageId>,
-	pub size: vk::Extent3D, 
+	pub size: vk::Extent3D,
 }
 
 impl Resource for ImageView {
