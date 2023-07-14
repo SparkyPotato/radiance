@@ -21,95 +21,99 @@ use crate::{
 	Result,
 };
 
-impl Device {
-	const VALIDATION_LAYER: &'static CStr =
-		unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
+const VALIDATION_LAYER: &'static CStr =
+	unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
 
-	/// Create a device with no layers, extensions, or surface.
-	///
-	/// Enables the validation if built in debug (and if the layers are available).
-	pub fn new() -> Result<Self> { unsafe { Self::new_inner(None, &[], &[], &[]).map(|x| x.0) } }
+pub struct DeviceBuilder<'a> {
+	pub validation: bool,
+	pub layers: &'a [&'static CStr],
+	pub instance_extensions: &'a [&'static CStr],
+	pub device_extensions: &'a [&'static CStr],
+	pub window: Option<(&'a dyn HasRawWindowHandle, &'a dyn HasRawDisplayHandle)>,
+	pub features: vk::PhysicalDeviceFeatures2Builder<'a>,
+}
 
-	/// Create a device with the given layers and extensions, but no surface.
-	///
-	/// Enables the validation if built in debug (and if the layers are available).
-	pub fn with_layers_and_extensions(
-		layers: &[&'static CStr], instance_extensions: &[&'static CStr], device_extensions: &[&'static CStr],
-	) -> Result<Self> {
-		unsafe { Self::new_inner(None, layers, instance_extensions, device_extensions).map(|x| x.0) }
+impl Default for DeviceBuilder<'_> {
+	fn default() -> Self {
+		Self {
+			validation: false,
+			layers: &[],
+			instance_extensions: &[],
+			device_extensions: &[],
+			window: None,
+			features: vk::PhysicalDeviceFeatures2::builder(),
+		}
+	}
+}
+
+impl<'a> DeviceBuilder<'a> {
+	pub fn validation(mut self, validation: bool) -> Self {
+		self.validation = validation;
+		self
 	}
 
-	/// Create a device with a surface on the window, but no layers and extensions.
-	///
-	/// Enables the validation if built in debug (and if the layers are available).
-	///
-	/// # Safety
-	/// `window` and `display` must outlive the returned `SurfaceKHR`.
-	pub unsafe fn with_window(
-		window: &dyn HasRawWindowHandle, display: &dyn HasRawDisplayHandle,
-	) -> Result<(Self, vk::SurfaceKHR)> {
-		Self::new_inner(
-			Some((window.raw_window_handle(), display.raw_display_handle())),
-			&[],
-			&[],
-			&[],
-		)
-		.map(|x| (x.0, x.1.unwrap()))
+	pub fn layers(mut self, layers: &'a [&'static CStr]) -> Self {
+		self.layers = layers;
+		self
 	}
 
-	/// Create a device with a surface on the window, with the given layers and extensions.
-	///
-	/// Enables the validation if built in debug (and if the layers are available).
-	///
-	/// # Safety
-	/// `window` and `display` must outlive the returned `SurfaceKHR`.
-	pub unsafe fn with_window_and_layers_and_extensions(
-		window: &dyn HasRawWindowHandle, display: &dyn HasRawDisplayHandle, layers: &[&'static CStr],
-		instance_extensions: &[&'static CStr], device_extensions: &[&'static CStr],
-	) -> Result<(Self, vk::SurfaceKHR)> {
-		Self::new_inner(
-			Some((window.raw_window_handle(), display.raw_display_handle())),
-			layers,
-			instance_extensions,
-			device_extensions,
-		)
-		.map(|x| (x.0, x.1.unwrap()))
+	pub fn instance_extensions(mut self, extensions: &'a [&'static CStr]) -> Self {
+		self.instance_extensions = extensions;
+		self
+	}
+
+	pub fn device_extensions(mut self, extensions: &'a [&'static CStr]) -> Self {
+		self.device_extensions = extensions;
+		self
 	}
 
 	/// # Safety
-	/// `window` and `display` must outlive the returned `SurfaceKHR`.
-	pub unsafe fn create_surface(
-		&self, window: &dyn HasRawWindowHandle, display: &dyn HasRawDisplayHandle,
-	) -> Result<vk::SurfaceKHR> {
-		Self::create_surface_inner(
-			&self.entry,
-			&self.instance,
-			window.raw_window_handle(),
-			display.raw_display_handle(),
-		)
+	/// `window` and `display` must outlive the `SurfaceKHR` returned from [`Self::build`].
+	pub unsafe fn window(mut self, window: &'a dyn HasRawWindowHandle, display: &'a dyn HasRawDisplayHandle) -> Self {
+		self.window = Some((window, display));
+		self
 	}
 
-	unsafe fn new_inner(
-		window: Option<(RawWindowHandle, RawDisplayHandle)>, layers: &[&'static CStr],
-		instance_extensions: &[&'static CStr], device_extensions: &[&'static CStr],
-	) -> Result<(Self, Option<vk::SurfaceKHR>)> {
+	/// Any extra features required should be appended to the `p_next` chain.
+	pub fn features(mut self, features: vk::PhysicalDeviceFeatures2Builder<'a>) -> Self {
+		self.features = features;
+		self
+	}
+
+	pub fn build(self) -> Result<(Device, vk::SurfaceKHR)> {
 		let entry = Self::load_entry()?;
-		let (instance, debug_utils_ext, debug_messenger) =
-			Self::create_instance(&entry, window.map(|x| x.0), layers, instance_extensions)?;
+
+		let window = self
+			.window
+			.map(|(window, display)| (window.raw_window_handle(), display.raw_display_handle()));
+
+		let (layers, extensions) = Self::get_instance_layers_and_extensions(
+			&entry,
+			window.map(|x| x.0),
+			self.validation,
+			self.layers,
+			self.instance_extensions,
+		)?;
+		let (instance, debug_utils_ext, debug_messenger) = Self::create_instance(&entry, &layers, &extensions)?;
 
 		let surface = window.map(|(window, display)| {
 			let surface_ext = khr::Surface::new(&entry, &instance);
-			let surface = Self::create_surface_inner(&entry, &instance, window, display);
+			let surface = unsafe { Self::create_surface_inner(&entry, &instance, window, display) };
 			(surface, surface_ext)
 		});
 
-		let s = surface.as_ref().map(|(surface, _)| surface.clone()).transpose()?;
+		let s = surface
+			.as_ref()
+			.map(|(surface, _)| surface.clone())
+			.transpose()?
+			.unwrap_or(vk::SurfaceKHR::null());
 		let surface_ext = surface.map(|(_, ext)| ext);
 
 		let (device, physical_device, queues) = Self::create_device(
 			&instance,
-			s.map(|s| (surface_ext.as_ref().unwrap(), s)),
-			device_extensions,
+			surface_ext.as_ref().map(|ext| (ext, s)),
+			self.device_extensions,
+			self.features,
 		)?;
 
 		let allocator = Allocator::new(&AllocatorCreateDesc {
@@ -124,7 +128,7 @@ impl Device {
 		let descriptors = Descriptors::new(&device)?;
 
 		Ok((
-			Self {
+			Device {
 				entry,
 				instance,
 				debug_messenger,
@@ -147,14 +151,75 @@ impl Device {
 		}
 	}
 
+	fn get_instance_layers_and_extensions(
+		entry: &ash::Entry, window: Option<RawWindowHandle>, validation: bool, layers: &[&'static CStr],
+		extensions: &[&'static CStr],
+	) -> Result<(Vec<&'static CStr>, Vec<&'static CStr>)> {
+		let validation = if validation {
+			if entry
+				.enumerate_instance_layer_properties()?
+				.into_iter()
+				.any(|props| unsafe { CStr::from_ptr(props.layer_name.as_ptr()) } == VALIDATION_LAYER)
+			{
+				Some(VALIDATION_LAYER)
+			} else {
+				warn!("validation layer not found, continuing without");
+				None
+			}
+		} else {
+			None
+		};
+
+		let mut exts: Vec<&CStr> = Self::get_surface_extensions(window)?.to_vec();
+		if validation.is_some()
+			&& entry
+				.enumerate_instance_extension_properties(None)?
+				.into_iter()
+				.any(|props| unsafe { CStr::from_ptr(props.extension_name.as_ptr()) } == ext::DebugUtils::name())
+		{
+			exts.push(ext::DebugUtils::name());
+		}
+		exts.extend_from_slice(extensions);
+
+		Ok((
+			validation.into_iter().chain(layers.into_iter().copied()).collect(),
+			exts,
+		))
+	}
+
+	fn get_surface_extensions(handle: Option<RawWindowHandle>) -> Result<&'static [&'static CStr]> {
+		Ok(match handle {
+			Some(handle) => match handle {
+				RawWindowHandle::Win32(_) => {
+					const S: &[&CStr] = &[khr::Surface::name(), khr::Win32Surface::name()];
+					S
+				},
+				RawWindowHandle::Wayland(_) => {
+					const S: &[&CStr] = &[khr::Surface::name(), khr::WaylandSurface::name()];
+					S
+				},
+				RawWindowHandle::Xlib(_) => {
+					const S: &[&CStr] = &[khr::Surface::name(), khr::XlibSurface::name()];
+					S
+				},
+				RawWindowHandle::Xcb(_) => {
+					const S: &[&CStr] = &[khr::Surface::name(), khr::XcbSurface::name()];
+					S
+				},
+				RawWindowHandle::AndroidNdk(_) => {
+					const S: &[&CStr] = &[khr::Surface::name(), khr::AndroidSurface::name()];
+					S
+				},
+				_ => return Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT.into()),
+			},
+			None => &[],
+		})
+	}
+
 	fn create_instance(
-		entry: &ash::Entry, window: Option<RawWindowHandle>, user_layers: &[&'static CStr],
-		instance_extensions: &[&'static CStr],
+		entry: &ash::Entry, layers: &[&'static CStr], extensions: &[&'static CStr],
 	) -> Result<(ash::Instance, Option<ext::DebugUtils>, vk::DebugUtilsMessengerEXT)> {
-		let (mut layers, mut extensions) = Self::get_instance_layers_and_extensions(entry, window)?;
-		let has_validation = layers.contains(&Self::VALIDATION_LAYER);
-		layers.extend_from_slice(user_layers);
-		extensions.extend_from_slice(instance_extensions);
+		let has_validation = layers.contains(&VALIDATION_LAYER);
 
 		let instance = unsafe {
 			entry.create_instance(
@@ -197,61 +262,6 @@ impl Device {
 		};
 
 		Ok((instance, utils, messenger))
-	}
-
-	fn get_instance_layers_and_extensions(
-		entry: &ash::Entry, window: Option<RawWindowHandle>,
-	) -> Result<(Vec<&'static CStr>, Vec<&'static CStr>)> {
-		let validation = if cfg!(debug_assertions) {
-			if entry
-				.enumerate_instance_layer_properties()?
-				.into_iter()
-				.any(|props| unsafe { CStr::from_ptr(props.layer_name.as_ptr()) } == Self::VALIDATION_LAYER)
-			{
-				Some(Self::VALIDATION_LAYER)
-			} else {
-				warn!("validation layer not found, continuing without");
-				None
-			}
-		} else {
-			None
-		};
-
-		let mut extensions: Vec<&CStr> = Self::get_window_extensions(window)?.to_vec();
-		if validation.is_some() {
-			extensions.push(ext::DebugUtils::name());
-		}
-
-		Ok((validation.into_iter().collect(), extensions))
-	}
-
-	fn get_window_extensions(handle: Option<RawWindowHandle>) -> Result<&'static [&'static CStr]> {
-		Ok(match handle {
-			Some(handle) => match handle {
-				RawWindowHandle::Win32(_) => {
-					const S: &[&CStr] = &[khr::Surface::name(), khr::Win32Surface::name()];
-					S
-				},
-				RawWindowHandle::Wayland(_) => {
-					const S: &[&CStr] = &[khr::Surface::name(), khr::WaylandSurface::name()];
-					S
-				},
-				RawWindowHandle::Xlib(_) => {
-					const S: &[&CStr] = &[khr::Surface::name(), khr::XlibSurface::name()];
-					S
-				},
-				RawWindowHandle::Xcb(_) => {
-					const S: &[&CStr] = &[khr::Surface::name(), khr::XcbSurface::name()];
-					S
-				},
-				RawWindowHandle::AndroidNdk(_) => {
-					const S: &[&CStr] = &[khr::Surface::name(), khr::AndroidSurface::name()];
-					S
-				},
-				_ => return Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT.into()),
-			},
-			None => &[],
-		})
 	}
 
 	unsafe fn create_surface_inner(
@@ -306,17 +316,108 @@ impl Device {
 		.map_err(Into::into)
 	}
 
-	fn select_physical_device(
-		instance: &ash::Instance, surface: Option<(&khr::Surface, vk::SurfaceKHR)>,
-	) -> Result<(vk::PhysicalDevice, Queues<u32>)> {
-		for device in unsafe { instance.enumerate_physical_devices()? } {
-			if let Some((strategy, name)) = Self::get_device_suitability(instance, device, surface) {
-				info!("selected GPU `{}`", name);
-				return Ok((device, strategy));
-			}
+	fn create_device(
+		instance: &ash::Instance, surface: Option<(&khr::Surface, vk::SurfaceKHR)>, extensions: &[&'static CStr],
+		features: vk::PhysicalDeviceFeatures2Builder,
+	) -> Result<(ash::Device, vk::PhysicalDevice, Queues<QueueData>)> {
+		let extensions = Self::get_device_extensions(surface.is_some(), extensions);
+		trace!("using device extensions: {:?}", extensions);
+		let extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
+
+		for (physical_device, queues, name) in Self::get_physical_devices(instance, surface)? {
+			trace!("trying device: {}", name);
+
+			let mut features12 = vk::PhysicalDeviceVulkan12Features::builder()
+				.descriptor_indexing(true)
+				.runtime_descriptor_array(true)
+				.descriptor_binding_partially_bound(true)
+				.descriptor_binding_update_unused_while_pending(true)
+				.descriptor_binding_storage_buffer_update_after_bind(true)
+				.descriptor_binding_sampled_image_update_after_bind(true)
+				.descriptor_binding_storage_image_update_after_bind(true)
+				.shader_storage_buffer_array_non_uniform_indexing(true)
+				.shader_sampled_image_array_non_uniform_indexing(true)
+				.shader_storage_image_array_non_uniform_indexing(true)
+				.timeline_semaphore(true);
+			let mut features13 = vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
+			let features: vk::PhysicalDeviceFeatures2Builder = unsafe { std::mem::transmute(features.clone()) };
+			let mut features = features.push_next(&mut features12).push_next(&mut features13);
+
+			let info = vk::DeviceCreateInfo::builder()
+				.enabled_extension_names(&extensions)
+				.push_next(&mut features);
+
+			match unsafe {
+				match queues {
+					Queues::Separate {
+						graphics,
+						compute,
+						transfer,
+					} => instance.create_device(
+						physical_device,
+						&info.queue_create_infos(&[
+							vk::DeviceQueueCreateInfo::builder()
+								.queue_family_index(graphics)
+								.queue_priorities(&[1.0])
+								.build(),
+							vk::DeviceQueueCreateInfo::builder()
+								.queue_family_index(compute)
+								.queue_priorities(&[1.0])
+								.build(),
+							vk::DeviceQueueCreateInfo::builder()
+								.queue_family_index(transfer)
+								.queue_priorities(&[1.0])
+								.build(),
+						]),
+						None,
+					),
+					Queues::Single(graphics) => instance.create_device(
+						physical_device,
+						&info.queue_create_infos(&[vk::DeviceQueueCreateInfo::builder()
+							.queue_family_index(graphics)
+							.queue_priorities(&[1.0])
+							.build()]),
+						None,
+					),
+				}
+			} {
+				Ok(device) => {
+					info!("created device: {}", name);
+
+					let queues = queues.map_ref(|index| QueueData {
+						queue: Mutex::new(unsafe { device.get_device_queue(*index, 0) }),
+						family: *index,
+					});
+
+					return Ok((device, physical_device, queues));
+				},
+				Err(err) => {
+					warn!("failed to create device: {}", err);
+					continue;
+				},
+			};
 		}
 
-		Err("no suitable GPU found".to_string().into())
+		Err("failed to find suitable device".to_string().into())
+	}
+
+	fn get_device_extensions(swapchain: bool, extensions: &[&'static CStr]) -> Vec<&'static CStr> {
+		let mut extensions = extensions.to_vec();
+		if swapchain {
+			extensions.push(khr::Swapchain::name());
+		}
+		extensions
+	}
+
+	fn get_physical_devices<'i>(
+		instance: &'i ash::Instance, surface: Option<(&'i khr::Surface, vk::SurfaceKHR)>,
+	) -> Result<impl IntoIterator<Item = (vk::PhysicalDevice, Queues<u32>, String)> + 'i> {
+		let iter = unsafe { instance.enumerate_physical_devices()? }
+			.into_iter()
+			.flat_map(move |device| {
+				Self::get_device_suitability(instance, device, surface).map(|(q, n)| (device, q, n))
+			});
+		Ok(iter)
 	}
 
 	fn get_device_suitability(
@@ -325,49 +426,6 @@ impl Device {
 		let properties = unsafe { instance.get_physical_device_properties(device) };
 
 		if properties.api_version < vk::make_api_version(0, 1, 3, 0) {
-			return None;
-		}
-
-		let mut features13 = vk::PhysicalDeviceVulkan13Features::default();
-		let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
-		let mut uint8_index = vk::PhysicalDeviceIndexTypeUint8FeaturesEXT::default();
-		let mut features = vk::PhysicalDeviceFeatures2::builder()
-			.push_next(&mut features12)
-			.push_next(&mut features13)
-			.push_next(&mut uint8_index);
-		unsafe { instance.get_physical_device_features2(device, &mut features) }
-
-		// Check if the device supports the features required.
-		if features.features.sampler_anisotropy == false as _
-			|| features.features.shader_int16 == false as _
-			|| features.features.geometry_shader == false as _
-			|| features.features.draw_indirect_first_instance == false as _
-			|| features.features.multi_draw_indirect == false as _
-		{
-			return None;
-		}
-		if features12.descriptor_indexing == false as _
-			|| features12.runtime_descriptor_array == false as _
-			|| features12.descriptor_binding_partially_bound == false as _
-			|| features12.descriptor_binding_update_unused_while_pending == false as _
-			|| features12.descriptor_binding_storage_buffer_update_after_bind == false as _
-			|| features12.descriptor_binding_sampled_image_update_after_bind == false as _
-			|| features12.descriptor_binding_storage_image_update_after_bind == false as _
-			|| features12.shader_storage_buffer_array_non_uniform_indexing == false as _
-			|| features12.shader_sampled_image_array_non_uniform_indexing == false as _
-			|| features12.shader_storage_image_array_non_uniform_indexing == false as _
-			|| features12.timeline_semaphore == false as _
-			|| features12.draw_indirect_count == false as _
-		{
-			return None;
-		}
-		if features13.dynamic_rendering == false as _
-			|| features13.synchronization2 == false as _
-			|| features13.shader_demote_to_helper_invocation == false as _
-		{
-			return None;
-		}
-		if uint8_index.index_type_uint8 == false as _ {
 			return None;
 		}
 
@@ -420,91 +478,23 @@ impl Device {
 			_ => None,
 		}
 	}
+}
 
-	fn create_device(
-		instance: &ash::Instance, surface: Option<(&khr::Surface, vk::SurfaceKHR)>, user_extensions: &[&'static CStr],
-	) -> Result<(ash::Device, vk::PhysicalDevice, Queues<QueueData>)> {
-		let (physical_device, queues) = Self::select_physical_device(instance, surface)?;
-		let mut extensions = vec![vk::ExtIndexTypeUint8Fn::name()];
-		if surface.is_some() {
-			extensions.push(khr::Swapchain::name())
-		}
-		extensions.extend_from_slice(user_extensions);
-		trace!("using device extensions: {:?}", extensions);
-		let extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
+impl Device {
+	/// Get a device builder.
+	pub fn builder<'a>() -> DeviceBuilder<'a> { DeviceBuilder::default() }
 
-		let features = vk::PhysicalDeviceFeatures::builder()
-			.sampler_anisotropy(true)
-			.shader_int16(true)
-			.geometry_shader(true)
-			.multi_draw_indirect(true)
-			.draw_indirect_first_instance(true);
-		let mut features12 = vk::PhysicalDeviceVulkan12Features::builder()
-			.descriptor_indexing(true)
-			.runtime_descriptor_array(true)
-			.descriptor_binding_partially_bound(true)
-			.descriptor_binding_update_unused_while_pending(true)
-			.descriptor_binding_storage_buffer_update_after_bind(true)
-			.descriptor_binding_sampled_image_update_after_bind(true)
-			.descriptor_binding_storage_image_update_after_bind(true)
-			.shader_storage_buffer_array_non_uniform_indexing(true)
-			.shader_sampled_image_array_non_uniform_indexing(true)
-			.shader_storage_image_array_non_uniform_indexing(true)
-			.timeline_semaphore(true)
-			.draw_indirect_count(true);
-		let mut features13 = vk::PhysicalDeviceVulkan13Features::builder()
-			.dynamic_rendering(true)
-			.synchronization2(true)
-			.shader_demote_to_helper_invocation(true);
-		let mut uint8_index = vk::PhysicalDeviceIndexTypeUint8FeaturesEXT::builder().index_type_uint8(true);
-		let info = vk::DeviceCreateInfo::builder()
-			.enabled_extension_names(&extensions)
-			.enabled_features(&features)
-			.push_next(&mut features12)
-			.push_next(&mut features13)
-			.push_next(&mut uint8_index);
-
-		let device = unsafe {
-			match queues {
-				Queues::Separate {
-					graphics,
-					compute,
-					transfer,
-				} => instance.create_device(
-					physical_device,
-					&info.queue_create_infos(&[
-						vk::DeviceQueueCreateInfo::builder()
-							.queue_family_index(graphics)
-							.queue_priorities(&[1.0])
-							.build(),
-						vk::DeviceQueueCreateInfo::builder()
-							.queue_family_index(compute)
-							.queue_priorities(&[1.0])
-							.build(),
-						vk::DeviceQueueCreateInfo::builder()
-							.queue_family_index(transfer)
-							.queue_priorities(&[1.0])
-							.build(),
-					]),
-					None,
-				),
-				Queues::Single(graphics) => instance.create_device(
-					physical_device,
-					&info.queue_create_infos(&[vk::DeviceQueueCreateInfo::builder()
-						.queue_family_index(graphics)
-						.queue_priorities(&[1.0])
-						.build()]),
-					None,
-				),
-			}?
-		};
-
-		let queues = queues.map_ref(|index| QueueData {
-			queue: Mutex::new(unsafe { device.get_device_queue(*index, 0) }),
-			family: *index,
-		});
-
-		Ok((device, physical_device, queues))
+	/// # Safety
+	/// `window` and `display` must outlive the returned `SurfaceKHR`.
+	pub unsafe fn create_surface(
+		&self, window: &dyn HasRawWindowHandle, display: &dyn HasRawDisplayHandle,
+	) -> Result<vk::SurfaceKHR> {
+		DeviceBuilder::create_surface_inner(
+			&self.entry,
+			&self.instance,
+			window.raw_window_handle(),
+			display.raw_display_handle(),
+		)
 	}
 }
 

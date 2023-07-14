@@ -1,5 +1,6 @@
 use std::mem::ManuallyDrop;
 
+use ash::vk;
 use radiance_core::{CoreDevice, RenderCore};
 use radiance_graph::{device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
@@ -18,6 +19,44 @@ mod ui;
 mod ui_handler;
 mod window;
 
+fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Result<(Device, vk::SurfaceKHR)> {
+	unsafe {
+		Device::builder()
+			.validation(cfg!(debug_assertions))
+			.window(window, event_loop)
+			.device_extensions(&[vk::ExtIndexTypeUint8Fn::name()])
+			.features(
+				vk::PhysicalDeviceFeatures2::builder()
+					.features(
+						vk::PhysicalDeviceFeatures::builder()
+							.sampler_anisotropy(true)
+							.shader_int16(true)
+							.geometry_shader(true)
+							.multi_draw_indirect(true)
+							.draw_indirect_first_instance(true)
+							.build(),
+					)
+					.push_next(
+						&mut vk::PhysicalDeviceVulkan12Features::builder()
+							.draw_indirect_count(true)
+							.build(),
+					)
+					.push_next(
+						&mut vk::PhysicalDeviceVulkan13Features::builder()
+							.dynamic_rendering(true)
+							.shader_demote_to_helper_invocation(true)
+							.build(),
+					)
+					.push_next(
+						&mut vk::PhysicalDeviceIndexTypeUint8FeaturesEXT::builder()
+							.index_type_uint8(true)
+							.build(),
+					),
+			)
+			.build()
+	}
+}
+
 struct State {
 	device: CoreDevice,
 	graph: ManuallyDrop<RenderGraph>,
@@ -29,7 +68,7 @@ struct State {
 
 impl State {
 	pub fn new(event_loop: &EventLoop<()>, window: winit::window::Window) -> Result<Self> {
-		let (device, surface) = unsafe { Device::with_window(&window, event_loop)? };
+		let (device, surface) = init_device(&window, event_loop)?;
 		let device = CoreDevice::new(device)?;
 		let graph = ManuallyDrop::new(RenderGraph::new(&device)?);
 		let core = ManuallyDrop::new(RenderCore::new(

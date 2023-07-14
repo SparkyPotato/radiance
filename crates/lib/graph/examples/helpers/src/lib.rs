@@ -42,7 +42,7 @@ pub trait App: 'static + Sized {
 
 	fn destroy(self, device: &Device);
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_>, input: RenderInput, dt: Duration);
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, dt: Duration);
 }
 
 pub fn run<T: App>() -> ! {
@@ -56,7 +56,7 @@ pub fn run<T: App>() -> ! {
 
 	let mut arena = Arena::new();
 
-	let (device, surface) = unsafe { Device::with_window(&window, &event_loop).unwrap() };
+	let (device, surface) = unsafe { Device::builder().window(&window, &event_loop).build().unwrap() };
 	let mut swapchain = ManuallyDrop::new(Swapchain::new(&device, surface, &window));
 	let mut graph = ManuallyDrop::new(RenderGraph::new(&device).unwrap());
 	let mut app = ManuallyDrop::new(T::create(&device));
@@ -66,7 +66,7 @@ pub fn run<T: App>() -> ! {
 		Event::MainEventsCleared => window.request_redraw(),
 		Event::RedrawRequested(_) => {
 			arena.reset();
-			let mut frame = graph.frame(&arena);
+			let mut frame = graph.frame(&arena, ());
 
 			let (image, id) = swapchain.acquire();
 
