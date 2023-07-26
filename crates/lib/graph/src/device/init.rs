@@ -7,6 +7,7 @@ use std::{
 use ash::{
 	extensions::{ext, khr},
 	vk,
+	vk::TaggedStructure,
 };
 use gpu_allocator::{
 	vulkan::{Allocator, AllocatorCreateDesc},
@@ -74,7 +75,7 @@ impl<'a> DeviceBuilder<'a> {
 		self
 	}
 
-	/// Any extra features required should be appended to the `p_next` chain.
+	/// Aany extra features required should be appended to the `p_next` chain.
 	pub fn features(mut self, features: vk::PhysicalDeviceFeatures2Builder<'a>) -> Self {
 		self.features = features;
 		self
@@ -327,21 +328,71 @@ impl<'a> DeviceBuilder<'a> {
 		for (physical_device, queues, name) in Self::get_physical_devices(instance, surface)? {
 			trace!("trying device: {}", name);
 
-			let mut features12 = vk::PhysicalDeviceVulkan12Features::builder()
-				.descriptor_indexing(true)
-				.runtime_descriptor_array(true)
-				.descriptor_binding_partially_bound(true)
-				.descriptor_binding_update_unused_while_pending(true)
-				.descriptor_binding_storage_buffer_update_after_bind(true)
-				.descriptor_binding_sampled_image_update_after_bind(true)
-				.descriptor_binding_storage_image_update_after_bind(true)
-				.shader_storage_buffer_array_non_uniform_indexing(true)
-				.shader_sampled_image_array_non_uniform_indexing(true)
-				.shader_storage_image_array_non_uniform_indexing(true)
-				.timeline_semaphore(true);
-			let mut features13 = vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
-			let features: vk::PhysicalDeviceFeatures2Builder = unsafe { std::mem::transmute(features.clone()) };
-			let mut features = features.push_next(&mut features12).push_next(&mut features13);
+			let mut features: vk::PhysicalDeviceFeatures2Builder = unsafe { std::mem::transmute(features.clone()) };
+
+			#[repr(C)]
+			struct VkStructHeader {
+				ty: vk::StructureType,
+				next: *mut VkStructHeader,
+			}
+
+			// Push the features if they don't already exist.
+			let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
+			let mut features13 = vk::PhysicalDeviceVulkan13Features::default();
+			{
+				let mut next = features.p_next as *mut VkStructHeader;
+				let mut found_12 = false;
+				let mut found_13 = false;
+				while !next.is_null() {
+					unsafe {
+						match (*next).ty {
+							vk::PhysicalDeviceVulkan12Features::STRUCTURE_TYPE => found_12 = true,
+							vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => found_13 = true,
+							_ => {},
+						}
+						next = (*next).next;
+					}
+				}
+
+				features = if !found_12 {
+					features.push_next(&mut features12)
+				} else {
+					features
+				};
+				features = if !found_13 {
+					features.push_next(&mut features13)
+				} else {
+					features
+				};
+			}
+
+			let mut next = features.p_next as *mut VkStructHeader;
+			while !next.is_null() {
+				unsafe {
+					match (*next).ty {
+						vk::PhysicalDeviceVulkan12Features::STRUCTURE_TYPE => {
+							let features12 = &mut *(next as *mut vk::PhysicalDeviceVulkan12Features);
+							features12.descriptor_indexing = true as _;
+							features12.runtime_descriptor_array = true as _;
+							features12.descriptor_binding_partially_bound = true as _;
+							features12.descriptor_binding_update_unused_while_pending = true as _;
+							features12.descriptor_binding_storage_buffer_update_after_bind = true as _;
+							features12.descriptor_binding_sampled_image_update_after_bind = true as _;
+							features12.descriptor_binding_storage_image_update_after_bind = true as _;
+							features12.shader_storage_buffer_array_non_uniform_indexing = true as _;
+							features12.shader_sampled_image_array_non_uniform_indexing = true as _;
+							features12.shader_storage_image_array_non_uniform_indexing = true as _;
+							features12.timeline_semaphore = true as _;
+						},
+						vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => {
+							let features13 = &mut *(next as *mut vk::PhysicalDeviceVulkan13Features);
+							features13.synchronization2 = true as _;
+						},
+						_ => {},
+					}
+					next = (*next).next;
+				}
+			}
 
 			let info = vk::DeviceCreateInfo::builder()
 				.enabled_extension_names(&extensions)
