@@ -85,7 +85,7 @@ struct PassIO {
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstantsStatic {
-	screen_size: Vec2<u32>,
+	screen_size: Vec2<f32>,
 	vertex_buffer: BufferId,
 }
 
@@ -301,7 +301,7 @@ impl Renderer {
 			vk::ShaderStageFlags::VERTEX,
 			0,
 			bytes_of(&PushConstantsStatic {
-				screen_size: screen.physical_size,
+				screen_size: screen.physical_size.map(|x| x as f32) / screen.scaling,
 				vertex_buffer: vertex.id.unwrap(),
 			}),
 		);

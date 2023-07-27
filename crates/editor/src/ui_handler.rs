@@ -20,9 +20,12 @@ impl UiHandler {
 		let (defs, fonts) = Fonts::defs();
 		ctx.set_fonts(defs);
 
+		let mut platform_state = egui_winit::State::new(event_loop);
+		platform_state.set_pixels_per_point(window.window.scale_factor() as _);
+
 		Ok(Self {
 			ctx,
-			platform_state: egui_winit::State::new(event_loop),
+			platform_state,
 			renderer: radiance_egui::Renderer::new(device, core, window.format())?,
 			fonts,
 		})

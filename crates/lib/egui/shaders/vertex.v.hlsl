@@ -1,7 +1,7 @@
 #include "common.l.hlsl"
 
 struct PushConstants {
-    uint2 screen_size;
+    float2 screen_size;
     Buf<VertexInput> vertex_buffer;
 };
 
@@ -18,7 +18,7 @@ float4 unpack_color(u32 color) {
 
 float4 project_screenspace(float2 screenspace) {
     return float4(
-        2.f * screenspace / float2(Constants.screen_size) - 1.f,
+        2.f * screenspace / Constants.screen_size - 1.f,
         0.f,
         1.f
     );
