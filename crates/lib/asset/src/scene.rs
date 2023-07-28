@@ -63,17 +63,17 @@ impl Camera {
 	fn size(&self) -> usize {
 		let extra = self.name.len() % 4;
 		let fill = if extra == 0 { 0 } else { 4 - extra };
-		std::mem::size_of::<u32>()
-			+ self.name.len()
-			+ std::mem::size_of::<Mat4<f32>>()
-			+ std::mem::size_of::<u8>()
+		std::mem::size_of::<Mat4<f32>>()
+			+ std::mem::size_of::<u32>()
 			+ std::mem::size_of::<f32>() * 3
+			+ std::mem::size_of::<u32>()
+			+ self.name.len()
 			+ fill
 	}
 
 	/// - 64 bytes: transform.
 	/// - 1 u32: type of projection.
-	/// - 4 f32: projection.
+	/// - 3 f32: projection.
 	/// - 1 u32: length of name.
 	/// - name.
 	fn write(&self, writer: &mut SliceWriter) {

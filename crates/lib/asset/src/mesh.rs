@@ -59,7 +59,7 @@ pub struct Mesh {
 	/// Vertices of the mesh.
 	pub vertices: Vec<Vertex>,
 	/// Indices of each meshlet - should be added to `vertex_offset`.
-	pub indices: Vec<u32>,
+	pub indices: Vec<u8>,
 	/// Meshlets of the mesh.
 	pub meshlets: Vec<Meshlet>,
 	/// AABB of the mesh.
@@ -77,7 +77,8 @@ impl Mesh {
 	/// Everything is little endian, compressed by zstd.
 	pub(super) fn to_bytes(&self) -> Vec<u8> {
 		let vertices = meshopt::encode_vertex_buffer(&self.vertices).unwrap();
-		let indices = meshopt::encode_index_buffer(&self.indices, self.vertices.len()).unwrap();
+		let indices: Vec<_> = self.indices.iter().map(|&x| x as u32).collect();
+		let indices = meshopt::encode_index_buffer(&indices, self.vertices.len()).unwrap();
 
 		let vertex_len = vertices.len();
 		let index_len = indices.len();
@@ -122,6 +123,7 @@ impl Mesh {
 
 		let vertices = meshopt::decode_vertex_buffer(reader.read_slice(vertex_len), vertex_count).unwrap();
 		let indices: Vec<u32> = meshopt::decode_index_buffer(reader.read_slice(index_len), index_count).unwrap();
+		let indices: Vec<_> = indices.into_iter().map(|x| x as u8).collect();
 		reader.read_slice::<u8>(fill);
 		let meshlets = reader.read_slice(meshlet_count).to_vec();
 

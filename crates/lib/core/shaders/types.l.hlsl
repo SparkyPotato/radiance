@@ -13,3 +13,6 @@ typedef int64_t i64;
 typedef float16_t f16;
 typedef float f32;
 typedef double f64;
+
+struct Uniform {};
+struct NonUniform {};

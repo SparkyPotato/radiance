@@ -1,3 +1,5 @@
+#pragma once
+
 #include "radiance-core/interface.l.hlsl"
 
 struct Vertex {
@@ -6,16 +8,15 @@ struct Vertex {
 	u16 uv[2];
 };
 
-/// A pointer to a instance and the meshlet within that instance.
 struct MeshletPointer {
     u32 instance;
     u32 meshlet;
 };
 
-/// An instance of a mesh.
 struct Instance {
     f32 transform[12];
-    u32 base_meshlet;
+    Buf<Bytes, NonUniform> mesh;
+    u32 _pad[3];
 };
 
 struct Cone {
@@ -23,11 +24,14 @@ struct Cone {
     u32 axis_cutoff;
 };
 
-/// A meshlet is a collection of 124 triangles and 64 vertices.
 struct Meshlet {
 	f32 aabb_min[3];
 	f32 aabb_extent[3];
 	Cone cone;
+    u32 vertex_byte_offset;
+    u32 index_byte_offset;
+    u16 vert_and_tri_count;
+    u16 _pad[3];
 };
 
 struct Camera {

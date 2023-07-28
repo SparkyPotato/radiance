@@ -1,42 +1,55 @@
-use ash::vk;
+use ash::{extensions::ext, vk};
 use bytemuck::{bytes_of, NoUninit};
 use radiance_asset_runtime::{MeshletPointer, Scene};
 use radiance_core::{pipeline::GraphicsPipelineDesc, CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::BufferId,
-	graph::{BufferUsage, BufferUsageType, ImageDesc, ImageUsage, ImageUsageType, ReadId, WriteId},
-	resource::ImageView,
+	graph::{
+		BufferUsage,
+		BufferUsageType,
+		ImageDesc,
+		ImageUsage,
+		ImageUsageType,
+		ReadId,
+		Shader,
+		UploadBufferDesc,
+		WriteId,
+	},
+	resource::{ImageView, UploadBufferHandle},
 	Result,
 };
 use radiance_shader_compiler::c_str;
 use radiance_util::pipeline::{no_blend, reverse_depth, simple_blend};
-use vek::Vec2;
+use vek::{Mat4, Vec2};
 
-use crate::mesh::cull::{Command, CullOutput};
+#[repr(C)]
+#[derive(Copy, Clone, NoUninit)]
+pub struct Camera {
+	pub view: Mat4<f32>,
+	pub proj: Mat4<f32>,
+}
 
 pub struct VisBuffer {
 	pipeline: vk::Pipeline,
 	layout: vk::PipelineLayout,
+	mesh: ext::MeshShader,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
-	meshlets: BufferId,
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	vertices: BufferId,
 	camera: BufferId,
+	meshlet_count: u32,
 }
 
 struct PassIO {
-	vertices: BufferId,
-	indices: vk::Buffer,
-	meshlets: BufferId,
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	total_meshlet_count: u32,
-	cull: CullOutput,
+	camera_data: Camera,
+	meshlet_count: u32,
+	camera: WriteId<UploadBufferHandle>,
 	visbuffer: WriteId<ImageView>,
 	depth: WriteId<ImageView>,
 }
@@ -48,7 +61,7 @@ impl VisBuffer {
 				&vk::PipelineLayoutCreateInfo::builder()
 					.set_layouts(&[device.descriptors().layout()])
 					.push_constant_ranges(&[vk::PushConstantRange::builder()
-						.stage_flags(vk::ShaderStageFlags::VERTEX)
+						.stage_flags(vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT)
 						.size(std::mem::size_of::<PushConstants>() as u32)
 						.build()]),
 				None,
@@ -60,8 +73,15 @@ impl VisBuffer {
 					shaders: &[
 						core.shaders
 							.shader(
-								c_str!("radiance-passes/mesh/visbuffer/vertex"),
-								vk::ShaderStageFlags::VERTEX,
+								c_str!("radiance-passes/mesh/visbuffer/task"),
+								vk::ShaderStageFlags::TASK_EXT,
+								None,
+							)
+							.build(),
+						core.shaders
+							.shader(
+								c_str!("radiance-passes/mesh/visbuffer/mesh"),
+								vk::ShaderStageFlags::MESH_EXT,
 								None,
 							)
 							.build(),
@@ -82,27 +102,32 @@ impl VisBuffer {
 				},
 			)?;
 
-			Ok(Self { pipeline, layout })
+			Ok(Self {
+				pipeline,
+				layout,
+				mesh: ext::MeshShader::new(device.instance(), device.device()),
+			})
 		}
 	}
 
-	/// Note: `camera_viewproj` must be setup for reverse Z.
+	/// Note: `camera` must be setup for reverse Z.
 	pub fn run<'pass>(
-		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, cull: CullOutput, size: Vec2<u32>,
+		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, camera: Camera, size: Vec2<u32>,
 	) -> ReadId<ImageView> {
 		let mut pass = frame.pass("visbuffer");
-		pass.input(
-			cull.commands,
+
+		let (_, c) = pass.output(
+			UploadBufferDesc {
+				size: std::mem::size_of::<Camera>() as u64,
+			},
 			BufferUsage {
-				usages: &[BufferUsageType::IndirectBuffer],
+				usages: &[
+					BufferUsageType::ShaderStorageRead(Shader::Task),
+					BufferUsageType::ShaderStorageRead(Shader::Mesh),
+				],
 			},
 		);
-		pass.input(
-			cull.draw_count,
-			BufferUsage {
-				usages: &[BufferUsageType::IndirectBuffer],
-			},
-		);
+
 		let desc = ImageDesc {
 			size: vk::Extent3D {
 				width: size.x,
@@ -136,14 +161,11 @@ impl VisBuffer {
 			self.execute(
 				ctx,
 				PassIO {
-					meshlets: scene.meshlets.inner().inner.id().unwrap(),
 					instances: scene.instances.inner().inner.id().unwrap(),
 					meshlet_pointers: scene.meshlet_pointers.inner().inner.id().unwrap(),
-					vertices: scene.vertices.inner().inner.id().unwrap(),
-					indices: scene.indices.inner().inner.inner(),
-					total_meshlet_count: scene.meshlet_pointers.len() as u32
-						/ std::mem::size_of::<MeshletPointer>() as u32,
-					cull,
+					camera_data: camera,
+					meshlet_count: scene.meshlet_pointers.len() as u32 / std::mem::size_of::<MeshletPointer>() as u32,
+					camera: c,
 					visbuffer: v_w,
 					depth: d_w,
 				},
@@ -154,9 +176,7 @@ impl VisBuffer {
 	}
 
 	fn execute(&self, mut pass: CorePass, io: PassIO) {
-		let commands = pass.read(io.cull.commands);
-		let draw_count = pass.read(io.cull.draw_count);
-		let camera = pass.read(io.cull.camera);
+		let mut camera = pass.write(io.camera);
 		let visbuffer = pass.write(io.visbuffer);
 		let depth = pass.write(io.depth);
 
@@ -164,6 +184,8 @@ impl VisBuffer {
 		let buf = pass.buf;
 
 		unsafe {
+			camera.data.as_mut().copy_from_slice(&bytes_of(&io.camera_data));
+
 			let area = vk::Rect2D::builder()
 				.extent(vk::Extent2D {
 					width: visbuffer.size.width,
@@ -220,27 +242,17 @@ impl VisBuffer {
 			dev.cmd_push_constants(
 				buf,
 				self.layout,
-				vk::ShaderStageFlags::VERTEX,
+				vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT,
 				0,
 				bytes_of(&PushConstants {
-					meshlets: io.meshlets,
 					instances: io.instances,
 					meshlet_pointers: io.meshlet_pointers,
-					vertices: io.vertices,
+					meshlet_count: io.meshlet_count,
 					camera: camera.id.unwrap(),
 				}),
 			);
-			dev.cmd_bind_index_buffer(buf, io.indices, 0, vk::IndexType::UINT8_EXT);
 
-			dev.cmd_draw_indexed_indirect_count(
-				buf,
-				commands.buffer,
-				0,
-				draw_count.buffer,
-				0,
-				io.total_meshlet_count,
-				std::mem::size_of::<Command>() as _,
-			);
+			self.mesh.cmd_draw_mesh_tasks(buf, (io.meshlet_count + 63) / 64, 1, 1);
 
 			dev.cmd_end_rendering(buf);
 		}

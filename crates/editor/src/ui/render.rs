@@ -6,10 +6,7 @@ use radiance_egui::to_texture_id;
 use radiance_graph::Result;
 use radiance_passes::{
 	debug::meshlet::DebugMeshlets,
-	mesh::{
-		cull::{Camera, Cull},
-		visbuffer::VisBuffer,
-	},
+	mesh::visbuffer::{Camera, VisBuffer},
 };
 use vek::{num_traits::FloatConst, Mat4, Vec2, Vec3, Vec4};
 
@@ -23,7 +20,6 @@ enum Mode {
 
 pub struct Renderer {
 	scene: Option<Uuid>,
-	cull: Cull,
 	visbuffer: VisBuffer,
 	debug: DebugMeshlets,
 	runtime: AssetRuntime,
@@ -38,7 +34,6 @@ impl Renderer {
 	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
 		Ok(Self {
 			scene: None,
-			cull: Cull::new(device, core)?,
 			visbuffer: VisBuffer::new(device, core)?,
 			debug: DebugMeshlets::new(device, core)?,
 			runtime: AssetRuntime::new(),
@@ -63,11 +58,11 @@ impl Renderer {
 	) {
 		match self.mode {
 			Mode::Camera => ctx.input(|x| {
-				let dt = x.unstable_dt;
+				let dt = x.stable_dt;
 				let speed = self.move_speed * dt;
 
 				let delta = x.pointer.delta();
-				let delta = Vec2::new(delta.x, delta.y) * dt * 0.5;
+				let delta = Vec2::new(delta.x, delta.y) * 0.005;
 				self.pitch += delta.y;
 				self.yaw += delta.x;
 				self.pitch = self.pitch.clamp(-f32::FRAC_PI_2(), f32::FRAC_PI_2());
@@ -119,7 +114,7 @@ impl Renderer {
 				}
 				let scene = self.runtime.get_scene(scene).unwrap();
 
-				let cull = self.cull.run(
+				let visbuffer = self.visbuffer.run(
 					frame,
 					scene,
 					Camera {
@@ -127,10 +122,8 @@ impl Renderer {
 							* Mat4::translation_3d(self.pos),
 						proj: infinite_projection(aspect, 90f32.to_radians(), 0.01),
 					},
+					Vec2::new(size.x as u32, size.y as u32),
 				);
-				let visbuffer = self
-					.visbuffer
-					.run(frame, scene, cull, Vec2::new(size.x as u32, size.y as u32));
 				let debug = self.debug.run(frame, visbuffer);
 				ui.image(to_texture_id(debug), size);
 
@@ -146,7 +139,6 @@ impl Renderer {
 	}
 
 	pub unsafe fn destroy(self, device: &CoreDevice) {
-		self.cull.destroy(device);
 		self.visbuffer.destroy(device);
 		self.debug.destroy(device);
 		self.runtime.destroy(device);

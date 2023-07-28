@@ -1,10 +1,11 @@
 use std::mem::ManuallyDrop;
 
-use ash::vk;
+use ash::{extensions::ext, vk};
 use radiance_core::{CoreDevice, RenderCore};
 use radiance_graph::{device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 use winit::{
+	dpi::LogicalSize,
 	event::{Event, WindowEvent},
 	event_loop::{ControlFlow, EventLoop},
 	window::WindowBuilder,
@@ -24,7 +25,7 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 		Device::builder()
 			.validation(cfg!(debug_assertions))
 			.window(window, event_loop)
-			.device_extensions(&[vk::ExtIndexTypeUint8Fn::name()])
+			.device_extensions(&[ext::MeshShader::name()])
 			.features(
 				vk::PhysicalDeviceFeatures2::builder()
 					.features(
@@ -48,8 +49,9 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 							.build(),
 					)
 					.push_next(
-						&mut vk::PhysicalDeviceIndexTypeUint8FeaturesEXT::builder()
-							.index_type_uint8(true)
+						&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::builder()
+							.task_shader(true)
+							.mesh_shader(true)
 							.build(),
 					),
 			)
@@ -119,6 +121,7 @@ fn main() {
 	let event_loop = EventLoop::new();
 	let window = WindowBuilder::new()
 		.with_title("radiance-editor")
+		.with_inner_size(LogicalSize::new(1280, 720))
 		.build(&event_loop)
 		.unwrap();
 

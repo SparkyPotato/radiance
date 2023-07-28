@@ -1,4 +1,4 @@
-use std::{borrow::Borrow, error::Error, fs::File, io::BufReader, path::Path};
+use std::{borrow::Borrow, collections::HashSet, error::Error, fs::File, io::BufReader, path::Path};
 
 use hassle_rs::{Dxc, DxcCompiler, DxcIncludeHandler, DxcLibrary};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -110,11 +110,9 @@ impl ShaderBuilder {
 	}
 
 	/// Compile all shaders in all modules.
-	///
-	/// Returns `true` if any shaders were compiled.
 	pub fn compile_all(&mut self) -> Result<(), Vec<String>> {
 		let mut errors = Vec::new();
-		let mut compile_queue = Vec::new();
+		let mut compile_queue = HashSet::new();
 
 		for (_, module_root, _) in self.vfs.compilable_modules() {
 			for file in WalkDir::new(module_root)
@@ -133,7 +131,7 @@ impl ShaderBuilder {
 					.map(|(f, o)| f.modified().unwrap() > o.modified().unwrap())
 					.unwrap_or(true);
 				if modified {
-					compile_queue.push(path.to_path_buf());
+					compile_queue.insert(path.to_path_buf());
 					compile_queue.extend(
 						self.dependencies
 							.on(&virtual_path)
@@ -144,10 +142,8 @@ impl ShaderBuilder {
 		}
 
 		for file in compile_queue {
-			eprintln!("Compiling {}", file.display());
-
 			if let Err(e) = self.compile_file_physical(&file) {
-				errors.push(e)
+				errors.push(format!("{}:\n{}", file.display(), e))
 			}
 		}
 

@@ -5,7 +5,7 @@ use std::{
 	sync::atomic::{AtomicUsize, Ordering},
 };
 
-use bytemuck::NoUninit;
+use bytemuck::{from_bytes, NoUninit};
 use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
@@ -26,7 +26,6 @@ use crate::{
 	model::Model,
 	scene,
 	scene::{Camera, Node, Scene},
-	util::SliceReader,
 	AssetHeader,
 	AssetMetadata,
 	AssetSink,
@@ -261,13 +260,10 @@ impl Importer {
 		if comp != Dimensions::Scalar {
 			return Err(ImportError::InvalidGltf);
 		}
-		let indices = match ty {
-			DataType::U8 => indices.iter().map(|&i| i as u32).collect(),
-			DataType::U16 => bytemuck::cast_slice::<_, u16>(indices)
-				.iter()
-				.map(|&i| i as u32)
-				.collect(),
-			DataType::U32 => bytemuck::cast_slice(indices).to_vec(),
+		let indices: Vec<_> = match ty {
+			DataType::U8 => indices.flatten().map(|&i| i as u32).collect(),
+			DataType::U16 => indices.map(|i| *from_bytes::<u16>(i) as u32).collect(),
+			DataType::U32 => indices.map(|i| *from_bytes::<u32>(i)).collect(),
 			_ => return Err(ImportError::InvalidGltf),
 		};
 
@@ -276,14 +272,14 @@ impl Importer {
 		if comp != Dimensions::Vec3 || ty != DataType::F32 {
 			return Err(ImportError::InvalidGltf);
 		}
-		let positions = bytemuck::cast_slice::<_, Vec3<f32>>(positions).iter().copied();
+		let positions = positions.map(|p| *from_bytes::<Vec3<f32>>(p));
 
 		let normals = prim.get(&Semantic::Normals).ok_or(ImportError::InvalidGltf)?;
 		let (normals, ty, comp) = self.accessor(normals)?;
 		if comp != Dimensions::Vec3 || ty != DataType::F32 {
 			return Err(ImportError::InvalidGltf);
 		}
-		let normals = bytemuck::cast_slice::<_, Vec3<f32>>(normals).iter().copied();
+		let normals = normals.map(|n| *from_bytes::<Vec3<f32>>(n));
 
 		let uv = prim.get(&Semantic::TexCoords(0));
 		let mut uv = uv
@@ -292,17 +288,14 @@ impl Importer {
 				if comp != Dimensions::Vec2 {
 					return Err(ImportError::InvalidGltf);
 				}
-				let mut reader = SliceReader::new(uv);
 
 				if !matches!(ty, DataType::F32 | DataType::U8 | DataType::U16) {
 					return Err(ImportError::InvalidGltf);
 				}
-				Ok(std::iter::from_fn(move || match ty {
-					DataType::F32 => (!reader.is_empty()).then(|| reader.read::<Vec2<f32>>()),
-					DataType::U8 => (!reader.is_empty()).then(|| reader.read::<Vec2<u8>>().map(|u| u as f32 / 255.0)),
-					DataType::U16 => {
-						(!reader.is_empty()).then(|| reader.read::<Vec2<u16>>().map(|u| u as f32 / 65535.0))
-					},
+				Ok(uv.map(move |uv| match ty {
+					DataType::F32 => *from_bytes(uv),
+					DataType::U8 => from_bytes::<Vec2<u8>>(uv).map(|u| u as f32 / 255.0),
+					DataType::U16 => from_bytes::<Vec2<u16>>(uv).map(|u| u as f32 / 65535.0),
 					_ => panic!("yikes"),
 				}))
 			})
@@ -389,7 +382,7 @@ impl Importer {
 				normal: (x.normal * Vec3::broadcast(32767.0)).map(|x| x.round() as i16),
 				uv: (x.uv * Vec2::broadcast(65535.0)).map(|x| x.round() as u16),
 			}));
-			mesh.indices.extend(m.triangles.iter().map(|&x| x as u32));
+			mesh.indices.extend(m.triangles);
 
 			let world_apex = Vec3::from_slice(&bounds.cone_apex);
 			let apex = ((world_apex - aabb.min) / extent * Vec3::broadcast(255.0)).map(|x| x.round() as u8);
@@ -478,15 +471,34 @@ impl Importer {
 		}
 	}
 
-	pub fn accessor(&self, accessor: Accessor) -> ImportResult<(&[u8], DataType, Dimensions)> {
+	pub fn accessor(&self, accessor: Accessor) -> ImportResult<(impl Iterator<Item = &[u8]>, DataType, Dimensions)> {
 		if accessor.sparse().is_some() {
 			return Err(ImportError::UnsupportedFeature);
 		}
 
+		let ty = accessor.data_type();
+		let dim = accessor.dimensions();
+		let size = ty.size()
+			* match dim {
+				Dimensions::Scalar => 1,
+				Dimensions::Vec2 => 2,
+				Dimensions::Vec3 => 3,
+				Dimensions::Vec4 => 4,
+				Dimensions::Mat2 => 4,
+				Dimensions::Mat3 => 9,
+				Dimensions::Mat4 => 16,
+			};
+
 		let view = accessor.view().ok_or(ImportError::InvalidGltf)?;
 		let buffer = &self.buffers[view.buffer().index()];
-		let offset = accessor.offset() + view.offset();
-		let data = &buffer[offset..offset + view.length()];
-		Ok((data, accessor.data_type(), accessor.dimensions()))
+		let stride = view.stride().unwrap_or(size);
+		let view = &buffer[view.offset()..view.offset() + view.length()];
+		let offset = &view[accessor.offset()..];
+
+		Ok((
+			(0..accessor.count()).map(move |x| &offset[x * stride..][..size]),
+			ty,
+			dim,
+		))
 	}
 }
