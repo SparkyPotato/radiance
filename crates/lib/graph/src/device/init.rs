@@ -326,6 +326,11 @@ impl<'a> DeviceBuilder<'a> {
 		let extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
 
 		for (physical_device, queues, name) in Self::get_physical_devices(instance, surface)? {
+			let props = unsafe { instance.get_physical_device_properties(physical_device) };
+			if props.api_version < vk::make_api_version(0, 1, 3, 0) {
+				continue;
+			}
+
 			trace!("trying device: {}", name);
 
 			let mut features: vk::PhysicalDeviceFeatures2Builder = unsafe { std::mem::transmute(features.clone()) };

@@ -67,20 +67,25 @@ impl Renderer {
 				self.yaw += delta.x;
 				self.pitch = self.pitch.clamp(-f32::FRAC_PI_2(), f32::FRAC_PI_2());
 
-				let yaw = Mat4::rotation_3d(-self.yaw, Vec3::unit_y());
+				let yaw = Mat4::rotation_3d(self.yaw, Vec3::unit_y());
 				let forward = (yaw * Vec4::unit_z()).xyz();
 				let right = (yaw * Vec4::unit_x()).xyz();
 
+				let mut offset = Vec3::zero();
 				for key in x.keys_down.iter() {
-					self.pos += match key {
-						Key::W => forward * speed,
-						Key::S => forward * -speed,
-						Key::A => right * speed,
-						Key::D => right * -speed,
-						Key::Q => Vec3::new(0.0, speed, 0.0),
-						Key::E => Vec3::new(0.0, -speed, 0.0),
+					offset += match key {
+						Key::W => forward,
+						Key::S => -forward,
+						Key::D => right,
+						Key::A => -right,
+						Key::E => Vec3::unit_y(),
+						Key::Q => -Vec3::unit_y(),
 						_ => continue,
 					};
+				}
+				if offset != Vec3::zero() {
+					offset.normalize();
+					self.pos += offset * speed;
 				}
 
 				let factor = 2f32.powf(x.scroll_delta.y / 50.0);
@@ -96,7 +101,6 @@ impl Renderer {
 
 				let rect = ui.available_rect_before_wrap();
 				let size = rect.size();
-				let aspect = size.x / size.y;
 
 				if ctx.input(|x| {
 					let p = &x.pointer;
@@ -118,9 +122,10 @@ impl Renderer {
 					frame,
 					scene,
 					Camera {
-						view: Mat4::identity().rotated_y(self.yaw).rotated_x(self.pitch)
-							* Mat4::translation_3d(self.pos),
-						proj: infinite_projection(aspect, 90f32.to_radians(), 0.01),
+						view: Mat4::identity().rotated_y(-self.yaw).rotated_x(-self.pitch)
+							* Mat4::translation_3d(-self.pos),
+						fov: 90f32.to_radians(),
+						near: 0.01,
 					},
 					Vec2::new(size.x as u32, size.y as u32),
 				);
@@ -167,15 +172,4 @@ impl Renderer {
 			_ => {},
 		}
 	}
-}
-
-fn infinite_projection(aspect: f32, fov: f32, near: f32) -> Mat4<f32> {
-	let h = 1.0 / (fov / 2.0).tan();
-	let w = h * (1.0 / aspect);
-	Mat4::new(
-		w, 0.0, 0.0, 0.0, //
-		0.0, -h, 0.0, 0.0, //
-		0.0, 0.0, 0.0, near, //
-		0.0, 0.0, -1.0, 0.0, //
-	)
 }

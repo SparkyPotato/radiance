@@ -1,6 +1,7 @@
 #pragma once
 
 #include "radiance-core/interface.l.hlsl"
+#include "cull.l.hlsl"
 
 struct Vertex {
 	u16 position[3];
@@ -17,11 +18,17 @@ struct Instance {
     f32 transform[12];
     Buf<Bytes, NonUniform> mesh;
     u32 _pad[3];
-};
 
-struct Cone {
-    u32 apex;
-    u32 axis_cutoff;
+    float4x4 get_transform() {
+        f32 t[12] = this.transform;
+        float4x4 ret = {
+                t[0], t[3], t[6], t[9],
+                t[1], t[4], t[7], t[10],
+                t[2], t[5], t[8], t[11],
+                0.f,  0.f,  0.f,  1.f,
+        };
+        return ret;
+    }
 };
 
 struct Meshlet {
@@ -32,9 +39,20 @@ struct Meshlet {
     u32 index_byte_offset;
     u16 vert_and_tri_count;
     u16 _pad[3];
+
+    Aabb get_mesh_aabb() {
+        Aabb ret;
+        ret.min = float4(this.aabb_min, 1.f);
+        ret.extent = float4(this.aabb_extent, 0.f);
+        ret.max = ret.min + ret.extent;
+        return ret;
+    }
 };
 
 struct Camera {
     float4x4 view;
     float4x4 proj;
+    float4x4 view_proj;
+    float4 frustum;
+    f32 near;
 };

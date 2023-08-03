@@ -6,7 +6,7 @@ use radiance_graph::{device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 use winit::{
 	dpi::LogicalSize,
-	event::{Event, WindowEvent},
+	event::{Event, StartCause, WindowEvent},
 	event_loop::{ControlFlow, EventLoop},
 	window::WindowBuilder,
 };
@@ -122,12 +122,14 @@ fn main() {
 	let window = WindowBuilder::new()
 		.with_title("radiance-editor")
 		.with_inner_size(LogicalSize::new(1280, 720))
+		.with_visible(false)
 		.build(&event_loop)
 		.unwrap();
 
 	let mut state = State::new(&event_loop, window).unwrap();
 
 	event_loop.run(move |event, _, flow| match event {
+		Event::NewEvents(StartCause::Init) => state.window.window.set_visible(true),
 		Event::MainEventsCleared => state.window.request_redraw(),
 		Event::RedrawRequested(_) => {
 			let mut frame = state.core.frame(&state.device, &mut state.graph).unwrap();

@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use ash::{extensions::ext, vk};
 use bytemuck::{bytes_of, NoUninit};
 use radiance_asset_runtime::{MeshletPointer, Scene};
@@ -20,19 +22,35 @@ use radiance_graph::{
 };
 use radiance_shader_compiler::c_str;
 use radiance_util::pipeline::{no_blend, reverse_depth, simple_blend};
-use vek::{Mat4, Vec2};
+use vek::{Mat4, Vec2, Vec4};
 
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
+#[derive(Copy, Clone)]
 pub struct Camera {
+	/// Vertical FOV in radians.
+	pub fov: f32,
+	pub near: f32,
+	/// View matrix (inverse of camera transform).
 	pub view: Mat4<f32>,
-	pub proj: Mat4<f32>,
 }
 
 pub struct VisBuffer {
 	pipeline: vk::Pipeline,
 	layout: vk::PipelineLayout,
 	mesh: ext::MeshShader,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, NoUninit)]
+struct ViewPyramid {}
+
+#[repr(C)]
+#[derive(Copy, Clone, NoUninit)]
+struct CameraData {
+	view: Mat4<f32>,
+	proj: Mat4<f32>,
+	view_proj: Mat4<f32>,
+	frustum: Vec4<f32>,
+	near: f32,
 }
 
 #[repr(C)]
@@ -47,7 +65,7 @@ struct PushConstants {
 struct PassIO {
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	camera_data: Camera,
+	camera_data: CameraData,
 	meshlet_count: u32,
 	camera: WriteId<UploadBufferHandle>,
 	visbuffer: WriteId<ImageView>,
@@ -116,9 +134,27 @@ impl VisBuffer {
 	) -> ReadId<ImageView> {
 		let mut pass = frame.pass("visbuffer");
 
+		let aspect = size.x as f32 / size.y as f32;
+		let proj = infinite_projection(aspect, camera.fov, camera.near);
+		let view = camera.view;
+		let view_proj = proj * view;
+
+		let rows = proj.into_row_arrays();
+		let frustum_x = Vec4::from(rows[3]) + Vec4::from(rows[0]);
+		let frustum_y = Vec4::from(rows[3]) + Vec4::from(rows[1]);
+		let frustum = Vec4::new(frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z);
+
+		let camera_data = CameraData {
+			view,
+			proj,
+			view_proj,
+			frustum,
+			near: camera.near,
+		};
+
 		let (_, c) = pass.output(
 			UploadBufferDesc {
-				size: std::mem::size_of::<Camera>() as u64,
+				size: std::mem::size_of_val(&camera_data) as _,
 			},
 			BufferUsage {
 				usages: &[
@@ -163,7 +199,7 @@ impl VisBuffer {
 				PassIO {
 					instances: scene.instances.inner().inner.id().unwrap(),
 					meshlet_pointers: scene.meshlet_pointers.inner().inner.id().unwrap(),
-					camera_data: camera,
+					camera_data,
 					meshlet_count: scene.meshlet_pointers.len() as u32 / std::mem::size_of::<MeshletPointer>() as u32,
 					camera: c,
 					visbuffer: v_w,
@@ -184,7 +220,7 @@ impl VisBuffer {
 		let buf = pass.buf;
 
 		unsafe {
-			camera.data.as_mut().copy_from_slice(&bytes_of(&io.camera_data));
+			camera.data.as_mut().write(bytes_of(&io.camera_data)).unwrap();
 
 			let area = vk::Rect2D::builder()
 				.extent(vk::Extent2D {
@@ -217,14 +253,15 @@ impl VisBuffer {
 							.store_op(vk::AttachmentStoreOp::DONT_CARE),
 					),
 			);
+			let height = visbuffer.size.height as f32;
 			dev.cmd_set_viewport(
 				buf,
 				0,
 				&[vk::Viewport {
 					x: 0.0,
-					y: 0.0,
+					y: height,
 					width: visbuffer.size.width as f32,
-					height: visbuffer.size.height as f32,
+					height: -height,
 					min_depth: 0.0,
 					max_depth: 1.0,
 				}],
@@ -262,4 +299,16 @@ impl VisBuffer {
 		device.device().destroy_pipeline(self.pipeline, None);
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
+}
+
+fn infinite_projection(aspect: f32, yfov: f32, near: f32) -> Mat4<f32> {
+	let h = 1.0 / (yfov / 2.0).tan();
+	let w = h / aspect;
+
+	Mat4::new(
+		w, 0.0, 0.0, 0.0, //
+		0.0, h, 0.0, 0.0, //
+		0.0, 0.0, 0.0, near, //
+		0.0, 0.0, 1.0, 0.0, //
+	)
 }
