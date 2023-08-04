@@ -386,8 +386,8 @@ impl Importer {
 			}));
 			mesh.indices.extend(m.triangles);
 
-			let world_apex = Vec3::from_slice(&bounds.cone_apex);
-			let apex = ((world_apex - aabb.min) / extent * Vec3::broadcast(255.0)).map(|x| x.round() as u8);
+			let model_apex = Vec3::from_slice(&bounds.cone_apex);
+			let apex = ((model_apex - aabb.min) / extent * Vec3::broadcast(255.0)).map(|x| x.round() as u8);
 			mesh.meshlets.push(Meshlet {
 				aabb_min: aabb.min,
 				aabb_extent: extent,

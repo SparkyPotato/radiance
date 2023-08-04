@@ -92,5 +92,6 @@ bool cone_cull(float4x4 mv, Aabb aabb, Cone cone) {
     float3 apex_camera = mul(mv, apex).xyz;
     float3 axis_camera = mul(mv, float4(axis, 0.f)).xyz;
 
-    return dot(normalize(apex_camera), normalize(axis_camera)) >= cutoff;
+    bool culled = dot(normalize(apex_camera), normalize(axis_camera)) >= cutoff;
+    return culled;
 }

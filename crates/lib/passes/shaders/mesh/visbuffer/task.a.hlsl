@@ -17,13 +17,14 @@ void main(uint id: SV_DispatchThreadID, uint gtid: SV_GroupThreadID) {
     Camera camera = Constants.camera.load(CULL_CAMERA);
 
     float4x4 transform = instance.get_transform();
+    float4x4 mv = mul(camera.view, transform);
     float4x4 mvp = mul(camera.view_proj, transform);
     Aabb aabb = meshlet.get_mesh_aabb();
 
     // Culling.
     bool culled = false;
     culled = culled || frustum_cull(mvp, aabb);
-    // culled = culled || cone_cull(mv, aabb, meshlet.cone);
+    culled = culled || cone_cull(mv, aabb, meshlet.cone);
 
     // Write appropriate meshlet id to the payload.
     if (!culled) {
