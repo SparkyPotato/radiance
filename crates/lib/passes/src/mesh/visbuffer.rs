@@ -47,6 +47,16 @@ struct CameraData {
 	view_proj: Mat4<f32>,
 }
 
+impl CameraData {
+	fn new(aspect: f32, camera: Camera) -> Self {
+		let proj = infinite_projection(aspect, camera.fov, camera.near);
+		let view = camera.view;
+		let view_proj = proj * view;
+
+		Self { view, proj, view_proj }
+	}
+}
+
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
@@ -59,7 +69,8 @@ struct PushConstants {
 struct PassIO {
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	camera_data: CameraData,
+	cull_camera: CameraData,
+	draw_camera: CameraData,
 	meshlet_count: u32,
 	camera: WriteId<UploadBufferHandle>,
 	visbuffer: WriteId<ImageView>,
@@ -124,20 +135,18 @@ impl VisBuffer {
 
 	/// Note: `camera` must be setup for reverse Z.
 	pub fn run<'pass>(
-		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, camera: Camera, size: Vec2<u32>,
+		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, camera: Camera,
+		cull_camera: Option<Camera>, size: Vec2<u32>,
 	) -> ReadId<ImageView> {
 		let mut pass = frame.pass("visbuffer");
 
 		let aspect = size.x as f32 / size.y as f32;
-		let proj = infinite_projection(aspect, camera.fov, camera.near);
-		let view = camera.view;
-		let view_proj = proj * view;
-
-		let camera_data = CameraData { view, proj, view_proj };
+		let draw_camera = CameraData::new(aspect, camera);
+		let cull_camera = cull_camera.map(|c| CameraData::new(aspect, c)).unwrap_or(draw_camera);
 
 		let (_, c) = pass.output(
 			UploadBufferDesc {
-				size: std::mem::size_of_val(&camera_data) as _,
+				size: (std::mem::size_of::<CameraData>() * 2) as _,
 			},
 			BufferUsage {
 				usages: &[
@@ -182,7 +191,8 @@ impl VisBuffer {
 				PassIO {
 					instances: scene.instances.inner().inner.id().unwrap(),
 					meshlet_pointers: scene.meshlet_pointers.inner().inner.id().unwrap(),
-					camera_data,
+					cull_camera,
+					draw_camera,
 					meshlet_count: scene.meshlet_pointers.len() as u32 / std::mem::size_of::<MeshletPointer>() as u32,
 					camera: c,
 					visbuffer: v_w,
@@ -203,7 +213,9 @@ impl VisBuffer {
 		let buf = pass.buf;
 
 		unsafe {
-			camera.data.as_mut().write(bytes_of(&io.camera_data)).unwrap();
+			let mut writer = camera.data.as_mut();
+			writer.write(bytes_of(&io.cull_camera)).unwrap();
+			writer.write(bytes_of(&io.draw_camera)).unwrap();
 
 			let area = vk::Rect2D::builder()
 				.extent(vk::Extent2D {

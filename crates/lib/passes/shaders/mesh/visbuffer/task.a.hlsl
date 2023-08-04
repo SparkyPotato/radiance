@@ -14,7 +14,7 @@ void main(uint id: SV_DispatchThreadID, uint gtid: SV_GroupThreadID) {
     MeshletPointer pointer = Constants.meshlet_pointers.load(id);
     Instance instance = Constants.instances.load(pointer.instance);
     Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);
-    Camera camera = Constants.camera.load(0);
+    Camera camera = Constants.camera.load(CULL_CAMERA);
 
     float4x4 transform = instance.get_transform();
     float4x4 mvp = mul(camera.view_proj, transform);

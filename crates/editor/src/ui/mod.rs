@@ -61,8 +61,12 @@ impl UiState {
 						}
 					});
 				});
+
+				ui.menu_button("debug", |ui| self.renderer.draw_debug_menu(ui));
 			});
 		});
+
+		self.renderer.draw_debug_windows(ctx);
 
 		self.assets.render(ctx, &self.fonts);
 		self.renderer

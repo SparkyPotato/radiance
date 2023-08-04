@@ -49,6 +49,9 @@ struct Meshlet {
     }
 };
 
+#define CULL_CAMERA 0
+#define DRAW_CAMERA 1
+
 struct Camera {
     float4x4 view;
     float4x4 proj;

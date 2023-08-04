@@ -19,17 +19,23 @@ struct Aabb {
     }
 };
 
+float4 normalize_plane(float4 p) {
+    float3 n = p.xyz;
+    float l = length(n);
+    return p / l;
+}
+
 struct Frustum {
     float4 planes[5];
 
     static Frustum from_matrix(float4x4 p) {
         Frustum ret;
 
-        ret.planes[0] = p[3] + p[0];
-        ret.planes[1] = p[3] - p[0];
-        ret.planes[2] = p[3] + p[1];
-        ret.planes[3] = p[3] - p[1];
-        ret.planes[4] = p[3] + p[2];
+        ret.planes[0] = normalize_plane(p[3] + p[0]);
+        ret.planes[1] = normalize_plane(p[3] - p[0]);
+        ret.planes[2] = normalize_plane(p[3] + p[1]);
+        ret.planes[3] = normalize_plane(p[3] - p[1]);
+        ret.planes[4] = normalize_plane(p[3] - p[2]);
 
         return ret;
     }
