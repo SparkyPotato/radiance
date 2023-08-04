@@ -51,9 +51,9 @@ void main(
 void old_main(
     u32 gid: SV_GroupID, u32 gtid: SV_GroupThreadID,
     in payload MeshPayload payload,
-    out vertices VertexOutput vertices[64],
-    out indices uint2 triangles[124],
-    out primitives PrimitiveOutput visbuffer[124]
+    out vertices VertexOutput vertices[8],
+    out indices uint2 lines[12],
+    out primitives PrimitiveOutput visbuffer[12]
 ) {
     PointerWithId pointer_id = payload.pointers[gid];
     MeshletPointer pointer = pointer_id.pointer;
@@ -69,7 +69,6 @@ void old_main(
 
     SetMeshOutputCounts(8, 12);
 
-    // 64 threads per group and upto 64 vertices per meshlet.
     if (gtid < 8) {
         // Select aabb corner
         float4 pos = float4(
@@ -100,7 +99,7 @@ void old_main(
             case 10: o = uint2(5, 7); break;
             case 11: o = uint2(6, 7); break;
         }
-        triangles[gtid] = o;
+        lines[gtid] = o;
         VisBufferData data = { id, gtid };
         visbuffer[gtid].data = data.encode();
     }

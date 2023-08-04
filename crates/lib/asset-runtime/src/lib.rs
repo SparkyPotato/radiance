@@ -112,12 +112,12 @@ impl AssetRuntime {
 	pub fn load_scene<S: AssetSource>(
 		&mut self, device: &CoreDevice, core: &mut RenderCore, scene: Uuid, system: &mut AssetSystem<S>,
 	) -> Result<Option<StageTicket>, S::Error> {
-		let s = span!(tracing::Level::INFO, "load_scene", scene = %scene);
-		let _e = s.enter();
-
 		if self.scenes.contains_key(&scene) {
 			return Ok(None);
 		}
+
+		let s = span!(tracing::Level::INFO, "load_scene", scene = %scene);
+		let _e = s.enter();
 
 		let uuid = scene;
 		let scene = match system.load(scene)? {
@@ -192,8 +192,8 @@ impl AssetRuntime {
 									});
 								}
 								writer.write_slice(&m.vertices);
-								for chunk in m.indices.chunks(3) {
-									writer.write_slice(chunk);
+								for tri in m.indices.chunks(3) {
+									writer.write_slice(tri);
 									writer.write(0u8);
 								}
 

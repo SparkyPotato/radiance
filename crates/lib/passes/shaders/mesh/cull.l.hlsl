@@ -19,26 +19,48 @@ struct Aabb {
     }
 };
 
+struct Frustum {
+    float4 planes[5];
+
+    static Frustum from_matrix(float4x4 p) {
+        Frustum ret;
+
+        ret.planes[0] = p[3] + p[0];
+        ret.planes[1] = p[3] - p[0];
+        ret.planes[2] = p[3] + p[1];
+        ret.planes[3] = p[3] - p[1];
+        ret.planes[4] = p[3] + p[2];
+
+        return ret;
+    }
+};
+
+bool frustum_cull(float4x4 mvp, Aabb aabb) {
+    Frustum frustum = Frustum::from_matrix(mvp);
+
+    float3 half_extent = aabb.extent.xyz * 0.5f;
+    float3 center = aabb.min.xyz + half_extent;
+
+    for (u32 i = 0; i < 5; i++) {
+        float4 p = frustum.planes[i];
+        float3 plane = frustum.planes[i].xyz;
+        float3 abs_plane = abs(plane);
+
+        float d = dot(center, plane);
+        float r = dot(half_extent, abs_plane);
+
+        if (d + r > -p.w) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 struct Cone {
     u32 apex;
     u32 axis_cutoff;
 };
-
-bool frustum_cull(float4 frustum, f32 near, float4x4 mv, Aabb aabb) {
-    float scale = max(max(abs(mv._m00), abs(mv._m11)), abs(mv._m22));
-
-    Sphere sphere = aabb.get_sphere();
-    float3 center = mul(mv, sphere.center);
-    float radius = sphere.radius * scale;
-
-    bool visible = true;
-
-    visible = visible && center.z * frustum.y - abs(center.x) * frustum.x > -radius;
-    visible = visible && center.z * frustum.w - abs(center.y) * frustum.z > -radius;
-    visible = visible && center.z + near > -radius;
-
-    return visible;
-}
 
 bool cone_cull(float4x4 mv, Aabb aabb, Cone cone) {
     u16 apex_x = u16((cone.apex >> 0) & 0xff);

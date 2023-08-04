@@ -17,19 +17,20 @@ void main(uint id: SV_DispatchThreadID, uint gtid: SV_GroupThreadID) {
     Camera camera = Constants.camera.load(0);
 
     float4x4 transform = instance.get_transform();
-    float4x4 mv = mul(camera.view, transform);
+    float4x4 mvp = mul(camera.view_proj, transform);
     Aabb aabb = meshlet.get_mesh_aabb();
 
     // Culling.
     bool culled = false;
-    culled = culled || frustum_cull(camera.frustum, camera.near, mv, aabb);
+    culled = culled || frustum_cull(mvp, aabb);
     // culled = culled || cone_cull(mv, aabb, meshlet.cone);
 
     // Write appropriate meshlet id to the payload.
     if (!culled) {
-        InterlockedAdd(MeshletEmitCount, 1);
-        Payload.pointers[gtid].pointer = pointer;
-        Payload.pointers[gtid].id = id;
+        u32 index;
+        InterlockedAdd(MeshletEmitCount, 1, index);
+        Payload.pointers[index].pointer = pointer;
+        Payload.pointers[index].id = id;
     }
 
     // Emit.

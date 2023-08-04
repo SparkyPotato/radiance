@@ -22,7 +22,7 @@ use radiance_graph::{
 };
 use radiance_shader_compiler::c_str;
 use radiance_util::pipeline::{no_blend, reverse_depth, simple_blend};
-use vek::{Mat4, Vec2, Vec4};
+use vek::{Mat4, Vec2};
 
 #[derive(Copy, Clone)]
 pub struct Camera {
@@ -41,16 +41,10 @@ pub struct VisBuffer {
 
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
-struct ViewPyramid {}
-
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
 struct CameraData {
 	view: Mat4<f32>,
 	proj: Mat4<f32>,
 	view_proj: Mat4<f32>,
-	frustum: Vec4<f32>,
-	near: f32,
 }
 
 #[repr(C)]
@@ -139,18 +133,7 @@ impl VisBuffer {
 		let view = camera.view;
 		let view_proj = proj * view;
 
-		let rows = proj.into_row_arrays();
-		let frustum_x = Vec4::from(rows[3]) + Vec4::from(rows[0]);
-		let frustum_y = Vec4::from(rows[3]) + Vec4::from(rows[1]);
-		let frustum = Vec4::new(frustum_x.x, frustum_x.z, frustum_y.y, frustum_y.z);
-
-		let camera_data = CameraData {
-			view,
-			proj,
-			view_proj,
-			frustum,
-			near: camera.near,
-		};
+		let camera_data = CameraData { view, proj, view_proj };
 
 		let (_, c) = pass.output(
 			UploadBufferDesc {

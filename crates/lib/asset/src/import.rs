@@ -321,7 +321,7 @@ impl Importer {
 			.collect();
 
 		// Optimizations and meshlet building.
-		{
+		let (vertices, indices) = {
 			let s = span!(Level::INFO, "optimizing mesh");
 			let _e = s.enter();
 
@@ -330,7 +330,9 @@ impl Importer {
 			let mut indices = meshopt::remap_index_buffer(Some(&indices), vertex_count, &remap);
 			meshopt::optimize_vertex_cache_in_place(&mut indices, vertices.len());
 			meshopt::optimize_vertex_fetch_in_place(&mut indices, &mut vertices);
-		}
+
+			(vertices, indices)
+		};
 
 		let adapter = VertexDataAdapter::new(
 			bytemuck::cast_slice(vertices.as_slice()),
