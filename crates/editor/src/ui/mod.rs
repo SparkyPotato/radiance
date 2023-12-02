@@ -1,6 +1,7 @@
 //! The entire editor UI.
 
 mod assets;
+mod notif;
 mod render;
 mod widgets;
 
@@ -12,7 +13,11 @@ use rfd::FileDialog;
 pub use widgets::Fonts;
 
 use crate::{
-	ui::{assets::AssetManager, render::Renderer},
+	ui::{
+		assets::AssetManager,
+		notif::{Notif, NotifContents, NotifStack, NotifType},
+		render::Renderer,
+	},
 	window::Window,
 };
 
@@ -20,6 +25,7 @@ pub struct UiState {
 	assets: AssetManager,
 	fonts: Fonts,
 	renderer: Renderer,
+	notifs: NotifStack,
 }
 
 impl UiState {
@@ -28,6 +34,7 @@ impl UiState {
 			fonts,
 			assets: AssetManager::default(),
 			renderer: Renderer::new(device, core)?,
+			notifs: NotifStack::new(),
 		})
 	}
 
@@ -41,7 +48,15 @@ impl UiState {
 					let load = ui.button("load").clicked();
 					if new || load {
 						if let Some(path) = FileDialog::new().pick_folder() {
+							let exists = path.exists();
 							self.assets.open(path);
+							self.notifs.push(Notif {
+								ty: NotifType::Info,
+								contents: NotifContents::Simple {
+									header: "project".to_string(),
+									body: format!("{} project", if exists { "loaded" } else { "created" }),
+								},
+							});
 						}
 					}
 				});
@@ -71,6 +86,8 @@ impl UiState {
 		self.assets.render(ctx, &self.fonts);
 		self.renderer
 			.render(device, frame, ctx, window, self.assets.system.as_deref_mut());
+
+		self.notifs.render(ctx, &self.fonts);
 	}
 
 	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }

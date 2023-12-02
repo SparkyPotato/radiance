@@ -2,9 +2,10 @@
 //!
 //! It provides raw access to assets, without any sort of caching or GPU resource management.
 
-use std::fmt::Debug;
+use std::{fmt::Debug, hash::BuildHasherDefault};
 
-use rustc_hash::FxHashMap;
+use dashmap::DashMap;
+use rustc_hash::FxHasher;
 use tracing::{event, Level};
 pub use uuid::Uuid;
 
@@ -23,6 +24,8 @@ pub mod mesh;
 pub mod model;
 pub mod scene;
 pub mod util;
+
+pub type FxDashMap<K, V> = DashMap<K, V, BuildHasherDefault<FxHasher>>;
 
 const CONTAINER_VERSION: u32 = 1;
 
@@ -93,6 +96,24 @@ pub struct AssetHeader {
 	pub ty: AssetType,
 }
 
+pub enum HeaderParseError {
+	InvalidMagic,
+	InvalidVersion,
+	InvalidType,
+	LessThanHeaderSize,
+}
+
+impl Debug for HeaderParseError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::InvalidMagic => write!(f, "invalid magic"),
+			Self::InvalidVersion => write!(f, "invalid version"),
+			Self::InvalidType => write!(f, "invalid type"),
+			Self::LessThanHeaderSize => write!(f, "less than header size"),
+		}
+	}
+}
+
 impl AssetHeader {
 	/// Parse the header from a byte slice.
 	///
@@ -101,25 +122,38 @@ impl AssetHeader {
 	///
 	/// If `check_version` is `true`, the container version is checked to be equal to the current version, and the total
 	/// size of the slice must reflect this.
-	pub fn parse(bytes: &[u8], check_magic: bool, check_version: bool) -> Option<Self> {
+	pub fn parse(bytes: &[u8], check_magic: bool, check_version: bool) -> Result<Self, HeaderParseError> {
 		let mut reader = SliceReader::new(bytes);
 		if check_magic {
-			if reader.read_slice::<u8>(6) != b"RADASS" {
-				return None;
+			if reader.read_slice::<u8>(6).ok_or(HeaderParseError::LessThanHeaderSize)? != b"RADASS" {
+				return Err(HeaderParseError::InvalidMagic);
 			}
 		}
 		if check_version {
-			if u32::from_le_bytes(reader.read_slice::<u8>(4).try_into().unwrap()) != CONTAINER_VERSION {
-				return None;
+			if u32::from_le_bytes(
+				reader
+					.read_slice::<u8>(4)
+					.ok_or(HeaderParseError::LessThanHeaderSize)?
+					.try_into()
+					.unwrap(),
+			) != CONTAINER_VERSION
+			{
+				return Err(HeaderParseError::InvalidVersion);
 			}
 		}
 
-		let uuid = Uuid::from_slice(reader.read_slice(16)).unwrap();
-		let ty = u32::from_le_bytes(reader.read_slice::<u8>(4).try_into().unwrap())
-			.try_into()
-			.ok()?;
+		let uuid = Uuid::from_slice(reader.read_slice(16).ok_or(HeaderParseError::LessThanHeaderSize)?).unwrap();
+		let ty = u32::from_le_bytes(
+			reader
+				.read_slice::<u8>(4)
+				.ok_or(HeaderParseError::LessThanHeaderSize)?
+				.try_into()
+				.unwrap(),
+		)
+		.try_into()
+		.map_err(|_| HeaderParseError::InvalidType)?;
 
-		Some(Self { uuid, ty })
+		Ok(Self { uuid, ty })
 	}
 
 	pub fn to_bytes(self, with_magic: bool, with_version: bool) -> Vec<u8> {
@@ -127,13 +161,13 @@ impl AssetHeader {
 		let mut bytes = vec![0; len];
 		let mut writer = SliceWriter::new(&mut bytes);
 		if with_magic {
-			writer.write_slice(b"RADASS");
+			writer.write_slice(b"RADASS").unwrap();
 		}
 		if with_version {
-			writer.write(CONTAINER_VERSION)
+			writer.write(CONTAINER_VERSION).unwrap();
 		}
-		writer.write_slice(self.uuid.as_bytes());
-		writer.write(u32::from(self.ty));
+		writer.write_slice(self.uuid.as_bytes()).unwrap();
+		writer.write(u32::from(self.ty)).unwrap();
 		bytes
 	}
 }
@@ -145,10 +179,10 @@ pub trait AssetSource {
 	/// A human-readable name of the asset, if any.
 	fn human_name(&self) -> Option<&str>;
 
-	/// Load the header of the asset. Return `None` if the header is invalid.
-	fn load_header(&self) -> Result<AssetHeader, Self::Error>;
+	/// Load the header of the asset.
+	fn load_header(&self) -> Result<Result<AssetHeader, HeaderParseError>, Self::Error>;
 
-	/// Load the data of the asset. Return `None` if the data is invalid.
+	/// Load the data of the asset.
 	fn load_data(&self) -> Result<Vec<u8>, Self::Error>;
 }
 
@@ -164,13 +198,29 @@ pub trait AssetSink {
 
 /// Raw access to assets from sources and sinks.
 pub struct AssetSystem<S> {
-	assets: FxHashMap<Uuid, AssetMetadata<S>>,
+	assets: FxDashMap<Uuid, AssetMetadata<S>>,
 }
 
 impl<S: AssetSource> Default for AssetSystem<S> {
 	fn default() -> Self {
 		Self {
-			assets: FxHashMap::default(),
+			assets: FxDashMap::default(),
+		}
+	}
+}
+
+pub enum AssetError<S: AssetSource> {
+	Source(S::Error),
+	InvalidHeader(HeaderParseError),
+	InvalidAsset,
+}
+
+impl<S: AssetSource> Debug for AssetError<S> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Source(e) => write!(f, "source error: {:?}", e),
+			Self::InvalidHeader(e) => write!(f, "invalid header: {:?}", e),
+			Self::InvalidAsset => write!(f, "invalid asset"),
 		}
 	}
 }
@@ -179,32 +229,41 @@ impl<S: AssetSource> AssetSystem<S> {
 	pub fn new() -> Self { Self::default() }
 
 	/// Add an asset from a source.
-	pub fn add(&mut self, source: S) -> Result<AssetHeader, S::Error> {
-		match source.load_header() {
-			Ok(header) => {
-				event!(
-					Level::INFO,
-					"type" = ?header.ty,
-					uuid = ?header.uuid,
-					"added asset: `{}`", source.human_name().unwrap_or("unnamed asset")
-				);
-				self.assets.insert(header.uuid, AssetMetadata { header, source });
-				Ok(header)
-			},
-			Err(err) => {
+	pub fn add(&self, source: S) -> Result<AssetHeader, AssetError<S>> {
+		let header = source
+			.load_header()
+			.map_err(|x| {
 				event!(
 					Level::ERROR,
 					"failed to add invalid or inaccessible asset: `{}`",
 					source.human_name().unwrap_or("unnamed asset")
 				);
-				Err(err)
-			},
-		}
+
+				AssetError::Source(x)
+			})?
+			.map_err(|x| {
+				event!(
+					Level::ERROR,
+					"failed to add asset with invalid header: `{}`",
+					source.human_name().unwrap_or("unnamed asset")
+				);
+
+				AssetError::InvalidHeader(x)
+			})?;
+
+		event!(
+			Level::INFO,
+			"type" = ?header.ty,
+			uuid = ?header.uuid,
+			"added asset: `{}`", source.human_name().unwrap_or("unnamed asset")
+		);
+		self.assets.insert(header.uuid, AssetMetadata { header, source });
+		Ok(header)
 	}
 
 	/// Remove an asset.
-	pub fn remove(&mut self, uuid: Uuid) -> (AssetHeader, S) {
-		let meta = self.assets.remove(&uuid).unwrap();
+	pub fn remove(&self, uuid: Uuid) -> (AssetHeader, S) {
+		let (_, meta) = self.assets.remove(&uuid).unwrap();
 		event!(
 			Level::INFO,
 			"type" = ?meta.header.ty,
@@ -215,30 +274,42 @@ impl<S: AssetSource> AssetSystem<S> {
 	}
 
 	/// Load an asset.
-	pub fn load(&self, uuid: Uuid) -> Result<Asset, S::Error> {
+	pub fn load(&self, uuid: Uuid) -> Result<Asset, AssetError<S>> {
 		let meta = self
 			.assets
 			.get(&uuid)
 			.unwrap_or_else(|| panic!("asset {:?} not found", uuid));
-		let data = meta.source.load_data()?;
+		let data = meta.source.load_data().map_err(|x| {
+			event!(
+				Level::ERROR,
+				"failed to load invalid or inaccessible asset: `{}`",
+				meta.source.human_name().unwrap_or("unnamed asset")
+			);
+
+			AssetError::Source(x)
+		})?;
 		match meta.header.ty {
-			AssetType::Mesh => Ok(Asset::Mesh(Mesh::from_bytes(&data))),
-			AssetType::Model => Ok(Asset::Model(Model::from_bytes(&data))),
-			AssetType::Scene => Ok(Asset::Scene(Scene::from_bytes(&data))),
+			AssetType::Mesh => Ok(Asset::Mesh(
+				Mesh::from_bytes(&data).map_err(|_| AssetError::InvalidAsset)?,
+			)),
+			AssetType::Model => Ok(Asset::Model(
+				Model::from_bytes(&data).map_err(|_| AssetError::InvalidAsset)?,
+			)),
+			AssetType::Scene => Ok(Asset::Scene(
+				Scene::from_bytes(&data).map_err(|_| AssetError::InvalidAsset)?,
+			)),
 			_ => unimplemented!(),
 		}
 	}
 
 	pub fn assets_of_type(&self, ty: AssetType) -> impl Iterator<Item = Uuid> + '_ {
-		self.assets.iter().filter_map(
-			move |(uuid, meta)| {
-				if meta.header.ty == ty {
-					Some(*uuid)
-				} else {
-					None
-				}
-			},
-		)
+		self.assets.iter().filter_map(move |item| {
+			if item.header.ty == ty {
+				Some(item.header.uuid)
+			} else {
+				None
+			}
+		})
 	}
 }
 
@@ -246,8 +317,8 @@ impl<S: AssetSink> AssetSystem<S> {
 	/// Make changes to an asset.
 	///
 	/// The asset must already exist, and `asset` must be of the same type.
-	pub fn write(&mut self, uuid: Uuid, asset: Asset) -> Result<(), S::Error> {
-		let meta = self.assets.get_mut(&uuid).expect("asset does not exist");
+	pub fn write(&self, uuid: Uuid, asset: Asset) -> Result<(), S::Error> {
+		let mut meta = self.assets.get_mut(&uuid).expect("asset does not exist");
 		assert_eq!(meta.header.ty, asset.ty());
 		meta.source.write_data(&asset.to_bytes())
 	}

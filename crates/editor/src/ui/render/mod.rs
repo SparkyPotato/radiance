@@ -68,16 +68,17 @@ impl Renderer {
 				}
 				self.camera.control(ctx);
 
-				if let Some(ticket) = self.runtime.load_scene(device, frame.ctx(), scene, system).unwrap() {
+				let (_, ticket) = self.runtime.load_scene(device, frame.ctx(), scene, system).unwrap();
+				if let Some(ticket) = ticket {
 					let mut pass = frame.pass("init");
 					pass.wait_on(ticket.as_info());
 					pass.build(|_| {});
 				}
-				let scene = self.runtime.get_scene(scene).unwrap();
 
+				let scene = self.runtime.get_scene(scene).unwrap();
 				let visbuffer = self.visbuffer.run(
 					frame,
-					scene,
+					&scene,
 					self.camera.get(),
 					self.debug_windows.cull_camera(),
 					Vec2::new(size.x as u32, size.y as u32),

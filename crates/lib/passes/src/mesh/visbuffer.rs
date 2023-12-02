@@ -133,7 +133,6 @@ impl VisBuffer {
 		}
 	}
 
-	/// Note: `camera` must be setup for reverse Z.
 	pub fn run<'pass>(
 		&'pass self, frame: &mut CoreFrame<'pass, '_>, scene: &'pass Scene, camera: Camera,
 		cull_camera: Option<Camera>, size: Vec2<u32>,
@@ -166,7 +165,7 @@ impl VisBuffer {
 			layers: 1,
 			samples: vk::SampleCountFlags::TYPE_1,
 		};
-		let (v_r, v_w) = pass.output(
+		let (out, visbuffer) = pass.output(
 			desc,
 			ImageUsage {
 				format: vk::Format::R32_UINT,
@@ -175,7 +174,7 @@ impl VisBuffer {
 				aspect: vk::ImageAspectFlags::COLOR,
 			},
 		);
-		let (_, d_w) = pass.output(
+		let (_, depth) = pass.output(
 			desc,
 			ImageUsage {
 				format: vk::Format::D32_SFLOAT,
@@ -195,13 +194,13 @@ impl VisBuffer {
 					draw_camera,
 					meshlet_count: scene.meshlet_pointers.len() as u32 / std::mem::size_of::<MeshletPointer>() as u32,
 					camera: c,
-					visbuffer: v_w,
-					depth: d_w,
+					visbuffer,
+					depth,
 				},
 			)
 		});
 
-		v_r
+		out
 	}
 
 	fn execute(&self, mut pass: CorePass, io: PassIO) {
@@ -279,8 +278,8 @@ impl VisBuffer {
 				bytes_of(&PushConstants {
 					instances: io.instances,
 					meshlet_pointers: io.meshlet_pointers,
-					meshlet_count: io.meshlet_count,
 					camera: camera.id.unwrap(),
+					meshlet_count: io.meshlet_count,
 				}),
 			);
 

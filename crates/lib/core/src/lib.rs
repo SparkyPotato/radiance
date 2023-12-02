@@ -10,7 +10,7 @@ use radiance_shader_compiler::runtime::{shader, ShaderBlob, ShaderRuntime};
 use radiance_util::{
 	deletion::DeletionQueue,
 	pipeline::PipelineCache,
-	staging::{StageTicket, Staging, StagingCtx},
+	staging::{StageError, StageTicket, Staging, StagingCtx},
 };
 
 pub mod pipeline;
@@ -74,9 +74,10 @@ impl RenderCore {
 		Ok(frame)
 	}
 
-	pub fn stage(
-		&mut self, device: &CoreDevice, exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> Result<()>,
-	) -> Result<StageTicket> {
+	pub fn stage<T, E>(
+		&mut self, device: &CoreDevice,
+		exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> std::result::Result<T, E>,
+	) -> std::result::Result<(T, StageTicket), StageError<E>> {
 		self.staging.stage(
 			device,
 			self.last_frame_snapshot
@@ -98,17 +99,19 @@ impl RenderCore {
 }
 
 pub trait PassBuilderExt {
-	fn stage(
-		&mut self, device: &CoreDevice, exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> Result<()>,
-	) -> Result<()>;
+	fn stage<T, E>(
+		&mut self, device: &CoreDevice,
+		exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> std::result::Result<T, E>,
+	) -> std::result::Result<T, StageError<E>>;
 }
 
 impl PassBuilderExt for CoreBuilder<'_, '_, '_> {
-	fn stage(
-		&mut self, device: &CoreDevice, exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> Result<()>,
-	) -> Result<()> {
-		let ticket = self.ctx().stage(device, exec)?;
+	fn stage<T, E>(
+		&mut self, device: &CoreDevice,
+		exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> std::result::Result<T, E>,
+	) -> std::result::Result<T, StageError<E>> {
+		let (ret, ticket) = self.ctx().stage(device, exec)?;
 		self.wait_on(ticket.as_info());
-		Ok(())
+		Ok(ret)
 	}
 }

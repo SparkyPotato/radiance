@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 
 #[cfg(feature = "import")]
 use crate::import::{ImportContext, ImportError, ImportProgress};
-use crate::{Asset, AssetHeader, AssetSink, AssetSource, AssetSystem, AssetType};
+use crate::{Asset, AssetError, AssetHeader, AssetSink, AssetSource, AssetSystem, AssetType, HeaderParseError};
 
 struct PlatformFile {
 	file: File,
@@ -56,7 +56,12 @@ pub struct FsAsset {
 impl FsAsset {
 	pub fn load(path: &Path) -> Result<Self, io::Error> {
 		let file = OpenOptions::new().read(true).write(true).create(true).open(path)?;
-		let name = path.file_name().unwrap().to_str().unwrap().to_string();
+		let name = path
+			.file_name()
+			.unwrap()
+			.to_str()
+			.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "non-string file name"))?
+			.to_string();
 		Ok(Self {
 			name,
 			file: PlatformFile { file },
@@ -75,11 +80,10 @@ impl AssetSource for FsAsset {
 
 	fn human_name(&self) -> Option<&str> { Some(&self.name) }
 
-	fn load_header(&self) -> Result<AssetHeader, Self::Error> {
+	fn load_header(&self) -> Result<Result<AssetHeader, HeaderParseError>, Self::Error> {
 		let mut buf = [0; 30];
 		self.file.read_at(0, &mut buf)?;
-		let header = AssetHeader::parse(&buf, true, true)
-			.ok_or(io::Error::new(io::ErrorKind::InvalidData, "Invalid asset header"))?;
+		let header = AssetHeader::parse(&buf, true, true);
 		Ok(header)
 	}
 
@@ -291,7 +295,7 @@ impl FsSystem {
 	// Create a new filesystem-based asset system, recursively scanning the given root directory for assets.
 	pub fn new(root: impl Into<PathBuf>) -> Self {
 		let root = root.into();
-		let mut system = AssetSystem::new();
+		let system = AssetSystem::new();
 		let mut tree = AssetTree::new(root.components().last().unwrap().as_os_str().to_str().unwrap());
 
 		for file in WalkDir::new(&root)
@@ -327,10 +331,12 @@ impl FsSystem {
 	}
 
 	/// Add an asset copied into the root directory or a subdirectory.
-	pub fn add(&mut self, path: impl AsRef<Path>) -> Result<AssetHeader, io::Error> {
+	pub fn add(&mut self, path: impl AsRef<Path>) -> Result<AssetHeader, AssetError<FsAsset>> {
 		let path = path.as_ref();
 		let rel_path = path.strip_prefix(&self.root).expect("Asset path must be inside root");
-		let header = self.system.add(FsAsset::load(path)?)?;
+		let header = self
+			.system
+			.add(FsAsset::load(path).map_err(|x| AssetError::Source(x))?)?;
 		self.tree.add_asset(rel_path, header.uuid);
 		Ok(header)
 	}
@@ -346,7 +352,7 @@ impl FsSystem {
 	}
 
 	/// Load an asset by path.
-	pub fn load(&mut self, path: impl AsRef<Path>) -> Result<Asset, io::Error> {
+	pub fn load(&mut self, path: impl AsRef<Path>) -> Result<Asset, AssetError<FsAsset>> {
 		let path = path.as_ref();
 		let rel_path = path.strip_prefix(&self.root).expect("Asset path must be inside root");
 		let uuid = self.tree.get_asset(rel_path);

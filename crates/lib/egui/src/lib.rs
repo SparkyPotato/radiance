@@ -42,6 +42,7 @@ use radiance_graph::{
 		WriteId,
 	},
 	resource::{Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, UploadBufferHandle},
+	Error,
 	Result,
 };
 use radiance_shader_compiler::{
@@ -504,7 +505,7 @@ impl Renderer {
 					)?;
 				}
 
-				Ok(())
+				Ok::<_, Error>(())
 			})
 			.unwrap();
 		}

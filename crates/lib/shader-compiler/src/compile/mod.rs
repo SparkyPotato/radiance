@@ -132,11 +132,10 @@ impl ShaderBuilder {
 					.unwrap_or(true);
 				if modified {
 					compile_queue.insert(path.to_path_buf());
-					compile_queue.extend(
-						self.dependencies
-							.on(&virtual_path)
-							.map(|x| self.vfs.resolve_source(x).unwrap()),
-					);
+					compile_queue.extend(self.dependencies.on(&virtual_path).filter_map(|x| {
+						let path = self.vfs.resolve_source(x).unwrap();
+						path.exists().then(|| path)
+					}));
 				}
 			}
 		}

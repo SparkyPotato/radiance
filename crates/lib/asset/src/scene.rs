@@ -26,25 +26,25 @@ impl Node {
 	/// - 1 u32: length of name.
 	/// - name.
 	fn write(&self, writer: &mut SliceWriter) {
-		writer.write_slice(bytes_of(&self.transform.cols));
-		writer.write_slice(self.model.as_bytes());
-		writer.write(self.name.len() as u32);
-		writer.write_slice(self.name.as_bytes());
+		writer.write_slice(bytes_of(&self.transform.cols)).unwrap();
+		writer.write_slice(self.model.as_bytes()).unwrap();
+		writer.write(self.name.len() as u32).unwrap();
+		writer.write_slice(self.name.as_bytes()).unwrap();
 		let extra = self.name.len() % 4;
 		let fill = if extra == 0 { 0 } else { 4 - extra };
-		writer.write_slice(&[0u8, 0, 0][0..fill]);
+		writer.write_slice(&[0u8, 0, 0][0..fill]).unwrap();
 	}
 
-	fn read(reader: &mut SliceReader) -> Self {
-		let transform = Mat4::from_col_array(reader.read_slice(16).try_into().unwrap());
-		let model = Uuid::from_slice(reader.read_slice(16)).unwrap();
-		let name_len = reader.read::<u32>() as usize;
-		let name = String::from_utf8(reader.read_slice(name_len).to_vec()).unwrap();
+	fn read(reader: &mut SliceReader) -> Result<Self, ()> {
+		let transform = Mat4::from_col_array(reader.read_slice(16).ok_or(())?.try_into().unwrap());
+		let model = Uuid::from_slice(reader.read_slice(16).ok_or(())?).unwrap();
+		let name_len = reader.read::<u32>().ok_or(())? as usize;
+		let name = String::from_utf8(reader.read_slice(name_len).ok_or(())?.to_vec()).unwrap();
 		let extra = name_len % 4;
 		let fill = if extra == 0 { 0 } else { 4 - extra };
 		reader.read_slice::<u8>(fill);
 
-		Self { name, transform, model }
+		Ok(Self { name, transform, model })
 	}
 }
 
@@ -77,36 +77,36 @@ impl Camera {
 	/// - 1 u32: length of name.
 	/// - name.
 	fn write(&self, writer: &mut SliceWriter) {
-		writer.write(self.view.cols);
+		writer.write(self.view.cols).unwrap();
 		match self.projection {
 			Projection::Perspective { yfov, near, far } => {
-				writer.write(0u32);
-				writer.write(yfov);
-				writer.write(near);
-				writer.write(far.unwrap_or(f32::NAN));
+				writer.write(0u32).unwrap();
+				writer.write(yfov).unwrap();
+				writer.write(near).unwrap();
+				writer.write(far.unwrap_or(f32::NAN)).unwrap();
 			},
 			Projection::Orthographic { height, near, far } => {
-				writer.write(1u32);
-				writer.write(height);
-				writer.write(near);
-				writer.write(far);
+				writer.write(1u32).unwrap();
+				writer.write(height).unwrap();
+				writer.write(near).unwrap();
+				writer.write(far).unwrap();
 			},
 		}
-		writer.write(self.name.len() as u32);
-		writer.write_slice(self.name.as_bytes());
+		writer.write(self.name.len() as u32).unwrap();
+		writer.write_slice(self.name.as_bytes()).unwrap();
 		let extra = self.name.len() % 4;
 		let fill = if extra == 0 { 0 } else { 4 - extra };
-		writer.write_slice(&[0u8, 0, 0][0..fill]);
+		writer.write_slice(&[0u8, 0, 0][0..fill]).unwrap();
 	}
 
-	fn read(reader: &mut SliceReader) -> Self {
-		let view = Mat4::from_col_array(reader.read_slice(16).try_into().unwrap());
-		let ty = reader.read::<u32>();
+	fn read(reader: &mut SliceReader) -> Result<Self, ()> {
+		let view = Mat4::from_col_array(reader.read_slice(16).ok_or(())?.try_into().unwrap());
+		let ty = reader.read::<u32>().ok_or(())?;
 		let projection = match ty {
 			0 => {
-				let yfov = reader.read::<f32>();
-				let near = reader.read::<f32>();
-				let far = reader.read::<f32>();
+				let yfov = reader.read().ok_or(())?;
+				let near = reader.read().ok_or(())?;
+				let far = reader.read::<f32>().ok_or(())?;
 				Projection::Perspective {
 					yfov,
 					near,
@@ -114,20 +114,20 @@ impl Camera {
 				}
 			},
 			1 => {
-				let height = reader.read::<f32>();
-				let near = reader.read::<f32>();
-				let far = reader.read::<f32>();
+				let height = reader.read().ok_or(())?;
+				let near = reader.read().ok_or(())?;
+				let far = reader.read().ok_or(())?;
 				Projection::Orthographic { height, near, far }
 			},
 			_ => unreachable!("invalid asset"),
 		};
-		let name_len = reader.read::<u32>() as usize;
-		let name = String::from_utf8(reader.read_slice(name_len).to_vec()).unwrap();
+		let name_len = reader.read::<u32>().ok_or(())? as usize;
+		let name = String::from_utf8(reader.read_slice(name_len).ok_or(())?.to_vec()).unwrap();
 		let extra = name_len % 4;
 		let fill = if extra == 0 { 0 } else { 4 - extra };
 		reader.read_slice::<u8>(fill);
 
-		Self { name, view, projection }
+		Ok(Self { name, view, projection })
 	}
 }
 
@@ -152,12 +152,12 @@ impl Scene {
 		];
 		let mut writer = SliceWriter::new(&mut bytes);
 
-		writer.write(self.nodes.len() as u32);
+		writer.write(self.nodes.len() as u32).unwrap();
 		for node in &self.nodes {
 			node.write(&mut writer);
 		}
 
-		writer.write(self.cameras.len() as u32);
+		writer.write(self.cameras.len() as u32).unwrap();
 		for camera in &self.cameras {
 			camera.write(&mut writer);
 		}
@@ -165,22 +165,22 @@ impl Scene {
 		zstd::encode_all(bytes.as_slice(), 8).unwrap()
 	}
 
-	pub fn from_bytes(bytes: &[u8]) -> Self {
+	pub fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
 		let bytes = zstd::decode_all(bytes).unwrap();
 		let mut reader = SliceReader::new(&bytes);
 
-		let node_count = reader.read::<u32>() as usize;
+		let node_count = reader.read::<u32>().ok_or(())? as usize;
 		let mut nodes = Vec::with_capacity(node_count);
 		for _ in 0..node_count {
-			nodes.push(Node::read(&mut reader));
+			nodes.push(Node::read(&mut reader)?);
 		}
 
-		let camera_count = reader.read::<u32>() as usize;
+		let camera_count = reader.read::<u32>().ok_or(())? as usize;
 		let mut cameras = Vec::with_capacity(camera_count);
 		for _ in 0..camera_count {
-			cameras.push(Camera::read(&mut reader));
+			cameras.push(Camera::read(&mut reader)?);
 		}
 
-		Self { nodes, cameras }
+		Ok(Self { nodes, cameras })
 	}
 }

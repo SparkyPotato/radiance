@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, io::Write, ops::Range};
+use std::{collections::VecDeque, fmt::Debug, io::Write, ops::Range};
 
 use ash::vk;
 use radiance_graph::{
@@ -30,6 +30,24 @@ impl StageTicket {
 			semaphore: self.semaphore,
 			value: self.value,
 			stage: vk::PipelineStageFlags2::ALL_COMMANDS,
+		}
+	}
+}
+
+pub enum StageError<E> {
+	User(E),
+	Vulkan(radiance_graph::Error),
+}
+
+impl<E> From<E> for StageError<E> {
+	fn from(e: E) -> Self { StageError::User(e) }
+}
+
+impl<E: Debug> Debug for StageError<E> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			StageError::User(e) => write!(f, "User({:?})", e),
+			StageError::Vulkan(e) => write!(f, "Vulkan({:?})", e),
 		}
 	}
 }
@@ -68,11 +86,11 @@ impl Staging {
 	/// `wait` will be waited upon before the staging commands are submitted.
 	///
 	/// The returned `StageTicket` can be used to wait for the staging to complete.
-	pub fn stage(
+	pub fn stage<T, E>(
 		&mut self, device: &Device, mut wait: Vec<vk::SemaphoreSubmitInfo, &Arena>,
-		exec: impl FnOnce(&mut StagingCtx) -> Result<()>,
-	) -> Result<StageTicket> {
-		self.inner.for_submit(|inner| {
+		exec: impl FnOnce(&mut StagingCtx) -> std::result::Result<T, E>,
+	) -> std::result::Result<(T, StageTicket), StageError<E>> {
+		let ret = self.inner.for_submit(|inner| {
 			let mut ctx = StagingCtx {
 				device,
 				inner,
@@ -81,18 +99,18 @@ impl Staging {
 				queues: &mut self.pools,
 				min_granularity: self.min_granularity,
 			};
-			exec(&mut ctx)?;
+			let ret = exec(&mut ctx).map_err(|x| StageError::User(x))?;
 
-			submit_queues(device, &mut self.semaphore, ctx.pre_bufs, &mut wait)?;
-			submit_queues(device, &mut self.semaphore, ctx.post_bufs, &mut wait)?;
+			submit_queues(device, &mut self.semaphore, ctx.pre_bufs, &mut wait).map_err(|x| StageError::Vulkan(x))?;
+			submit_queues(device, &mut self.semaphore, ctx.post_bufs, &mut wait).map_err(|x| StageError::Vulkan(x))?;
 
-			Ok(self.semaphore.value())
+			Ok::<_, StageError<E>>((ret, self.semaphore.value()))
 		})?;
 
 		let semaphore = self.semaphore.semaphore();
 		let value = self.semaphore.value();
 
-		Ok(StageTicket { semaphore, value })
+		Ok((ret, StageTicket { semaphore, value }))
 	}
 
 	/// Poll and reclaim any buffer space that is no longer in use.
@@ -348,14 +366,16 @@ impl CircularBuffer {
 	}
 
 	// Returns the index of the submit in the list.
-	fn for_submit(&mut self, exec: impl FnOnce(&mut Self) -> Result<u64>) -> Result<()> {
+	fn for_submit<T, E>(
+		&mut self, exec: impl FnOnce(&mut Self) -> std::result::Result<(T, u64), E>,
+	) -> std::result::Result<T, E> {
 		let mut range = self.tail..self.tail;
-		let sem_value = exec(self)?;
+		let (ret, sem_value) = exec(self)?;
 		range.end = self.tail;
 
 		self.submits.push_back(SubmitInfo { range, sem_value });
 
-		Ok(())
+		Ok(ret)
 	}
 
 	fn copy(&mut self, device: &Device, data: &[u8]) -> Result<BufferLoc<vk::Buffer>> {

@@ -12,19 +12,17 @@ void main(uint id: SV_DispatchThreadID, uint gtid: SV_GroupThreadID) {
     }
 
     MeshletPointer pointer = Constants.meshlet_pointers.load(id);
-    Instance instance = Constants.instances.load(pointer.instance);
-    Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);
-    Camera camera = Constants.camera.load(CULL_CAMERA);
+    // Instance instance = Constants.instances.load(pointer.instance);
+    // Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);
+    // Camera camera = Constants.camera.load(CULL_CAMERA);
 
-    float4x4 transform = instance.get_transform();
-    float4x4 mv = mul(camera.view, transform);
-    float4x4 mvp = mul(camera.view_proj, transform);
-    Aabb aabb = meshlet.get_mesh_aabb();
+    // float4x4 transform = instance.get_transform();
+    // float4x4 mv = mul(camera.view, transform);
+    // float4x4 mvp = mul(camera.view_proj, transform);
+    // Aabb aabb = meshlet.get_mesh_aabb();
 
     // Culling.
-    bool culled = false;
-    culled = culled || frustum_cull(mvp, aabb);
-    culled = culled || cone_cull(mv, aabb, meshlet.cone);
+    bool culled = false; // frustum_cull(mvp, aabb);
 
     // Write appropriate meshlet id to the payload.
     if (!culled) {

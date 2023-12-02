@@ -126,12 +126,13 @@ fn main() {
 		.build(&event_loop)
 		.unwrap();
 
-	let mut state = State::new(&event_loop, window).unwrap();
+	let mut state = ManuallyDrop::new(State::new(&event_loop, window).unwrap());
 
 	event_loop.run(move |event, _, flow| match event {
 		Event::NewEvents(StartCause::Init) => state.window.window.set_visible(true),
 		Event::MainEventsCleared => state.window.request_redraw(),
 		Event::RedrawRequested(_) => {
+			let state = &mut *state;
 			let mut frame = state.core.frame(&state.device, &mut state.graph).unwrap();
 
 			state.ui.begin_frame(&state.window);
@@ -145,12 +146,16 @@ fn main() {
 			tracy::frame!();
 		},
 		Event::WindowEvent { event, .. } => {
+			let state = &mut *state;
 			state.ui.on_event(&event);
 			match event {
 				WindowEvent::CloseRequested => *flow = ControlFlow::Exit,
 				WindowEvent::Resized(_) => state.window.resize(&state.device, &state.graph).unwrap(),
 				_ => {},
 			}
+		},
+		Event::LoopDestroyed => unsafe {
+			ManuallyDrop::drop(&mut state);
 		},
 		_ => {},
 	})

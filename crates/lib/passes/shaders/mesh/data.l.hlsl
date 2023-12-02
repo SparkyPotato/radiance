@@ -34,11 +34,10 @@ struct Instance {
 struct Meshlet {
 	f32 aabb_min[3];
 	f32 aabb_extent[3];
-	Cone cone;
-    u32 vertex_byte_offset;
-    u32 index_byte_offset;
-    u16 vert_and_tri_count;
-    u16 _pad[3];
+	u32 vertex_offset;
+	u32 index_offset;
+	u16 vert_and_tri_count;
+	u16 pad;
 
     Aabb get_mesh_aabb() {
         Aabb ret;

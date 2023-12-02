@@ -22,7 +22,7 @@ use uuid::Uuid;
 use vek::{Aabb, Mat4, Vec2, Vec3};
 
 use crate::{
-	mesh::{Cone, Mesh, Meshlet, Vertex},
+	mesh::{Mesh, Meshlet, Vertex},
 	model::Model,
 	scene,
 	scene::{Camera, Node, Scene},
@@ -105,7 +105,7 @@ where
 		type Error<S, I> = ImportError<<S as AssetSink>::Error, <I as ImportContext>::Error>;
 
 		let (gltf, buffers, ..) = gltf::import(path)?;
-		let imp = Importer { gltf, buffers }; // images };d
+		let imp = Importer { gltf, buffers }; // images };
 
 		let total = ImportProgress {
 			meshes: imp.gltf.meshes().flat_map(|x| x.primitives()).count(),
@@ -358,7 +358,6 @@ impl Importer {
 			},
 		};
 		for m in meshlets.iter() {
-			let bounds = meshopt::compute_meshlet_bounds(m, &adapter);
 			let vertices = m.vertices.iter().map(|&x| vertices[x as usize]);
 			let aabb = {
 				let mut min = Vec3::broadcast(f32::INFINITY);
@@ -385,9 +384,6 @@ impl Importer {
 				uv: (x.uv * Vec2::broadcast(65535.0)).map(|x| x.round() as u16),
 			}));
 			mesh.indices.extend(m.triangles);
-
-			let model_apex = Vec3::from_slice(&bounds.cone_apex);
-			let apex = ((model_apex - aabb.min) / extent * Vec3::broadcast(255.0)).map(|x| x.round() as u8);
 			mesh.meshlets.push(Meshlet {
 				aabb_min: aabb.min,
 				aabb_extent: extent,
@@ -395,11 +391,6 @@ impl Importer {
 				vertex_offset,
 				tri_count,
 				vert_count,
-				cone: Cone {
-					apex: apex.with_w(0),
-					axis: Vec3::from_slice(&bounds.cone_axis_s8),
-					cutoff: bounds.cone_cutoff_s8,
-				},
 				_pad: 0,
 			});
 			mesh.aabb = mesh.aabb.union(aabb);

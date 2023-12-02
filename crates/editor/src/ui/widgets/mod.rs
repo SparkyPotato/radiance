@@ -66,16 +66,10 @@ impl IntoIcon for Font {
 }
 
 pub trait UiExt {
-	fn icon_button(&mut self, icon: &impl IntoIcon, text: impl Into<RichText>) -> Response;
-
 	fn text_button(&mut self, text: impl Into<WidgetText>) -> Response;
 }
 
 impl UiExt for Ui {
-	fn icon_button(&mut self, icon: &impl IntoIcon, text: impl Into<RichText>) -> Response {
-		self.add(TextButton::new(icon.text(text)))
-	}
-
 	fn text_button(&mut self, text: impl Into<WidgetText>) -> Response { self.add(TextButton::new(text)) }
 }
 

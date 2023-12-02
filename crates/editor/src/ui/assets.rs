@@ -50,7 +50,7 @@ impl AssetManager {
 								ui.vertical(|ui| {
 									ui.add_space(2.5);
 									if ui
-										.icon_button(&fonts.icons, RichText::new(icons::ARROW_UP).size(16.0))
+										.text_button(fonts.icons.text(icons::ARROW_UP).heading())
 										.on_hover_text("Go back")
 										.clicked() && self.cursor != sys.root()
 									{
@@ -64,13 +64,13 @@ impl AssetManager {
 								let current = self.cursor.strip_prefix(root).unwrap();
 								for (i, component) in current.components().enumerate() {
 									if ui
-										.text_button(RichText::new(component.as_os_str().to_string_lossy()).size(16.0))
+										.text_button(RichText::new(component.as_os_str().to_string_lossy()).heading())
 										.clicked()
 									{
 										self.cursor = root.join(current.components().take(i + 1).collect::<PathBuf>());
 										break;
 									}
-									ui.label(RichText::new("/").size(16.0));
+									ui.label(RichText::new("/").heading());
 								}
 							});
 							ui.add_space(5.0);
@@ -96,11 +96,13 @@ impl AssetManager {
 											ui.vertical(|ui| {
 												ui.centered_and_justified(|ui| {
 													let name = dir.name();
-													if ui.text_button(RichText::new(icons::FOLDER).size(32.0)).clicked()
+													if ui
+														.text_button(fonts.icons.text(icons::FOLDER).size(32.0))
+														.clicked()
 													{
 														self.cursor.push(name);
 													}
-													ui.label(RichText::new(name).size(16.0));
+													ui.label(RichText::new(name).heading());
 												});
 											});
 										}),
@@ -109,7 +111,7 @@ impl AssetManager {
 												ui.vertical(|ui| {
 													ui.centered_and_justified(|ui| {
 														ui.label(fonts.icons.text(icons::FILE).size(32.0));
-														ui.label(RichText::new(asset).size(16.0));
+														ui.label(RichText::new(asset).heading());
 													});
 												});
 											}),

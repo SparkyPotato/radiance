@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use static_assertions::const_assert_eq;
-use vek::{Aabb, Vec2, Vec3, Vec4};
+use vek::{Aabb, Vec2, Vec3};
 
 use crate::util::{SliceReader, SliceWriter};
 
@@ -18,20 +18,6 @@ pub struct Vertex {
 const_assert_eq!(std::mem::size_of::<Vertex>(), 16);
 const_assert_eq!(std::mem::align_of::<Vertex>(), 2);
 
-/// Culling cone.
-#[derive(Pod, Zeroable, Copy, Clone)]
-#[repr(C)]
-pub struct Cone {
-	pub apex: Vec4<u8>,
-	/// Signed normalized axis of the cone.
-	pub axis: Vec3<i8>,
-	/// Signed normalized cos(angle / 2).
-	pub cutoff: i8,
-}
-
-const_assert_eq!(std::mem::size_of::<Cone>(), 8);
-const_assert_eq!(std::mem::align_of::<Cone>(), 1);
-
 #[derive(Pod, Zeroable, Copy, Clone)]
 #[repr(C)]
 pub struct Meshlet {
@@ -46,12 +32,10 @@ pub struct Meshlet {
 	pub tri_count: u8,
 	/// Number of vertices in the meshlet.
 	pub vert_count: u8,
-	/// Cone of the meshlet relative to the center of the bounding box.
-	pub cone: Cone,
 	pub _pad: u16,
 }
 
-const_assert_eq!(std::mem::size_of::<Meshlet>(), 44);
+const_assert_eq!(std::mem::size_of::<Meshlet>(), 36);
 const_assert_eq!(std::mem::align_of::<Meshlet>(), 4);
 
 /// A mesh asset consisting of meshlets.
@@ -90,48 +74,50 @@ impl Mesh {
 		let mut bytes = vec![0; len];
 		let mut writer = SliceWriter::new(bytes.as_mut_slice());
 
-		writer.write(self.aabb.min);
-		writer.write(self.aabb.max);
-		writer.write(self.vertices.len() as u32);
-		writer.write(self.indices.len() as u32);
-		writer.write(self.meshlets.len() as u32);
-		writer.write(vertex_len as u32);
-		writer.write(index_len as u32);
+		writer.write(self.aabb.min).unwrap();
+		writer.write(self.aabb.max).unwrap();
+		writer.write(self.vertices.len() as u32).unwrap();
+		writer.write(self.indices.len() as u32).unwrap();
+		writer.write(self.meshlets.len() as u32).unwrap();
+		writer.write(vertex_len as u32).unwrap();
+		writer.write(index_len as u32).unwrap();
 
-		writer.write_slice(&vertices);
-		writer.write_slice(&indices);
-		writer.write_slice(&[0u8, 0, 0][0..fill]);
-		writer.write_slice(&self.meshlets);
+		writer.write_slice(&vertices).unwrap();
+		writer.write_slice(&indices).unwrap();
+		writer.write_slice(&[0u8, 0, 0][0..fill]).unwrap();
+		writer.write_slice(&self.meshlets).unwrap();
 
 		zstd::encode_all(bytes.as_slice(), 8).unwrap()
 	}
 
-	pub(super) fn from_bytes(bytes: &[u8]) -> Self {
-		let bytes = zstd::decode_all(bytes).unwrap();
+	pub(super) fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+		let bytes = zstd::decode_all(bytes).map_err(|_| ())?;
 		let mut reader = SliceReader::new(&bytes);
 
-		let min = reader.read::<Vec3<f32>>();
-		let max = reader.read::<Vec3<f32>>();
-		let vertex_count = reader.read::<u32>() as usize;
-		let index_count = reader.read::<u32>() as usize;
-		let meshlet_count = reader.read::<u32>() as usize;
-		let vertex_len = reader.read::<u32>() as usize;
-		let index_len = reader.read::<u32>() as usize;
+		let min = reader.read::<Vec3<f32>>().ok_or(())?;
+		let max = reader.read::<Vec3<f32>>().ok_or(())?;
+		let vertex_count = reader.read::<u32>().ok_or(())? as usize;
+		let index_count = reader.read::<u32>().ok_or(())? as usize;
+		let meshlet_count = reader.read::<u32>().ok_or(())? as usize;
+		let vertex_len = reader.read::<u32>().ok_or(())? as usize;
+		let index_len = reader.read::<u32>().ok_or(())? as usize;
 
 		let extra = (vertex_len + index_len) % 4;
 		let fill = if extra == 0 { 0 } else { 4 - extra };
 
-		let vertices = meshopt::decode_vertex_buffer(reader.read_slice(vertex_len), vertex_count).unwrap();
-		let indices: Vec<u32> = meshopt::decode_index_buffer(reader.read_slice(index_len), index_count).unwrap();
+		let vertices =
+			meshopt::decode_vertex_buffer(reader.read_slice(vertex_len).ok_or(())?, vertex_count).map_err(|_| ())?;
+		let indices: Vec<u32> =
+			meshopt::decode_index_buffer(reader.read_slice(index_len).ok_or(())?, index_count).map_err(|_| ())?;
 		let indices: Vec<_> = indices.into_iter().map(|x| x as u8).collect();
 		reader.read_slice::<u8>(fill);
-		let meshlets = reader.read_slice(meshlet_count).to_vec();
+		let meshlets = reader.read_slice(meshlet_count).ok_or(())?.to_vec();
 
-		Self {
+		Ok(Self {
 			vertices,
 			indices,
 			meshlets,
 			aabb: Aabb { min, max },
-		}
+		})
 	}
 }

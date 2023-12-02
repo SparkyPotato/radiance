@@ -23,19 +23,21 @@ impl Model {
 		zstd::encode_all(bytes.as_slice(), 8).unwrap()
 	}
 
-	pub(super) fn from_bytes(bytes: &[u8]) -> Self {
-		let bytes = zstd::decode_all(bytes).unwrap();
+	pub(super) fn from_bytes(bytes: &[u8]) -> Result<Self, ()> {
+		let bytes = zstd::decode_all(bytes).map_err(|_| ())?;
 		let mut reader = SliceReader::new(&bytes);
-		let min = reader.read();
-		let max = reader.read();
+
+		let min = reader.read().ok_or(())?;
+		let max = reader.read().ok_or(())?;
 		let bytes = reader.finish();
 		let mut meshes = Vec::with_capacity(bytes.len() / 16);
 		for chunk in bytes.chunks_exact(16) {
 			meshes.push(Uuid::from_slice(chunk).unwrap());
 		}
-		Self {
+
+		Ok(Self {
 			meshes,
 			aabb: Aabb { min, max },
-		}
+		})
 	}
 }
