@@ -1,6 +1,8 @@
 //! Utilities for importing assets.
 
 use std::{
+	fs::File,
+	io::BufReader,
 	path::Path,
 	sync::atomic::{AtomicUsize, Ordering},
 };
@@ -10,8 +12,10 @@ use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
 	camera::Projection,
+	import_buffers,
 	Accessor,
 	Document,
+	Gltf,
 	Primitive,
 	Semantic,
 };
@@ -33,7 +37,7 @@ use crate::{
 	AssetType,
 };
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub struct ImportProgress {
 	meshes: usize,
 	models: usize,
@@ -96,7 +100,7 @@ where
 	///
 	/// Uses the global rayon thread pool.
 	pub fn import<I: ImportContext<Sink = S>>(
-		&mut self, mut ctx: I, path: &Path,
+		&self, mut ctx: I, path: &Path,
 	) -> Result<(), ImportError<S::Error, I::Error>> {
 		let s = span!(Level::INFO, "import", path = path.to_string_lossy().as_ref());
 		let _e = s.enter();
@@ -104,8 +108,15 @@ where
 		let c = &mut ctx;
 		type Error<S, I> = ImportError<<S as AssetSink>::Error, <I as ImportContext>::Error>;
 
-		let (gltf, buffers, ..) = gltf::import(path)?;
-		let imp = Importer { gltf, buffers }; // images };
+		let imp = {
+			let s = span!(Level::TRACE, "load GLTF");
+			let _e = s.enter();
+			let base = path.parent().unwrap_or_else(|| Path::new("."));
+			let Gltf { document: gltf, blob } =
+				Gltf::from_reader(BufReader::new(File::open(path).map_err(gltf::Error::Io)?))?;
+			let buffers = import_buffers(&gltf, Some(base), blob)?;
+			Importer { gltf, buffers } // images }
+		};
 
 		let total = ImportProgress {
 			meshes: imp.gltf.meshes().flat_map(|x| x.primitives()).count(),
@@ -113,6 +124,7 @@ where
 			materials: imp.gltf.materials().count(),
 			scenes: imp.gltf.scenes().count(),
 		};
+		c.progress(ImportProgress::default(), total);
 
 		// Meshes
 		let progress = AtomicUsize::new(0);
@@ -141,7 +153,7 @@ where
 			.collect::<Result<_, _>>()?;
 		let meshes: Vec<_> = prims
 			.into_par_iter()
-			.map(|(mesh_id, uuid, name, prim, mut sink)| {
+			.map(|(mesh_id, uuid, name, prim, sink)| {
 				let mesh = imp.mesh(&name, prim).map_err(|x| x.map_ignore())?;
 				sink.write_data(&mesh.to_bytes()).map_err(|x| ImportError::Sink(x))?;
 				let old = progress.fetch_add(1, Ordering::Relaxed);
@@ -199,7 +211,7 @@ where
 					uuid,
 					ty: AssetType::Model,
 				};
-				let mut sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
+				let sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
 				sink.write_data(&model.to_bytes()).map_err(|x| ImportError::Sink(x))?;
 				self.assets.insert(uuid, AssetMetadata { header, source: sink });
 				ctx.progress(
@@ -223,7 +235,7 @@ where
 				uuid: Uuid::new_v4(),
 				ty: AssetType::Scene,
 			};
-			let mut sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
+			let sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
 			sink.write_data(&out.to_bytes()).map_err(|x| ImportError::Sink(x))?;
 			self.assets.insert(header.uuid, AssetMetadata { header, source: sink });
 			ctx.progress(

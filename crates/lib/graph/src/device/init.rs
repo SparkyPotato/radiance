@@ -11,6 +11,7 @@ use ash::{
 };
 use gpu_allocator::{
 	vulkan::{Allocator, AllocatorCreateDesc},
+	AllocationSizes,
 	AllocatorDebugSettings,
 };
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
@@ -123,6 +124,7 @@ impl<'a> DeviceBuilder<'a> {
 			physical_device,
 			debug_settings: AllocatorDebugSettings::default(),
 			buffer_device_address: false,
+			allocation_sizes: AllocationSizes::default(),
 		})
 		.map_err(|e| Error::Message(e.to_string()))?;
 

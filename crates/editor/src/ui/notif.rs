@@ -1,4 +1,6 @@
-use egui::{Align2, Context, Id, Window};
+use std::time::{Duration, Instant};
+
+use egui::{Align2, Area, Context, Frame, Id, Order, Resize, Ui};
 
 use crate::ui::{
 	widgets::{icons, IntoIcon},
@@ -6,9 +8,8 @@ use crate::ui::{
 };
 
 pub struct NotifStack {
-	push: Vec<Notif>,
-	editable: Vec<Notif>,
-	order: Vec<u32>,
+	notifs: Vec<Notif>,
+	dismissed: Option<usize>,
 }
 
 pub enum NotifType {
@@ -17,78 +18,110 @@ pub enum NotifType {
 	Error,
 }
 
-pub enum NotifContents {
-	Simple { header: String, body: String },
+pub trait Notification: 'static {
+	fn draw(&mut self, ui: &mut Ui, fonts: &Fonts);
+
+	fn expired(&self) -> bool;
+
+	fn dismissable(&self) -> bool;
 }
 
-pub struct Notif {
+pub struct PushNotif {
+	contents: String,
+	expiry: Instant,
+}
+
+impl PushNotif {
+	pub fn new(contents: impl ToString) -> Self {
+		Self {
+			contents: contents.to_string(),
+			expiry: Instant::now() + Duration::from_secs(5),
+		}
+	}
+
+	pub fn with_life(contents: impl ToString, life: Duration) -> Self {
+		Self {
+			contents: contents.to_string(),
+			expiry: Instant::now() + life,
+		}
+	}
+}
+
+impl Notification for PushNotif {
+	fn draw(&mut self, ui: &mut Ui, _: &Fonts) { ui.label(self.contents.clone()); }
+
+	fn expired(&self) -> bool { Instant::now() > self.expiry }
+
+	fn dismissable(&self) -> bool { true }
+}
+
+struct Notif {
 	pub ty: NotifType,
-	pub contents: NotifContents,
+	pub header: String,
+	pub contents: Box<dyn Notification>,
 }
-
-pub struct NotifId(u32);
 
 impl NotifStack {
 	pub fn new() -> Self {
 		Self {
-			push: Vec::new(),
-			editable: Vec::new(),
-			order: Vec::new(),
+			notifs: Vec::new(),
+			dismissed: None,
 		}
 	}
 
-	pub fn push(&mut self, notif: Notif) {
-		let id = self.push.len();
-		self.push.push(notif);
-		self.order.push(id as u32);
+	pub fn push<T: Notification>(&mut self, ty: NotifType, header: impl ToString, notif: T) {
+		self.notifs.push(Notif {
+			ty,
+			header: header.to_string(),
+			contents: Box::new(notif),
+		});
 	}
-
-	pub fn editable(&mut self, notif: Notif) -> NotifId {
-		let id = self.editable.len();
-		self.editable.push(notif);
-		self.order.push((id as u32) | 1 << 31);
-		NotifId(id as _)
-	}
-
-	pub fn edit(&mut self, id: NotifId, notif: Notif) { self.editable[id.0 as usize] = notif; }
 
 	pub fn render(&mut self, ctx: &Context, fonts: &Fonts) {
-		let Self { push, editable, order } = self;
-
 		let rect = ctx.input(|x| x.screen_rect);
 		let x = rect.width() - 15.0;
 		let mut y = rect.height() - 15.0;
-		for &id in order.iter() {
-			let resp = Window::new("")
-				.id(Id::new("notifications").with(id))
-				.title_bar(false)
-				.resizable(false)
-				.open(&mut true)
+
+		let mut i = 0;
+		self.notifs.retain(|x| {
+			let ret = !x.contents.expired() && self.dismissed != Some(i);
+			i += 1;
+			ret
+		});
+		self.dismissed = None;
+
+		for (i, notif) in self.notifs.iter_mut().enumerate().rev() {
+			let resp = Area::new(Id::new("notifications").with(i))
 				.pivot(Align2::RIGHT_BOTTOM)
 				.fixed_pos((x, y))
+				.interactable(true)
+				.order(Order::Foreground)
 				.show(ctx, |ui| {
-					let notif = if id & (1 << 31) == 0 {
-						&push[id as usize]
-					} else {
-						&editable[id as usize & !(1 << 31)]
-					};
+					Frame::window(&*ctx.style()).show(ui, |ui| {
+						Resize::default()
+							.resizable(false)
+							.default_width(150.0)
+							.min_width(150.0)
+							.default_height(50.0)
+							.show(ui, |ui| {
+								ui.horizontal(|ui| {
+									match notif.ty {
+										NotifType::Info => ui.heading(fonts.icons.text(icons::INFO)),
+										NotifType::Warning => ui.heading(fonts.icons.text(icons::WARNING)),
+										NotifType::Error => ui.heading(fonts.icons.text(icons::ERROR)),
+									};
 
-					ui.horizontal(|ui| {
-						match notif.ty {
-							NotifType::Info => ui.heading(fonts.icons.text(icons::INFO)),
-							NotifType::Warning => ui.heading(fonts.icons.text(icons::WARNING)),
-							NotifType::Error => ui.heading(fonts.icons.text(icons::ERROR)),
-						};
-
-						ui.vertical(|ui| match &notif.contents {
-							NotifContents::Simple { header, body } => {
-								ui.heading(header);
-								ui.label(body);
-							},
-						});
+									ui.vertical(|ui| {
+										ui.heading(&notif.header);
+										notif.contents.draw(ui, fonts);
+									});
+								});
+							});
 					});
-				})
-				.unwrap();
+				});
+			if resp.response.clicked() && notif.contents.dismissable() {
+				self.dismissed = Some(i)
+			}
 			y -= resp.response.rect.height() + 5.0;
 		}
 	}

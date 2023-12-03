@@ -12,8 +12,8 @@ build-script = ["compile"]
 radiance-shader-compiler-macros = { path = "../shader-compiler-macros" }
 
 ash = { version = "0.37.2", optional = true }
-cargo_toml = { version = "0.15.2", optional = true }
-hassle-rs = { version = "0.10.0", optional = true }
+cargo_toml = { version = "0.17.1", optional = true }
+hassle-rs = { version = "0.11.0", optional = true }
 rustc-hash = "1.1.0"
 serde = { version = "1.0.160", features = ["derive"], optional = true }
 serde_json = { version = "1.0.96", optional = true }

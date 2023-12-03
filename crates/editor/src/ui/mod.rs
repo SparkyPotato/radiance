@@ -13,11 +13,7 @@ use rfd::FileDialog;
 pub use widgets::Fonts;
 
 use crate::{
-	ui::{
-		assets::AssetManager,
-		notif::{Notif, NotifContents, NotifStack, NotifType},
-		render::Renderer,
-	},
+	ui::{assets::AssetManager, notif::NotifStack, render::Renderer},
 	window::Window,
 };
 
@@ -32,7 +28,7 @@ impl UiState {
 	pub fn new(device: &CoreDevice, core: &RenderCore, fonts: Fonts) -> Result<Self> {
 		Ok(Self {
 			fonts,
-			assets: AssetManager::default(),
+			assets: AssetManager::new(),
 			renderer: Renderer::new(device, core)?,
 			notifs: NotifStack::new(),
 		})
@@ -48,33 +44,9 @@ impl UiState {
 					let load = ui.button("load").clicked();
 					if new || load {
 						if let Some(path) = FileDialog::new().pick_folder() {
-							let exists = path.exists();
 							self.assets.open(path);
-							self.notifs.push(Notif {
-								ty: NotifType::Info,
-								contents: NotifContents::Simple {
-									header: "project".to_string(),
-									body: format!("{} project", if exists { "loaded" } else { "created" }),
-								},
-							});
 						}
 					}
-				});
-
-				ui.menu_button("render", |ui| {
-					ui.menu_button("scene", |ui| {
-						for asset in self
-							.assets
-							.system
-							.as_ref()
-							.into_iter()
-							.flat_map(|x| x.assets_of_type(AssetType::Scene))
-						{
-							if ui.button(format!("{}", asset)).clicked() {
-								self.renderer.set_scene(frame.ctx(), asset);
-							}
-						}
-					});
 				});
 
 				ui.menu_button("debug", |ui| self.renderer.draw_debug_menu(ui));
@@ -83,9 +55,10 @@ impl UiState {
 
 		self.renderer.draw_debug_windows(ctx);
 
-		self.assets.render(ctx, &self.fonts);
+		self.assets
+			.render(ctx, &mut self.notifs, &mut self.renderer, frame, &self.fonts);
 		self.renderer
-			.render(device, frame, ctx, window, self.assets.system.as_deref_mut());
+			.render(device, frame, ctx, window, self.assets.system.as_deref().map(|x| &**x));
 
 		self.notifs.render(ctx, &self.fonts);
 	}

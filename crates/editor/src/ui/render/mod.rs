@@ -48,53 +48,56 @@ impl Renderer {
 
 	pub fn render<'pass, S: AssetSource>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
-		system: Option<&mut AssetSystem<S>>,
+		system: Option<&AssetSystem<S>>,
 	) {
 		CentralPanel::default().show(ctx, |ui| {
-			let inner = || {
-				let Some(scene) = self.scene else { return true };
-				let Some(system) = system else { return true };
-
-				let rect = ui.available_rect_before_wrap();
-				let size = rect.size();
-
-				if ctx.input(|x| {
-					let p = &x.pointer;
-					p.hover_pos().map(|x| rect.contains(x)).unwrap_or(false) && p.button_down(PointerButton::Secondary)
-				}) {
-					self.camera.set_mode(window, Mode::Camera);
-				} else {
-					self.camera.set_mode(window, Mode::Default);
-				}
-				self.camera.control(ctx);
-
-				let (_, ticket) = self.runtime.load_scene(device, frame.ctx(), scene, system).unwrap();
-				if let Some(ticket) = ticket {
-					let mut pass = frame.pass("init");
-					pass.wait_on(ticket.as_info());
-					pass.build(|_| {});
-				}
-
-				let scene = self.runtime.get_scene(scene).unwrap();
-				let visbuffer = self.visbuffer.run(
-					frame,
-					&scene,
-					self.camera.get(),
-					self.debug_windows.cull_camera(),
-					Vec2::new(size.x as u32, size.y as u32),
-				);
-				let debug = self.debug.run(frame, visbuffer);
-				ui.image(to_texture_id(debug), size);
-
-				false
-			};
-
-			if inner() {
+			if self.render_inner(device, frame, ctx, ui, window, system) {
 				ui.centered_and_justified(|ui| {
 					ui.label(RichText::new("no scene loaded").size(20.0));
 				});
 			}
 		});
+	}
+
+	fn render_inner<'pass, S: AssetSource>(
+		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, ui: &mut Ui,
+		window: &Window, system: Option<&AssetSystem<S>>,
+	) -> bool {
+		let Some(scene) = self.scene else { return true };
+		let Some(system) = system else { return true };
+
+		let rect = ui.available_rect_before_wrap();
+		let size = rect.size();
+
+		if ctx.input(|x| {
+			let p = &x.pointer;
+			p.hover_pos().map(|x| rect.contains(x)).unwrap_or(false) && p.button_down(PointerButton::Secondary)
+		}) {
+			self.camera.set_mode(window, Mode::Camera);
+		} else {
+			self.camera.set_mode(window, Mode::Default);
+		}
+		self.camera.control(ctx);
+
+		let (_, ticket) = self.runtime.load_scene(device, frame.ctx(), scene, system).unwrap();
+		if let Some(ticket) = ticket {
+			let mut pass = frame.pass("init");
+			pass.wait_on(ticket.as_info());
+			pass.build(|_| {});
+		}
+
+		let scene = self.runtime.get_scene(scene).unwrap();
+		let visbuffer = self.visbuffer.run(
+			frame,
+			&scene,
+			self.camera.get(),
+			self.debug_windows.cull_camera(),
+			Vec2::new(size.x as u32, size.y as u32),
+		);
+		let debug = self.debug.run(frame, visbuffer);
+		ui.image((to_texture_id(debug), size));
+
+		false
 	}
 
 	pub fn draw_debug_menu(&mut self, ui: &mut Ui) { self.debug_windows.draw_menu(ui) }

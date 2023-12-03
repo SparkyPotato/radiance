@@ -14,7 +14,7 @@ radiance-util = { path = "../util" }
 
 ash = "0.37.2"
 bytemuck = { version = "1.13.1", features = ["derive"] }
-egui = { version = "0.22.0", features = ["bytemuck"] }
+egui = { version = "0.23.0", features = ["bytemuck"] }
 rustc-hash = "1.1.0"
 tracing = "0.1.37"
 vek = { version = "0.16.1", features = ["bytemuck"] }

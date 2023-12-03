@@ -193,7 +193,7 @@ pub trait AssetSink {
 	type Error;
 
 	/// Write the data of the asset.
-	fn write_data(&mut self, data: &[u8]) -> Result<(), Self::Error>;
+	fn write_data(&self, data: &[u8]) -> Result<(), Self::Error>;
 }
 
 /// Raw access to assets from sources and sinks.
@@ -302,6 +302,8 @@ impl<S: AssetSource> AssetSystem<S> {
 		}
 	}
 
+	pub fn metadata(&self, uuid: Uuid) -> Option<AssetHeader> { self.assets.get(&uuid).map(|x| x.header) }
+
 	pub fn assets_of_type(&self, ty: AssetType) -> impl Iterator<Item = Uuid> + '_ {
 		self.assets.iter().filter_map(move |item| {
 			if item.header.ty == ty {
@@ -318,7 +320,7 @@ impl<S: AssetSink> AssetSystem<S> {
 	///
 	/// The asset must already exist, and `asset` must be of the same type.
 	pub fn write(&self, uuid: Uuid, asset: Asset) -> Result<(), S::Error> {
-		let mut meta = self.assets.get_mut(&uuid).expect("asset does not exist");
+		let meta = self.assets.get(&uuid).expect("asset does not exist");
 		assert_eq!(meta.header.ty, asset.ty());
 		meta.source.write_data(&asset.to_bytes())
 	}

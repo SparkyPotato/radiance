@@ -122,7 +122,7 @@ impl AssetRuntime {
 	pub fn get_scene(&self, scene: Uuid) -> Option<&Arc<Scene>> { self.scenes.get(&scene) }
 
 	pub fn load_scene<S: AssetSource>(
-		&mut self, device: &CoreDevice, core: &mut RenderCore, scene: Uuid, system: &mut AssetSystem<S>,
+		&mut self, device: &CoreDevice, core: &mut RenderCore, scene: Uuid, system: &AssetSystem<S>,
 	) -> Result<(Arc<Scene>, Option<StageTicket>), StageError<AssetError<S>>> {
 		if let Some(id) = self.scenes.get(&scene) {
 			return Ok((id.clone(), None));
@@ -224,7 +224,7 @@ impl AssetRuntime {
 	}
 
 	fn load_model<S: AssetSource>(
-		&mut self, device: &CoreDevice, ctx: &mut StagingCtx, system: &mut AssetSystem<S>, model: Uuid,
+		&mut self, device: &CoreDevice, ctx: &mut StagingCtx, system: &AssetSystem<S>, model: Uuid,
 	) -> Result<Arc<Model>, StageError<AssetError<S>>> {
 		if let Some(m) = self.models.get(&model) {
 			Ok(m.clone())
@@ -247,7 +247,7 @@ impl AssetRuntime {
 	}
 
 	fn load_mesh<S: AssetSource>(
-		&mut self, device: &CoreDevice, ctx: &mut StagingCtx, system: &mut AssetSystem<S>, mesh: Uuid,
+		&mut self, device: &CoreDevice, ctx: &mut StagingCtx, system: &AssetSystem<S>, mesh: Uuid,
 	) -> Result<Arc<Mesh>, StageError<AssetError<S>>> {
 		if let Some(m) = self.meshes.get(&mesh) {
 			Ok(m.clone())

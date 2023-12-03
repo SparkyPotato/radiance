@@ -2,18 +2,22 @@
 
 use std::{
 	fs::{File, OpenOptions},
+	hash::BuildHasherDefault,
 	io,
 	ops::{Deref, DerefMut},
 	path::{Path, PathBuf},
 };
 
-use rustc_hash::FxHashMap;
+use dashmap::DashMap;
+use parking_lot::{lock_api::MappedRwLockReadGuard, RawRwLock, RwLock, RwLockReadGuard};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
 #[cfg(feature = "import")]
 use crate::import::{ImportContext, ImportError, ImportProgress};
 use crate::{Asset, AssetError, AssetHeader, AssetSink, AssetSource, AssetSystem, AssetType, HeaderParseError};
+
+type FxDashMap<K, V> = DashMap<K, V, BuildHasherDefault<rustc_hash::FxHasher>>;
 
 struct PlatformFile {
 	file: File,
@@ -97,7 +101,7 @@ impl AssetSource for FsAsset {
 impl AssetSink for FsAsset {
 	type Error = io::Error;
 
-	fn write_data(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+	fn write_data(&self, data: &[u8]) -> Result<(), Self::Error> {
 		self.file.file.set_len(30 + data.len() as u64)?;
 		self.file.write_at(30, data)?;
 		Ok(())
@@ -157,39 +161,31 @@ where
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct DirectoryId(u32);
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct AssetId(u32);
 
 struct Directory {
 	name: String,
-	/// Range of child directories in `dirs`.
-	children: FxHashMap<String, DirectoryId>,
-	/// Range of child assets in `assets`.
-	assets: FxHashMap<String, AssetId>,
+	children: FxDashMap<String, DirectoryId>,
+	assets: FxDashMap<String, Uuid>,
 }
 
 struct AssetTree {
 	/// Arena of all directories.
-	dirs: Vec<Directory>,
-	/// Arena of all assets.
-	assets: Vec<Uuid>,
+	dirs: RwLock<Vec<Directory>>,
 }
 
 impl AssetTree {
 	fn new(name: impl ToString) -> Self {
 		Self {
-			dirs: vec![Directory {
+			dirs: RwLock::new(vec![Directory {
 				name: name.to_string(),
-				children: FxHashMap::default(),
-				assets: FxHashMap::default(),
-			}],
-			assets: Vec::new(),
+				children: FxDashMap::default(),
+				assets: FxDashMap::default(),
+			}]),
 		}
 	}
 
-	fn add_asset(&mut self, rel_path: &Path, uuid: Uuid) {
-		let len = self.assets.len();
-		let dir = self.dir_of_mut(rel_path.parent().unwrap());
+	fn add_asset(&self, rel_path: &Path, uuid: Uuid) {
+		let dir = self.add_dir(rel_path.parent().unwrap());
 		dir.assets.insert(
 			rel_path
 				.with_extension("")
@@ -198,27 +194,26 @@ impl AssetTree {
 				.to_str()
 				.unwrap()
 				.to_string(),
-			AssetId(len as _),
+			uuid,
 		);
-		self.assets.push(uuid);
 	}
 
-	fn remove_asset(&mut self, rel_path: &Path) -> Uuid {
-		let dir = self.dir_of_mut(rel_path.parent().unwrap());
-		let id = dir
+	fn remove_asset(&self, rel_path: &Path) -> Uuid {
+		let dir = self.dir_of(rel_path.parent().unwrap());
+		let (_, id) = dir
 			.assets
 			.remove(rel_path.file_name().unwrap().to_str().unwrap())
 			.unwrap();
-		self.assets[id.0 as usize]
+		id
 	}
 
 	fn get_asset(&self, rel_path: &Path) -> Uuid {
 		let dir = self.dir_of(rel_path.parent().unwrap());
-		let &id = dir.assets.get(rel_path.file_name().unwrap().to_str().unwrap()).unwrap();
-		self.assets[id.0 as usize]
+		let x = *dir.assets.get(rel_path.file_name().unwrap().to_str().unwrap()).unwrap();
+		x
 	}
 
-	fn dir_of(&self, rel_path: &Path) -> &Directory {
+	fn dir_of(&self, rel_path: &Path) -> MappedRwLockReadGuard<RawRwLock, Directory> {
 		let mut curr = 0;
 		let mut components = rel_path.components();
 		if rel_path.is_file() {
@@ -226,13 +221,14 @@ impl AssetTree {
 		}
 		for comp in components {
 			let name = comp.as_os_str().to_str().unwrap();
-			let &idx = self.dirs[curr].children.get(name).unwrap();
-			curr = idx.0 as usize;
+			let d = self.dirs.read();
+			let r = d[curr].children.get(name).unwrap();
+			curr = r.0 as usize;
 		}
-		&self.dirs[curr]
+		RwLockReadGuard::map(self.dirs.read(), |x| &x[curr])
 	}
 
-	fn dir_of_mut(&mut self, rel_path: &Path) -> &mut Directory {
+	fn add_dir(&self, rel_path: &Path) -> MappedRwLockReadGuard<RawRwLock, Directory> {
 		let mut curr = 0;
 		let mut components = rel_path.components();
 		if rel_path.is_file() {
@@ -240,21 +236,25 @@ impl AssetTree {
 		}
 		for comp in components {
 			let name = comp.as_os_str().to_str().unwrap();
-			curr = match self.dirs[curr].children.get(name) {
-				Some(&idx) => idx.0 as usize,
+			let dirs = self.dirs.read();
+			let x = dirs[curr].children.get(name);
+			curr = match x {
+				Some(idx) => idx.0 as usize,
 				None => {
-					let idx = self.dirs.len();
-					self.dirs.push(Directory {
+					let idx = dirs.len();
+					dirs[curr].children.insert(name.to_string(), DirectoryId(idx as _));
+					drop(x);
+					drop(dirs);
+					self.dirs.write().push(Directory {
 						name: name.to_string(),
-						children: FxHashMap::default(),
-						assets: FxHashMap::default(),
+						children: FxDashMap::default(),
+						assets: FxDashMap::default(),
 					});
-					self.dirs[curr].children.insert(name.to_string(), DirectoryId(idx as _));
 					idx
 				},
 			};
 		}
-		&mut self.dirs[curr]
+		RwLockReadGuard::map(self.dirs.read(), |x| &x[curr])
 	}
 }
 
@@ -264,21 +264,29 @@ pub struct DirView<'a> {
 }
 
 impl DirView<'_> {
-	pub fn name(&self) -> &str { &self.tree.dirs[self.dir.0 as usize].name }
-
-	pub fn dirs(&self) -> impl Iterator<Item = DirView<'_>> {
-		let dir = &self.tree.dirs[self.dir.0 as usize];
-		dir.children.iter().map(move |(_, &id)| DirView {
-			tree: self.tree,
-			dir: id,
-		})
+	pub fn name(&self) -> MappedRwLockReadGuard<RawRwLock, str> {
+		RwLockReadGuard::map(self.tree.dirs.read(), |x| x[self.dir.0 as usize].name.as_str())
 	}
 
-	pub fn assets(&self) -> impl Iterator<Item = (&str, Uuid)> + '_ {
-		let dir = &self.tree.dirs[self.dir.0 as usize];
-		dir.assets
-			.iter()
-			.map(move |(name, &id)| (name.as_str(), self.tree.assets[id.0 as usize]))
+	pub fn for_each_dir(&self, mut f: impl FnMut(DirView<'_>)) {
+		for r in self.tree.dirs.read()[self.dir.0 as usize].children.iter() {
+			f(DirView {
+				tree: self.tree,
+				dir: *r,
+			});
+		}
+	}
+
+	pub fn for_each_asset(&self, mut f: impl FnMut(&str, Uuid)) {
+		for r in self.tree.dirs.read()[self.dir.0 as usize].assets.iter() {
+			f(r.key(), *r);
+		}
+	}
+
+	pub fn elems(&self) -> usize {
+		let dirs = self.tree.dirs.read();
+		let dir = &dirs[self.dir.0 as usize];
+		dir.children.len() + dir.assets.len()
 	}
 }
 
@@ -288,7 +296,7 @@ pub struct FsSystem {
 	tree: AssetTree,
 	system: AssetSystem<FsAsset>,
 	#[cfg(feature = "import")]
-	file_conflict_map: FxHashMap<PathBuf, u32>,
+	file_conflict_map: FxDashMap<PathBuf, u32>,
 }
 
 impl FsSystem {
@@ -296,7 +304,7 @@ impl FsSystem {
 	pub fn new(root: impl Into<PathBuf>) -> Self {
 		let root = root.into();
 		let system = AssetSystem::new();
-		let mut tree = AssetTree::new(root.components().last().unwrap().as_os_str().to_str().unwrap());
+		let tree = AssetTree::new(root.components().last().unwrap().as_os_str().to_str().unwrap());
 
 		for file in WalkDir::new(&root)
 			.into_iter()
@@ -326,12 +334,12 @@ impl FsSystem {
 			tree,
 			system,
 			#[cfg(feature = "import")]
-			file_conflict_map: FxHashMap::default(),
+			file_conflict_map: FxDashMap::default(),
 		}
 	}
 
 	/// Add an asset copied into the root directory or a subdirectory.
-	pub fn add(&mut self, path: impl AsRef<Path>) -> Result<AssetHeader, AssetError<FsAsset>> {
+	pub fn add(&self, path: impl AsRef<Path>) -> Result<AssetHeader, AssetError<FsAsset>> {
 		let path = path.as_ref();
 		let rel_path = path.strip_prefix(&self.root).expect("Asset path must be inside root");
 		let header = self
@@ -342,7 +350,7 @@ impl FsSystem {
 	}
 
 	/// Remove an asset.
-	pub fn remove(&mut self, path: impl AsRef<Path>) -> AssetHeader {
+	pub fn remove(&self, path: impl AsRef<Path>) -> AssetHeader {
 		let path = path.as_ref();
 		let rel_path = path.strip_prefix(&self.root).expect("Asset path must be inside root");
 		let uuid = self.tree.remove_asset(rel_path);
@@ -352,7 +360,7 @@ impl FsSystem {
 	}
 
 	/// Load an asset by path.
-	pub fn load(&mut self, path: impl AsRef<Path>) -> Result<Asset, AssetError<FsAsset>> {
+	pub fn load(&self, path: impl AsRef<Path>) -> Result<Asset, AssetError<FsAsset>> {
 		let path = path.as_ref();
 		let rel_path = path.strip_prefix(&self.root).expect("Asset path must be inside root");
 		let uuid = self.tree.get_asset(rel_path);
@@ -360,7 +368,7 @@ impl FsSystem {
 	}
 
 	/// Write an asset to disk.
-	pub fn write(&mut self, path: impl AsRef<Path>, asset: Asset) -> Result<(), io::Error> {
+	pub fn write(&self, path: impl AsRef<Path>, asset: Asset) -> Result<(), io::Error> {
 		let path = path.as_ref();
 		let rel_path = path.strip_prefix(&self.root).expect("Asset path must be inside root");
 		let uuid = self.tree.get_asset(rel_path);
@@ -370,7 +378,7 @@ impl FsSystem {
 	/// Import an asset from a file, at `out_path`.
 	#[cfg(feature = "import")]
 	pub fn import(
-		&mut self, path: impl AsRef<Path>, out_path: impl AsRef<Path>,
+		&self, path: impl AsRef<Path>, out_path: impl AsRef<Path>,
 		progress: impl Fn(ImportProgress, ImportProgress) + Send + Sync,
 	) -> Result<(), ImportError<io::Error, io::Error>> {
 		let path = path.as_ref();
@@ -383,7 +391,7 @@ impl FsSystem {
 				out_path: &out_path,
 				on_import: |path, uuid| self.tree.add_asset(path.strip_prefix(&self.root).unwrap(), uuid),
 				on_conflict: |mut path| {
-					if let Some(p) = self.file_conflict_map.get_mut(&path) {
+					if let Some(mut p) = self.file_conflict_map.get_mut(&path) {
 						let stem = path.file_stem().unwrap().to_str().unwrap();
 						path.set_file_name(format!("{}_{}.radass", stem, *p));
 						*p += 1;
@@ -414,8 +422,7 @@ impl FsSystem {
 		let mut curr = DirectoryId(0);
 		for component in path.as_ref().strip_prefix(&self.root).ok()?.components() {
 			let name = component.as_os_str().to_str().unwrap();
-			let dir = &self.tree.dirs[curr.0 as usize];
-			if let Some(id) = dir.children.get(name) {
+			if let Some(id) = self.tree.dirs.read()[curr.0 as usize].children.get(name) {
 				curr = *id;
 			} else {
 				return None;
