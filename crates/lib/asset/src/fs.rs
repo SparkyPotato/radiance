@@ -268,6 +268,10 @@ impl DirView<'_> {
 		RwLockReadGuard::map(self.tree.dirs.read(), |x| x[self.dir.0 as usize].name.as_str())
 	}
 
+	pub fn dir_count(&self) -> usize { self.tree.dirs.read()[self.dir.0 as usize].children.len() }
+
+	pub fn asset_count(&self) -> usize { self.tree.dirs.read()[self.dir.0 as usize].assets.len() }
+
 	pub fn for_each_dir(&self, mut f: impl FnMut(DirView<'_>)) {
 		for r in self.tree.dirs.read()[self.dir.0 as usize].children.iter() {
 			f(DirView {
@@ -281,12 +285,6 @@ impl DirView<'_> {
 		for r in self.tree.dirs.read()[self.dir.0 as usize].assets.iter() {
 			f(r.key(), *r);
 		}
-	}
-
-	pub fn elems(&self) -> usize {
-		let dirs = self.tree.dirs.read();
-		let dir = &dirs[self.dir.0 as usize];
-		dir.children.len() + dir.assets.len()
 	}
 }
 

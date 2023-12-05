@@ -218,13 +218,15 @@ impl AssetManager {
 							ui.add_space(5.0);
 
 							let view = sys.dir_view(&self.cursor).unwrap();
-							let count = view.elems();
+							let dirs = view.dir_count();
+							let assets = view.asset_count();
+							let count = dirs + assets;
 
 							let rect = ui.available_rect_before_wrap();
 							const CELL_SIZE: f32 = 75.0;
 							let width = rect.width();
 							let height = rect.height();
-							let cells_x = (width / CELL_SIZE) as usize;
+							let cells_x = (width / CELL_SIZE) as usize - 1;
 							let rows = (count + cells_x - 1) / cells_x;
 
 							ScrollArea::vertical()
@@ -232,15 +234,25 @@ impl AssetManager {
 								.min_scrolled_height(height)
 								.auto_shrink([false, false])
 								.stick_to_right(true)
-								.show(ui, |ui| {
+								.show_rows(ui, CELL_SIZE, rows, |ui, range| {
 									let mut grid = GridBuilder::new().layout_standard(Layout::top_down(Align::Center));
-									for _ in 0..rows {
+									for _ in range.clone() {
 										grid = grid.new_row(Size::remainder());
 										grid = grid.cells(Size::exact(CELL_SIZE), cells_x as _);
 									}
 
+									let start_obj = range.start * cells_x;
+									let end_obj = range.end * cells_x;
+									let obj_range = start_obj..end_obj;
+
 									grid.show(ui, |mut grid| {
+										let mut i = 0;
 										view.for_each_dir(|dir| {
+											if !obj_range.contains(&i) {
+												i += 1;
+												return;
+											}
+
 											grid.cell(|ui| {
 												let name = dir.name();
 												if ui
@@ -250,10 +262,16 @@ impl AssetManager {
 													self.cursor.push(&*name);
 												}
 												ui.add(Label::new(&*name).truncate(true));
-											})
+											});
+											i += 1;
 										});
 
 										view.for_each_asset(|name, uuid| {
+											if !obj_range.contains(&i) {
+												i += 1;
+												return;
+											}
+
 											grid.cell(|ui| {
 												if ui
 													.text_button(fonts.icons.text(icons::FILE).size(32.0))
@@ -264,7 +282,8 @@ impl AssetManager {
 													}
 												}
 												ui.add(Label::new(name).truncate(true));
-											})
+											});
+											i += 1;
 										})
 									});
 								});
