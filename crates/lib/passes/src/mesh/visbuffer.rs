@@ -438,7 +438,7 @@ impl VisBuffer {
 
 	fn visibility(&mut self, device: &CoreDevice, scene: &Scene) -> bool {
 		let mut new = false;
-		let size = scene.meshlet_count() as u64 * 8;
+		let size = scene.meshlet_count() as u64 * 2 * 4;
 		if self.visibility.is_none() || self.visibility.as_ref().unwrap().size() < size {
 			new = true;
 			if let Some(old) = self.visibility.replace(
