@@ -73,6 +73,12 @@ pub struct Scene {
 	pub models: Vec<Arc<Model>>,
 }
 
+impl Scene {
+	pub fn meshlet_count(&self) -> u32 {
+		(self.meshlet_pointers.len() / std::mem::size_of::<MeshletPointer>() as u64) as u32
+	}
+}
+
 pub struct Mesh {
 	pub buffer: GpuBuffer,
 	pub meshlet_count: u32,

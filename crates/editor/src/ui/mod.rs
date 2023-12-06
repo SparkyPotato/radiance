@@ -6,7 +6,6 @@ mod render;
 mod widgets;
 
 use egui::{menu, Context, TopBottomPanel};
-use radiance_asset::AssetType;
 use radiance_core::{CoreDevice, CoreFrame, RenderCore};
 use radiance_graph::Result;
 use rfd::FileDialog;

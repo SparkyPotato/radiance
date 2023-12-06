@@ -201,27 +201,27 @@ impl From<UsageType> for AccessInfo {
 			UsageType::Nothing => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::NONE,
 				access_mask: vk::AccessFlags2::NONE,
-				image_layout: vk::ImageLayout::UNDEFINED,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::IndirectBuffer => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::DRAW_INDIRECT,
 				access_mask: vk::AccessFlags2::INDIRECT_COMMAND_READ,
-				image_layout: vk::ImageLayout::UNDEFINED,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::IndexBuffer => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::INDEX_INPUT,
 				access_mask: vk::AccessFlags2::INDEX_READ,
-				image_layout: vk::ImageLayout::UNDEFINED,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::VertexBuffer => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
 				access_mask: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
-				image_layout: vk::ImageLayout::UNDEFINED,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::ShaderReadUniformBuffer(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
 				access_mask: vk::AccessFlags2::UNIFORM_READ,
-				image_layout: vk::ImageLayout::UNDEFINED,
+				image_layout: vk::ImageLayout::GENERAL,
 			},
 			UsageType::ShaderReadSampledImage(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),

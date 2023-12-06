@@ -112,7 +112,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 		Self {
 			cached_wait: std::iter::once(
 				vk::SemaphoreSubmitInfo::builder()
-					.stage_mask(vk::PipelineStageFlags2::NONE)
+					.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
 					.semaphore(wait.inner)
 					.value(wait.value)
 					.build(),

@@ -526,6 +526,15 @@ pub struct WriteId<T: VirtualResource> {
 	_marker: PhantomData<T>,
 }
 
+impl<T: VirtualResource> WriteId<T> {
+	pub fn to_read(&self) -> ReadId<T> {
+		ReadId {
+			id: self.id,
+			_marker: PhantomData,
+		}
+	}
+}
+
 /// An ID to read GPU resources.
 pub struct ReadId<T: VirtualResource> {
 	id: usize,

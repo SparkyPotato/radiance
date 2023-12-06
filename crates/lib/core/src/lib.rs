@@ -13,6 +13,7 @@ use radiance_util::{
 	staging::{StageError, StageTicket, Staging, StagingCtx},
 };
 
+pub mod persistent;
 pub mod pipeline;
 
 pub const SHADERS: ShaderBlob = shader!("radiance-core");

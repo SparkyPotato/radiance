@@ -90,8 +90,8 @@ pub struct ExternalSync<U> {
 	pub value: u64,
 	/// The related usage of the resource.
 	pub usage: U,
-	/// Other queue. Ownership will be transferred to the graphics queue if it is a `wait`, or transferred to this
-	/// queue if it is a `signal`.
+	/// Other queue. Ownership will be transferred to the graphics queue if it is a `prev_usage`, or transferred to
+	/// this queue if it is a `next_usage`.
 	pub queue: Option<u32>,
 }
 

@@ -52,9 +52,8 @@ impl CommandPool {
 						.command_buffer_count(1),
 				)
 			}?[0];
-
+			self.buf_cursor += 1;
 			self.bufs.push(buf);
-
 			Ok(buf)
 		}
 	}

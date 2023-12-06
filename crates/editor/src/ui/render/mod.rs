@@ -4,7 +4,10 @@ use radiance_asset_runtime::AssetRuntime;
 use radiance_core::{CoreDevice, CoreFrame, RenderCore};
 use radiance_egui::to_texture_id;
 use radiance_graph::Result;
-use radiance_passes::{debug::meshlet::DebugMeshlets, mesh::visbuffer::VisBuffer};
+use radiance_passes::{
+	debug::meshlet::DebugMeshlets,
+	mesh::visbuffer::{RenderInfo, VisBuffer},
+};
 use vek::Vec2;
 
 use crate::{
@@ -51,9 +54,15 @@ impl Renderer {
 		system: Option<&AssetSystem<S>>,
 	) {
 		CentralPanel::default().show(ctx, |ui| {
-			if self.render_inner(device, frame, ctx, ui, window, system) {
+			if let Some(x) = self.render_inner(device, frame, ctx, ui, window, system) {
+				if x {
+					ui.centered_and_justified(|ui| {
+						ui.label(RichText::new("no scene loaded").size(20.0));
+					});
+				}
+			} else {
 				ui.centered_and_justified(|ui| {
-					ui.label(RichText::new("no scene loaded").size(20.0));
+					ui.label(RichText::new("error rendering scene").size(20.0));
 				});
 			}
 		});
@@ -62,9 +71,13 @@ impl Renderer {
 	fn render_inner<'pass, S: AssetSource>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, ui: &mut Ui,
 		window: &Window, system: Option<&AssetSystem<S>>,
-	) -> bool {
-		let Some(scene) = self.scene else { return true };
-		let Some(system) = system else { return true };
+	) -> Option<bool> {
+		let Some(scene) = self.scene else {
+			return Some(true);
+		};
+		let Some(system) = system else {
+			return Some(true);
+		};
 
 		let rect = ui.available_rect_before_wrap();
 		let size = rect.size();
@@ -79,25 +92,30 @@ impl Renderer {
 		}
 		self.camera.control(ctx);
 
-		let (_, ticket) = self.runtime.load_scene(device, frame.ctx(), scene, system).unwrap();
+		let Ok((_, ticket)) = self.runtime.load_scene(device, frame.ctx(), scene, system) else {
+			return None;
+		};
 		if let Some(ticket) = ticket {
-			let mut pass = frame.pass("init");
+			let mut pass = frame.pass("wait for staging");
 			pass.wait_on(ticket.as_info());
 			pass.build(|_| {});
 		}
 
 		let scene = self.runtime.get_scene(scene).unwrap();
 		let visbuffer = self.visbuffer.run(
+			device,
 			frame,
-			&scene,
-			self.camera.get(),
-			self.debug_windows.cull_camera(),
-			Vec2::new(size.x as u32, size.y as u32),
+			RenderInfo {
+				scene: &scene,
+				camera: self.camera.get(),
+				cull_camera: self.debug_windows.cull_camera(),
+				size: Vec2::new(size.x as u32, size.y as u32),
+			},
 		);
 		let debug = self.debug.run(frame, visbuffer);
 		ui.image((to_texture_id(debug), size));
 
-		false
+		Some(false)
 	}
 
 	pub fn draw_debug_menu(&mut self, ui: &mut Ui) { self.debug_windows.draw_menu(ui) }

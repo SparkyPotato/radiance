@@ -9,14 +9,6 @@ struct Aabb {
     float4 min;
     float4 extent;
     float4 max;
-
-    Sphere get_sphere() {
-        float3 half_extent = this.extent.xyz * 0.5f;
-        Sphere ret;
-        ret.center = this.min.xyz + half_extent;
-        ret.radius = length(half_extent);
-        return ret;
-    }
 };
 
 float4 normalize_plane(float4 p) {

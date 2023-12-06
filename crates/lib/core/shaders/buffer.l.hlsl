@@ -51,6 +51,12 @@
         void store(u32 byte_offset, u32 i, T value) { \
             GET##U().template Store<T>(byte_offset + sizeof(T) * i, value); \
         } \
+        \
+        u32 atomic_add(u32 byte_offset, u32 i, u32 value) { \
+            u32 ret; \
+            GET##U().InterlockedAdd(byte_offset + sizeof(u32) * i, value, ret); \
+            return ret; \
+        } \
     };
 
 template<typename T, typename U = Uniform>
