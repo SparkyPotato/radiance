@@ -1,4 +1,5 @@
 use egui::{Context, Key};
+use radiance_asset::scene;
 use radiance_passes::mesh::visbuffer::Camera;
 use vek::{num_traits::FloatConst, Mat4, Vec2, Vec3, Vec4};
 
@@ -91,6 +92,13 @@ impl CameraController {
 			}),
 			Mode::Default => {},
 		}
+	}
+
+	pub fn set(&mut self, camera: &scene::Camera) {
+		let view = camera.view;
+		self.pos = -view.cols.w.xyz();
+		self.pitch = -(-view.cols.x.z).atan2((view.cols.x.x * view.cols.x.x + view.cols.x.y * view.cols.x.y).sqrt());
+		self.yaw = -(view.cols.x.y / self.pitch.cos()).atan2(view.cols.x.x / self.pitch.cos());
 	}
 
 	pub fn get(&self) -> Camera {

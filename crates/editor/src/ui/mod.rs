@@ -49,6 +49,8 @@ impl UiState {
 				});
 
 				ui.menu_button("debug", |ui| self.renderer.draw_debug_menu(ui));
+
+				ui.menu_button("cameras", |ui| self.renderer.draw_camera_menu(ui));
 			});
 		});
 

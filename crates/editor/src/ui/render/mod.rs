@@ -120,6 +120,19 @@ impl Renderer {
 
 	pub fn draw_debug_menu(&mut self, ui: &mut Ui) { self.debug_windows.draw_menu(ui) }
 
+	pub fn draw_camera_menu(&mut self, ui: &mut Ui) {
+		match self.scene.and_then(|x| self.runtime.get_scene(x)) {
+			Some(scene) => {
+				for c in scene.cameras.iter() {
+					if ui.button(&c.name).clicked() {
+						self.camera.set(c);
+					}
+				}
+			},
+			None => {},
+		}
+	}
+
 	pub fn draw_debug_windows(&mut self, ctx: &Context) { self.debug_windows.draw(ctx, &self.camera); }
 
 	pub unsafe fn destroy(self, device: &CoreDevice) {
