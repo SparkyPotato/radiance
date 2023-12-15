@@ -145,6 +145,7 @@ fn main() {
 			tracy::frame!();
 		},
 		Event::WindowEvent { event, .. } => {
+			state.state.on_window_event(&state.window, &event);
 			state.ui.on_event(&event);
 			match event {
 				WindowEvent::CloseRequested => *flow = ControlFlow::Exit,

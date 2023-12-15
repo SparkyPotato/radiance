@@ -9,6 +9,7 @@ use radiance_passes::{
 	mesh::visbuffer::{RenderInfo, VisBuffer},
 };
 use vek::Vec2;
+use winit::event::WindowEvent;
 
 use crate::{
 	ui::render::{
@@ -26,8 +27,8 @@ pub struct Renderer {
 	visbuffer: VisBuffer,
 	debug: DebugMeshlets,
 	runtime: AssetRuntime,
-	camera: CameraController,
 	debug_windows: DebugWindows,
+	camera: CameraController,
 }
 
 impl Renderer {
@@ -37,8 +38,8 @@ impl Renderer {
 			visbuffer: VisBuffer::new(device, core)?,
 			debug: DebugMeshlets::new(device, core)?,
 			runtime: AssetRuntime::new(),
-			camera: CameraController::new(),
 			debug_windows: DebugWindows::new(),
+			camera: CameraController::new(),
 		})
 	}
 
@@ -134,6 +135,10 @@ impl Renderer {
 	}
 
 	pub fn draw_debug_windows(&mut self, ctx: &Context) { self.debug_windows.draw(ctx, &self.camera); }
+
+	pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
+		self.camera.on_window_event(window, event);
+	}
 
 	pub unsafe fn destroy(self, device: &CoreDevice) {
 		self.visbuffer.destroy(device);

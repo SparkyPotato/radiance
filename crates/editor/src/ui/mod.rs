@@ -10,6 +10,7 @@ use radiance_core::{CoreDevice, CoreFrame, RenderCore};
 use radiance_graph::Result;
 use rfd::FileDialog;
 pub use widgets::Fonts;
+use winit::event::WindowEvent;
 
 use crate::{
 	ui::{assets::AssetManager, notif::NotifStack, render::Renderer},
@@ -62,6 +63,10 @@ impl UiState {
 			.render(device, frame, ctx, window, self.assets.system.as_deref().map(|x| &**x));
 
 		self.notifs.render(ctx, &self.fonts);
+	}
+
+	pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
+		self.renderer.on_window_event(window, event);
 	}
 
 	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
