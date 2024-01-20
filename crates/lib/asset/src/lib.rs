@@ -4,7 +4,10 @@
 
 use std::{fmt::Debug, hash::BuildHasherDefault};
 
+use bincode::{Decode, Encode};
 use dashmap::DashMap;
+use image::Image;
+use material::Material;
 use rustc_hash::FxHasher;
 use tracing::{event, Level};
 pub use uuid::Uuid;
@@ -18,8 +21,10 @@ use crate::{
 
 #[cfg(feature = "fs")]
 pub mod fs;
+pub mod image;
 #[cfg(feature = "import")]
 pub mod import;
+pub mod material;
 pub mod mesh;
 pub mod model;
 pub mod scene;
@@ -33,10 +38,11 @@ const CONTAINER_VERSION: u32 = 1;
 /// The type of an asset.
 #[repr(u32)]
 pub enum AssetType {
-	Mesh = 0,
-	Model = 1,
-	Material = 2,
-	Scene = 3,
+	Image = 0,
+	Mesh = 1,
+	Model = 2,
+	Material = 3,
+	Scene = 4,
 }
 
 impl TryFrom<u32> for AssetType {
@@ -44,10 +50,11 @@ impl TryFrom<u32> for AssetType {
 
 	fn try_from(x: u32) -> Result<Self, ()> {
 		Ok(match x {
-			0 => Self::Mesh,
-			1 => Self::Model,
-			2 => Self::Material,
-			3 => Self::Scene,
+			0 => Self::Image,
+			1 => Self::Mesh,
+			2 => Self::Model,
+			3 => Self::Material,
+			4 => Self::Scene,
 			_ => return Err(()),
 		})
 	}
@@ -58,27 +65,42 @@ impl From<AssetType> for u32 {
 }
 
 /// An asset.
+#[derive(Encode, Decode)]
 pub enum Asset {
+	Image(Image),
 	Mesh(Mesh),
 	Model(Model),
+	Material(Material),
 	Scene(Scene),
 }
 
 impl Asset {
 	fn ty(&self) -> AssetType {
 		match self {
+			Self::Image(_) => AssetType::Image,
 			Self::Mesh(_) => AssetType::Mesh,
 			Self::Model(_) => AssetType::Model,
+			Self::Material(_) => AssetType::Material,
 			Self::Scene(_) => AssetType::Scene,
 		}
 	}
 
 	fn to_bytes(&self) -> Vec<u8> {
+		let mut v = Vec::new();
+		let mut enc = zstd::Encoder::new(&mut v, 10).unwrap();
+		let config = bincode::config::standard()
+			.with_little_endian()
+			.with_fixed_int_encoding();
 		match self {
-			Self::Mesh(mesh) => mesh.to_bytes(),
-			Self::Model(model) => model.to_bytes(),
-			Self::Scene(scene) => scene.to_bytes(),
+			Asset::Image(i) => bincode::encode_into_std_write(i, &mut enc, config),
+			Asset::Mesh(m) => bincode::encode_into_std_write(m, &mut enc, config),
+			Asset::Model(m) => bincode::encode_into_std_write(m, &mut enc, config),
+			Asset::Material(m) => bincode::encode_into_std_write(m, &mut enc, config),
+			Asset::Scene(s) => bincode::encode_into_std_write(s, &mut enc, config),
 		}
+		.unwrap();
+		enc.finish().unwrap();
+		v
 	}
 }
 
@@ -288,17 +310,26 @@ impl<S: AssetSource> AssetSystem<S> {
 
 			AssetError::Source(x)
 		})?;
+		let mut dec = zstd::Decoder::new(data.as_slice()).unwrap();
+		let config = bincode::config::standard()
+			.with_little_endian()
+			.with_fixed_int_encoding();
 		match meta.header.ty {
+			AssetType::Image => Ok(Asset::Image(
+				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
+			)),
 			AssetType::Mesh => Ok(Asset::Mesh(
-				Mesh::from_bytes(&data).map_err(|_| AssetError::InvalidAsset)?,
+				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
 			)),
 			AssetType::Model => Ok(Asset::Model(
-				Model::from_bytes(&data).map_err(|_| AssetError::InvalidAsset)?,
+				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
+			)),
+			AssetType::Material => Ok(Asset::Material(
+				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
 			)),
 			AssetType::Scene => Ok(Asset::Scene(
-				Scene::from_bytes(&data).map_err(|_| AssetError::InvalidAsset)?,
+				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
 			)),
-			_ => unimplemented!(),
 		}
 	}
 

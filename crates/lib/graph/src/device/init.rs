@@ -383,6 +383,7 @@ impl<'a> DeviceBuilder<'a> {
 							features12.runtime_descriptor_array = true as _;
 							features12.descriptor_binding_partially_bound = true as _;
 							features12.descriptor_binding_update_unused_while_pending = true as _;
+							features12.descriptor_binding_variable_descriptor_count = true as _;
 							features12.descriptor_binding_storage_buffer_update_after_bind = true as _;
 							features12.descriptor_binding_sampled_image_update_after_bind = true as _;
 							features12.descriptor_binding_storage_image_update_after_bind = true as _;

@@ -12,7 +12,7 @@ use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
 	camera::Projection,
-	import_buffers,
+	image,
 	Accessor,
 	Document,
 	Gltf,
@@ -23,13 +23,16 @@ use meshopt::VertexDataAdapter;
 use rayon::prelude::*;
 use tracing::{span, Level};
 use uuid::Uuid;
-use vek::{Aabb, Mat4, Vec2, Vec3};
+use vek::{Aabb, Mat4, Vec2, Vec3, Vec4};
 
 use crate::{
+	image::{Format, Image},
+	material::{AlphaMode, Material},
 	mesh::{Mesh, Meshlet, Vertex},
 	model::Model,
 	scene,
 	scene::{Camera, Node, Scene},
+	Asset,
 	AssetHeader,
 	AssetMetadata,
 	AssetSink,
@@ -39,6 +42,7 @@ use crate::{
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub struct ImportProgress {
+	images: usize,
 	meshes: usize,
 	models: usize,
 	materials: usize,
@@ -114,17 +118,98 @@ where
 			let base = path.parent().unwrap_or_else(|| Path::new("."));
 			let Gltf { document: gltf, blob } =
 				Gltf::from_reader(BufReader::new(File::open(path).map_err(gltf::Error::Io)?))?;
-			let buffers = import_buffers(&gltf, Some(base), blob)?;
-			Importer { gltf, buffers } // images }
+			Importer::new(base, gltf, blob).map_err(|x| x.map_ignore())?
 		};
 
 		let total = ImportProgress {
+			images: imp.gltf.images().count(),
 			meshes: imp.gltf.meshes().flat_map(|x| x.primitives()).count(),
 			models: imp.gltf.meshes().count(),
 			materials: imp.gltf.materials().count(),
 			scenes: imp.gltf.scenes().count(),
 		};
 		c.progress(ImportProgress::default(), total);
+
+		// Images.
+		let progress = AtomicUsize::new(0);
+		let images: Vec<_> = imp
+			.gltf
+			.images()
+			.map(|image| {
+				let uuid = Uuid::new_v4();
+				let name = image.name().unwrap_or("unnamed image");
+				let header = AssetHeader {
+					uuid,
+					ty: AssetType::Image,
+				};
+				let sink = c.asset(name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
+
+				Ok::<_, Error<S, I>>((header, image, sink))
+			})
+			.collect();
+		let images: Vec<_> = images
+			.into_par_iter()
+			.map(|res| {
+				let (header, image, sink) = res?;
+				let image = imp.image(image).map_err(|x| x.map_ignore())?;
+				sink.write_data(&Asset::Image(image).to_bytes())
+					.map_err(|x| ImportError::Sink(x))?;
+
+				let old = progress.fetch_add(1, Ordering::Relaxed);
+				c.progress(
+					ImportProgress {
+						images: old + 1,
+						materials: 0,
+						meshes: 0,
+						models: 0,
+						scenes: 0,
+					},
+					total,
+				);
+				Ok::<_, Error<S, I>>((header, sink))
+			})
+			.collect::<Result<_, _>>()?;
+		let images: Vec<_> = images
+			.into_iter()
+			.map(|(header, sink)| {
+				self.assets.insert(header.uuid, AssetMetadata { header, source: sink });
+				header.uuid
+			})
+			.collect();
+
+		// Materials
+		let progress = AtomicUsize::new(0);
+		let materials: Vec<_> = imp
+			.gltf
+			.materials()
+			.map(|material| {
+				let name = material.name().unwrap_or("unnamed material");
+				let uuid = Uuid::new_v4();
+				let header = AssetHeader {
+					uuid,
+					ty: AssetType::Material,
+				};
+				let sink = c.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
+
+				let material = imp.material(material, &images).map_err(|x| x.map_ignore())?;
+				sink.write_data(&Asset::Material(material).to_bytes())
+					.map_err(|x| ImportError::Sink(x))?;
+				self.assets.insert(uuid, AssetMetadata { header, source: sink });
+
+				let old = progress.fetch_add(1, Ordering::Relaxed);
+				c.progress(
+					ImportProgress {
+						images: total.images,
+						materials: old + 1,
+						meshes: 0,
+						models: 0,
+						scenes: 0,
+					},
+					total,
+				);
+				Ok::<_, Error<S, I>>(uuid)
+			})
+			.collect::<Result<_, _>>()?;
 
 		// Meshes
 		let progress = AtomicUsize::new(0);
@@ -154,19 +239,22 @@ where
 		let meshes: Vec<_> = prims
 			.into_par_iter()
 			.map(|(mesh_id, uuid, name, prim, sink)| {
-				let mesh = imp.mesh(&name, prim).map_err(|x| x.map_ignore())?;
-				sink.write_data(&mesh.to_bytes()).map_err(|x| ImportError::Sink(x))?;
+				let mesh = imp.mesh(&name, prim, &materials).map_err(|x| x.map_ignore())?;
+				let aabb = mesh.aabb;
+				sink.write_data(&Asset::Mesh(mesh).to_bytes())
+					.map_err(|x| ImportError::Sink(x))?;
 				let old = progress.fetch_add(1, Ordering::Relaxed);
 				ctx.progress(
 					ImportProgress {
+						images: total.images,
 						meshes: old + 1,
 						models: 0,
-						materials: 0,
+						materials: total.materials,
 						scenes: 0,
 					},
 					total,
 				);
-				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, mesh.aabb, uuid, sink))
+				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, aabb, uuid, sink))
 			})
 			.collect::<Result<_, _>>()?;
 
@@ -212,13 +300,15 @@ where
 					ty: AssetType::Model,
 				};
 				let sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
-				sink.write_data(&model.to_bytes()).map_err(|x| ImportError::Sink(x))?;
+				sink.write_data(&Asset::Model(model).to_bytes())
+					.map_err(|x| ImportError::Sink(x))?;
 				self.assets.insert(uuid, AssetMetadata { header, source: sink });
 				ctx.progress(
 					ImportProgress {
+						images: total.images,
 						meshes: total.meshes,
 						models: i + 1,
-						materials: 0,
+						materials: total.materials,
 						scenes: 0,
 					},
 					total,
@@ -236,13 +326,15 @@ where
 				ty: AssetType::Scene,
 			};
 			let sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
-			sink.write_data(&out.to_bytes()).map_err(|x| ImportError::Sink(x))?;
+			sink.write_data(&Asset::Scene(out).to_bytes())
+				.map_err(|x| ImportError::Sink(x))?;
 			self.assets.insert(header.uuid, AssetMetadata { header, source: sink });
 			ctx.progress(
 				ImportProgress {
+					images: total.images,
 					meshes: total.meshes,
 					models: total.models,
-					materials: 0,
+					materials: total.materials,
 					scenes: i + 1,
 				},
 				total,
@@ -255,14 +347,125 @@ where
 
 type ImportResult<T> = Result<T, ImportError<(), ()>>;
 
-struct Importer {
+struct Importer<'a> {
+	base: &'a Path,
 	gltf: Document,
 	buffers: Vec<buffer::Data>,
-	// images: Vec<image::Data>,
 }
 
-impl Importer {
-	fn mesh(&self, name: &str, prim: Primitive) -> ImportResult<Mesh> {
+impl<'a> Importer<'a> {
+	fn new(base: &'a Path, gltf: Document, mut blob: Option<Vec<u8>>) -> ImportResult<Self> {
+		let buffers = gltf
+			.buffers()
+			.map(|buffer| {
+				let data = buffer::Data::from_source_and_blob(buffer.source(), Some(base), &mut blob)?;
+				if data.len() < buffer.length() {
+					return Err(gltf::Error::BufferLength {
+						buffer: buffer.index(),
+						expected: buffer.length(),
+						actual: data.len(),
+					});
+				}
+				Ok(data)
+			})
+			.collect::<Result<Vec<_>, _>>()?;
+		Ok(Self { base, gltf, buffers })
+	}
+
+	fn image(&self, image: gltf::Image) -> ImportResult<Image> {
+		let name = image.name().unwrap_or("unnamed image");
+
+		let s = span!(Level::INFO, "importing image", name = name);
+		let _e = s.enter();
+
+		let mut image = image::Data::from_source(image.source(), Some(self.base), &self.buffers)?;
+		let format = match image.format {
+			image::Format::R8 => Format::R8,
+			image::Format::R8G8 => Format::R8G8,
+			image::Format::R8G8B8 => {
+				let p = image.pixels;
+				image.pixels = Vec::with_capacity(p.len() / 3 * 4);
+				for i in 0..(p.len() / 3) {
+					image.pixels.push(p[i * 3]);
+					image.pixels.push(p[i * 3 + 1]);
+					image.pixels.push(p[i * 3 + 2]);
+					image.pixels.push(255);
+				}
+				Format::R8G8B8A8
+			},
+			image::Format::R8G8B8A8 => Format::R8G8B8A8,
+			image::Format::R16 => Format::R16,
+			image::Format::R16G16 => Format::R16G16,
+			image::Format::R16G16B16 => Format::R16G16B16,
+			image::Format::R16G16B16A16 => Format::R16G16B16A16,
+			image::Format::R32G32B32FLOAT => Format::R32G32B32FLOAT,
+			image::Format::R32G32B32A32FLOAT => Format::R32G32B32A32FLOAT,
+		};
+
+		Ok(Image {
+			width: image.width,
+			height: image.height,
+			format,
+			data: image.pixels,
+		})
+	}
+
+	fn material(&self, material: gltf::Material, images: &[Uuid]) -> ImportResult<Material> {
+		let name = material.name().unwrap_or("unnamed material");
+
+		let s = span!(Level::INFO, "importing material", name = name);
+		let _e = s.enter();
+
+		let alpha_cutoff = material.alpha_cutoff().unwrap_or(0.5);
+		let alpha_mode = match material.alpha_mode() {
+			gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+			gltf::material::AlphaMode::Mask => AlphaMode::Mask,
+			gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+		};
+
+		let pbr = material.pbr_metallic_roughness();
+		let base_color_factor = pbr.base_color_factor();
+		let base_color = pbr.base_color_texture().map(|x| images[x.texture().source().index()]);
+		let metallic_factor = pbr.metallic_factor();
+		let roughness_factor = pbr.roughness_factor();
+		let metallic_roughness = pbr
+			.metallic_roughness_texture()
+			.map(|x| images[x.texture().source().index()]);
+		let normal = material.normal_texture().map(|x| images[x.texture().source().index()]);
+		let occlusion = material
+			.occlusion_texture()
+			.map(|x| images[x.texture().source().index()]);
+		let emissive_factor = material.emissive_factor();
+		let emissive = material
+			.emissive_texture()
+			.map(|x| images[x.texture().source().index()]);
+
+		Ok(Material {
+			alpha_cutoff,
+			alpha_mode,
+			base_color_factor: Vec4 {
+				x: base_color_factor[0],
+				y: base_color_factor[1],
+				z: base_color_factor[2],
+				w: base_color_factor[3],
+			},
+			base_color,
+			metallic_factor,
+			roughness_factor,
+			metallic_roughness,
+			normal,
+			occlusion,
+			emissive_factor: Vec3 {
+				x: emissive_factor[0],
+				y: emissive_factor[1],
+				z: emissive_factor[2],
+			},
+
+			emissive,
+		})
+	}
+
+	fn mesh(&self, name: &str, prim: Primitive, materials: &[Uuid]) -> ImportResult<Mesh> {
 		let s = span!(Level::INFO, "importing mesh", name = name);
 		let _e = s.enter();
 
@@ -368,6 +571,7 @@ impl Importer {
 				min: Vec3::broadcast(f32::INFINITY),
 				max: Vec3::broadcast(f32::NEG_INFINITY),
 			},
+			material: materials[prim.material().index().ok_or(ImportError::InvalidGltf)?],
 		};
 		for m in meshlets.iter() {
 			let vertices = m.vertices.iter().map(|&x| vertices[x as usize]);
@@ -507,3 +711,4 @@ impl Importer {
 		))
 	}
 }
+

@@ -53,7 +53,5 @@ impl SliceWriter<'_> {
 	}
 
 	#[track_caller]
-	pub fn write<T: NoUninit>(&mut self, value: T) -> Result<(), ()> {
-		self.write_slice(&[value])
-	}
+	pub fn write<T: NoUninit>(&mut self, value: T) -> Result<(), ()> { self.write_slice(&[value]) }
 }

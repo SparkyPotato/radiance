@@ -8,6 +8,7 @@ use radiance_passes::{
 	debug::meshlet::DebugMeshlets,
 	mesh::visbuffer::{RenderInfo, VisBuffer},
 };
+use tracing::{event, Level};
 use vek::Vec2;
 use winit::event::WindowEvent;
 
@@ -37,7 +38,7 @@ impl Renderer {
 			scene: None,
 			visbuffer: VisBuffer::new(device, core)?,
 			debug: DebugMeshlets::new(device, core)?,
-			runtime: AssetRuntime::new(),
+			runtime: AssetRuntime::new(device)?,
 			debug_windows: DebugWindows::new(),
 			camera: CameraController::new(),
 		})
@@ -93,8 +94,12 @@ impl Renderer {
 		}
 		self.camera.control(ctx);
 
-		let Ok((_, ticket)) = self.runtime.load_scene(device, frame.ctx(), scene, system) else {
-			return None;
+		let ticket = match self.runtime.load_scene(device, frame.ctx(), system, scene) {
+			Ok((_, ticket)) => ticket,
+			Err(e) => {
+				event!(Level::ERROR, "{:?}", e);
+				return None;
+			},
 		};
 		if let Some(ticket) = ticket {
 			let mut pass = frame.pass("wait for staging");
@@ -146,3 +151,4 @@ impl Renderer {
 		self.runtime.destroy(device);
 	}
 }
+
