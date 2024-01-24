@@ -139,7 +139,9 @@ impl Renderer {
 		}
 	}
 
-	pub fn draw_debug_windows(&mut self, ctx: &Context) { self.debug_windows.draw(ctx, &self.camera); }
+	pub fn draw_debug_windows(&mut self, ctx: &Context, device: &CoreDevice) {
+		self.debug_windows.draw(ctx, device, &self.camera);
+	}
 
 	pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
 		self.camera.on_window_event(window, event);
@@ -151,4 +153,3 @@ impl Renderer {
 		self.runtime.destroy(device);
 	}
 }
-

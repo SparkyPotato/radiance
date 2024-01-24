@@ -55,7 +55,7 @@ impl UiState {
 			});
 		});
 
-		self.renderer.draw_debug_windows(ctx);
+		self.renderer.draw_debug_windows(ctx, device);
 
 		self.assets
 			.render(ctx, &mut self.notifs, &mut self.renderer, frame, &self.fonts);

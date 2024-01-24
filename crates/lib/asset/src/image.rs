@@ -20,4 +20,3 @@ pub struct Image {
 	pub format: Format,
 	pub data: Vec<u8>,
 }
-

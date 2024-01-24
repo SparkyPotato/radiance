@@ -1,20 +1,36 @@
+use std::ops::Deref;
+
 use ash::vk;
 use radiance_graph::{
 	device::{Device, QueueType},
 	resource::{BufferDesc, GpuBuffer, Resource},
 	Result,
 };
+use range_alloc::RangeAllocator;
 
-use crate::{deletion::DeletionQueue, staging::StagingCtx};
+use crate::{
+	deletion::{DeletionQueue, IntoResource},
+	staging::StagingCtx,
+};
 
-/// A GPU-only buffer that works like a `Vec`.
-pub struct StretchyBuffer {
-	inner: GpuBuffer,
-	usage: vk::BufferUsageFlags,
-	len: u64,
+pub struct BufSpan {
+	pub offset: u64,
+	pub size: u64,
 }
 
-impl StretchyBuffer {
+pub struct AllocBuffer {
+	inner: GpuBuffer,
+	usage: vk::BufferUsageFlags,
+	alloc: RangeAllocator<u64>,
+}
+
+impl Deref for AllocBuffer {
+	type Target = GpuBuffer;
+
+	fn deref(&self) -> &Self::Target { &self.inner }
+}
+
+impl AllocBuffer {
 	pub fn new(device: &Device, desc: BufferDesc) -> Result<Self> {
 		let inner = GpuBuffer::create(
 			device,
@@ -23,25 +39,40 @@ impl StretchyBuffer {
 				..desc
 			},
 		)?;
+
 		Ok(Self {
 			inner,
 			usage: desc.usage,
-			len: 0,
+			alloc: RangeAllocator::new(0..desc.size),
 		})
 	}
 
-	pub fn push(&mut self, ctx: &mut StagingCtx, queue: &mut DeletionQueue, data: &[u8]) -> Result<u64> {
+	pub fn alloc(&mut self, ctx: &mut StagingCtx, queue: &mut DeletionQueue, data: &[u8]) -> Result<BufSpan> {
 		let len = data.len() as u64;
-		self.reserve(ctx, queue, self.len + len)?;
-		let offset = self.len;
-		ctx.stage_buffer(data, self.inner.inner.inner(), offset as _)?;
-		self.len += len;
-		Ok(offset)
+		match self.alloc.allocate_range(len) {
+			Ok(range) => unsafe {
+				std::ptr::copy_nonoverlapping(
+					data.as_ptr(),
+					self.data().as_ptr().cast::<u8>().add(range.start as usize),
+					data.len(),
+				);
+				Ok(BufSpan {
+					offset: range.start,
+					size: len,
+				})
+			},
+			Err(_) => {
+				self.reserve(ctx, queue, self.inner.size() + len)?;
+				self.alloc(ctx, queue, data)
+			},
+		}
 	}
 
+	pub fn dealloc(&mut self, span: BufSpan) { self.alloc.free_range(span.offset..span.offset + span.size); }
+
 	pub fn reserve(&mut self, ctx: &mut StagingCtx, queue: &mut DeletionQueue, bytes: u64) -> Result<()> {
-		if self.inner.inner.size() < bytes {
-			let mut new_size = self.inner.inner.size();
+		if self.inner.size() < bytes {
+			let mut new_size = self.inner.size();
 			while new_size < bytes {
 				new_size *= 2;
 			}
@@ -53,19 +84,20 @@ impl StretchyBuffer {
 				},
 			)?;
 			unsafe {
-				if self.len > 0 {
-					let buf = ctx.execute_before(QueueType::Transfer)?;
+				let buf = ctx.execute_before(QueueType::Transfer)?;
+				for r in self.alloc.allocated_ranges() {
 					ctx.device.device().cmd_copy_buffer(
 						buf,
-						self.inner.inner.inner(),
-						new_buffer.inner.inner(),
+						self.inner.inner(),
+						new_buffer.inner(),
 						&[vk::BufferCopy {
-							src_offset: 0,
-							dst_offset: 0,
-							size: self.len as _,
+							src_offset: r.start,
+							dst_offset: r.start,
+							size: r.end - r.start,
 						}],
-					);
+					)
 				}
+				self.alloc.grow_to(new_size);
 				let old = std::mem::replace(&mut self.inner, new_buffer);
 				queue.delete(old);
 			}
@@ -74,11 +106,14 @@ impl StretchyBuffer {
 		Ok(())
 	}
 
-	pub fn inner(&self) -> &GpuBuffer { &self.inner }
-
-	pub fn len(&self) -> u64 { self.len }
+	pub fn clear(&mut self) { self.alloc.reset(); }
 
 	pub unsafe fn delete(self, queue: &mut DeletionQueue) { queue.delete(self.inner); }
 
 	pub unsafe fn destroy(self, device: &Device) { self.inner.destroy(device); }
 }
+
+impl IntoResource for AllocBuffer {
+	fn into_resource(self) -> crate::deletion::Resource { self.inner.into_resource() }
+}
+

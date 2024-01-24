@@ -31,7 +31,6 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 					.features(
 						vk::PhysicalDeviceFeatures::builder()
 							.sampler_anisotropy(true)
-							.shader_int16(true)
 							.geometry_shader(true)
 							.multi_draw_indirect(true)
 							.draw_indirect_first_instance(true)

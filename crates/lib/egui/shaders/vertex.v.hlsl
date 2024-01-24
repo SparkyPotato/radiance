@@ -2,7 +2,7 @@
 
 struct PushConstants {
     float2 screen_size;
-    Buf<VertexInput> vertex_buffer;
+    Buf<VertexInput> vertices;
 };
 
 PUSH PushConstants Constants;
@@ -25,7 +25,7 @@ float4 project_screenspace(float2 screenspace) {
 }
 
 VertexOutput main(u32 vertex: SV_VertexID) {
-    VertexInput input = Constants.vertex_buffer.load(vertex);
+    VertexInput input = Constants.vertices.load(vertex);
 
     VertexOutput output;
     output.position = project_screenspace(input.position);

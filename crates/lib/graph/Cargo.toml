@@ -7,9 +7,9 @@ edition = "2021"
 bytemuck = ["dep:bytemuck"]
 
 [dependencies]
-ash = "0.37.2"
+ash = "0.37.3"
 bytemuck = { version = "1.7.0", optional = true }
-gpu-allocator = { version = "0.24.0", features = ["vulkan"] }
+gpu-allocator = { version = "0.25.0", features = ["vulkan", "visualizer"] }
 hashbrown = { version = "0.14.0", features = ["nightly"] }
 raw-window-handle = "0.5.0"
 rustc-hash = "1.1.0"

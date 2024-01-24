@@ -6,7 +6,7 @@
 use std::fmt::{Debug, Display};
 
 pub use ash;
-pub use gpu_allocator;
+pub use gpu_allocator::{vulkan as alloc, MemoryLocation};
 
 pub mod arena;
 pub mod cmd;

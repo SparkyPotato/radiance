@@ -1,4 +1,5 @@
-use egui::Context;
+use egui::{Context, ViewportId};
+use egui_winit::pixels_per_point;
 use radiance_core::{CoreDevice, CoreFrame, RenderCore};
 use radiance_egui::ScreenDescriptor;
 use radiance_graph::Result;
@@ -20,8 +21,12 @@ impl UiHandler {
 		let (defs, fonts) = Fonts::defs();
 		ctx.set_fonts(defs);
 
-		let mut platform_state = egui_winit::State::new(event_loop);
-		platform_state.set_pixels_per_point(window.window.scale_factor() as _);
+		let mut platform_state = egui_winit::State::new(
+			ViewportId::default(),
+			event_loop,
+			Some(window.window.scale_factor() as _),
+			None,
+		);
 
 		Ok(Self {
 			ctx,
@@ -56,7 +61,8 @@ impl UiHandler {
 
 		let tris = {
 			tracy::zone!("tessellate shapes");
-			self.ctx.tessellate(output.shapes)
+			self.ctx
+				.tessellate(output.shapes, pixels_per_point(&self.ctx, &window.window))
 		};
 
 		self.renderer.run(
@@ -74,7 +80,7 @@ impl UiHandler {
 		Ok(id)
 	}
 
-	pub fn on_event(&mut self, event: &WindowEvent) { let _ = self.platform_state.on_event(&self.ctx, event); }
+	pub fn on_event(&mut self, event: &WindowEvent) { let _ = self.platform_state.on_window_event(&self.ctx, event); }
 
 	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
 }

@@ -7,3 +7,4 @@ edition = "2021"
 radiance-graph = { path = "../graph" }
 
 ash = "0.37.2"
+range-alloc = "0.1.3"

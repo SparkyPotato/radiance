@@ -76,7 +76,7 @@ impl<'a> DeviceBuilder<'a> {
 		self
 	}
 
-	/// Aany extra features required should be appended to the `p_next` chain.
+	/// Any extra features required should be appended to the `p_next` chain.
 	pub fn features(mut self, features: vk::PhysicalDeviceFeatures2Builder<'a>) -> Self {
 		self.features = features;
 		self
@@ -123,10 +123,12 @@ impl<'a> DeviceBuilder<'a> {
 			device: device.clone(),
 			physical_device,
 			debug_settings: AllocatorDebugSettings::default(),
-			buffer_device_address: false,
+			buffer_device_address: true,
 			allocation_sizes: AllocationSizes::default(),
 		})
 		.map_err(|e| Error::Message(e.to_string()))?;
+
+		let as_ext = khr::AccelerationStructure::new(&instance, &device);
 
 		let descriptors = Descriptors::new(&device)?;
 
@@ -134,6 +136,7 @@ impl<'a> DeviceBuilder<'a> {
 			Device {
 				entry,
 				instance,
+				as_ext,
 				debug_messenger,
 				debug_utils_ext,
 				surface_ext,
@@ -346,15 +349,24 @@ impl<'a> DeviceBuilder<'a> {
 			// Push the features if they don't already exist.
 			let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
 			let mut features13 = vk::PhysicalDeviceVulkan13Features::default();
+			let mut as_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
+			let mut rt_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
+			let mut rq_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
 			{
 				let mut next = features.p_next as *mut VkStructHeader;
 				let mut found_12 = false;
 				let mut found_13 = false;
+				let mut found_as = false;
+				let mut found_rt = false;
+				let mut found_rq = false;
 				while !next.is_null() {
 					unsafe {
 						match (*next).ty {
 							vk::PhysicalDeviceVulkan12Features::STRUCTURE_TYPE => found_12 = true,
 							vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => found_13 = true,
+							vk::PhysicalDeviceAccelerationStructureFeaturesKHR::STRUCTURE_TYPE => found_as = true,
+							vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::STRUCTURE_TYPE => found_rt = true,
+							vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => found_rq = true,
 							_ => {},
 						}
 						next = (*next).next;
@@ -371,8 +383,25 @@ impl<'a> DeviceBuilder<'a> {
 				} else {
 					features
 				};
+				features = if !found_as {
+					features.push_next(&mut as_features)
+				} else {
+					features
+				};
+				features = if !found_rt {
+					features.push_next(&mut rt_features)
+				} else {
+					features
+				};
+				features = if !found_rq {
+					features.push_next(&mut rq_features)
+				} else {
+					features
+				};
 			}
 
+			features.features.shader_int16 = true as _;
+			features.features.shader_int64 = true as _;
 			let mut next = features.p_next as *mut VkStructHeader;
 			while !next.is_null() {
 				unsafe {
@@ -391,14 +420,44 @@ impl<'a> DeviceBuilder<'a> {
 							features12.shader_sampled_image_array_non_uniform_indexing = true as _;
 							features12.shader_storage_image_array_non_uniform_indexing = true as _;
 							features12.timeline_semaphore = true as _;
+							features12.buffer_device_address = true as _;
 						},
 						vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => {
 							let features13 = &mut *(next as *mut vk::PhysicalDeviceVulkan13Features);
 							features13.synchronization2 = true as _;
 						},
+						vk::PhysicalDeviceAccelerationStructureFeaturesKHR::STRUCTURE_TYPE => {
+							let as_features = &mut *(next as *mut vk::PhysicalDeviceAccelerationStructureFeaturesKHR);
+							as_features.acceleration_structure = true as _;
+							as_features.descriptor_binding_acceleration_structure_update_after_bind = true as _;
+						},
+						vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::STRUCTURE_TYPE => {
+							let rt_features = &mut *(next as *mut vk::PhysicalDeviceRayTracingPipelineFeaturesKHR);
+							rt_features.ray_tracing_pipeline = true as _;
+						},
+						vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => {
+							let rq_features = &mut *(next as *mut vk::PhysicalDeviceRayQueryFeaturesKHR);
+							rq_features.ray_query = true as _;
+						},
 						_ => {},
 					}
 					next = (*next).next;
+				}
+			}
+
+			// Reject the lack of ReBAR because we will really fail otherwise.
+			unsafe {
+				let mut mem = vk::PhysicalDeviceMemoryProperties2::default();
+				instance.get_physical_device_memory_properties2(physical_device, &mut mem);
+				for i in 0..mem.memory_properties.memory_type_count {
+					let ty = mem.memory_properties.memory_types[i as usize];
+					if ty
+						.property_flags
+						.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE)
+						&& mem.memory_properties.memory_heaps[ty.heap_index as usize].size <= 1024 * 1204 * 1204
+					{
+						continue;
+					}
 				}
 			}
 
@@ -457,7 +516,11 @@ impl<'a> DeviceBuilder<'a> {
 			};
 		}
 
-		Err("failed to find suitable device".to_string().into())
+		Err(
+			"failed to find suitable device: radiance needs mesh shaders, raytracing, and ReBAR"
+				.to_string()
+				.into(),
+		)
 	}
 
 	fn get_device_extensions(swapchain: bool, extensions: &[&'static CStr]) -> Vec<&'static CStr> {
@@ -465,6 +528,13 @@ impl<'a> DeviceBuilder<'a> {
 		if swapchain {
 			extensions.push(khr::Swapchain::name());
 		}
+		extensions.push(khr::AccelerationStructure::name());
+		extensions.push(khr::RayTracingPipeline::name());
+		extensions.push(khr::RayTracingMaintenance1::name());
+		unsafe {
+			extensions.push(CStr::from_bytes_with_nul_unchecked(b"VK_KHR_ray_query\0"));
+		}
+		extensions.push(khr::DeferredHostOperations::name());
 		extensions
 	}
 

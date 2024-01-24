@@ -30,6 +30,12 @@ pub struct StorageImageId(NonZeroU32);
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SamplerId(NonZeroU32);
+/// An ID representing an acceleration structure, for use by a shader.
+///
+/// Is a `u32`, bound to binding `4`.
+#[repr(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct ASId(NonZeroU32);
 
 #[cfg(feature = "bytemuck")]
 mod bytemuck {
@@ -50,6 +56,10 @@ mod bytemuck {
 	unsafe impl ::bytemuck::NoUninit for SamplerId {}
 	unsafe impl ::bytemuck::PodInOption for SamplerId {}
 	unsafe impl ::bytemuck::ZeroableInOption for SamplerId {}
+
+	unsafe impl ::bytemuck::NoUninit for ASId {}
+	unsafe impl ::bytemuck::PodInOption for ASId {}
+	unsafe impl ::bytemuck::ZeroableInOption for ASId {}
 }
 
 pub struct Descriptors {
@@ -64,6 +74,7 @@ struct Inner {
 	sampled_images: FreeIndices,
 	storage_images: FreeIndices,
 	samplers: FreeIndices,
+	ases: FreeIndices,
 }
 
 impl Descriptors {
@@ -162,6 +173,29 @@ impl Descriptors {
 		SamplerId(index)
 	}
 
+	pub fn get_as(&self, device: &Device, as_: vk::AccelerationStructureKHR) -> ASId {
+		let mut inner = self.inner.lock().unwrap();
+
+		let index = inner.ases.get_index();
+		unsafe {
+			let mut ds = vk::WriteDescriptorSet::builder();
+			ds.descriptor_count = 1;
+			device.device().update_descriptor_sets(
+				&[ds.dst_set(self.set)
+					.dst_binding(4)
+					.dst_array_element(index.get())
+					.descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+					.push_next(
+						&mut vk::WriteDescriptorSetAccelerationStructureKHR::builder().acceleration_structures(&[as_]),
+					)
+					.build()],
+				&[],
+			);
+		}
+
+		ASId(index)
+	}
+
 	pub fn return_buffer(&self, index: BufferId) {
 		let mut inner = self.inner.lock().unwrap();
 		inner.storage_buffers.return_index(index.0);
@@ -182,11 +216,17 @@ impl Descriptors {
 		inner.samplers.return_index(index.0);
 	}
 
+	pub fn return_as(&self, index: ASId) {
+		let mut inner = self.inner.lock().unwrap();
+		inner.ases.return_index(index.0);
+	}
+
 	pub(super) fn new(device: &ash::Device) -> Result<Self> {
 		let storage_buffer_count = 512 * 1024;
 		let sampled_image_count = 512 * 1024;
-		let storage_image_count = 64 * 1024;
+		let storage_image_count = 512 * 1024;
 		let sampler_count = 512;
+		let as_count = 512 * 1024;
 
 		let binding_flags = vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
 			| vk::DescriptorBindingFlags::PARTIALLY_BOUND
@@ -217,6 +257,12 @@ impl Descriptors {
 				.descriptor_count(sampler_count)
 				.stage_flags(vk::ShaderStageFlags::ALL)
 				.build(),
+			vk::DescriptorSetLayoutBinding::builder()
+				.binding(4)
+				.descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+				.descriptor_count(as_count)
+				.stage_flags(vk::ShaderStageFlags::ALL)
+				.build(),
 		];
 		let layout = unsafe {
 			device.create_descriptor_set_layout(
@@ -225,6 +271,7 @@ impl Descriptors {
 					.flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
 					.push_next(
 						&mut vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&[
+							binding_flags,
 							binding_flags,
 							binding_flags,
 							binding_flags,
@@ -256,6 +303,10 @@ impl Descriptors {
 							.ty(vk::DescriptorType::SAMPLER)
 							.descriptor_count(sampler_count)
 							.build(),
+						vk::DescriptorPoolSize::builder()
+							.ty(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
+							.descriptor_count(as_count)
+							.build(),
 					])
 					.flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND),
 				None,
@@ -279,6 +330,7 @@ impl Descriptors {
 				sampled_images: FreeIndices::new(sampled_image_count),
 				storage_images: FreeIndices::new(storage_image_count),
 				samplers: FreeIndices::new(sampler_count),
+				ases: FreeIndices::new(as_count),
 			}),
 		})
 	}

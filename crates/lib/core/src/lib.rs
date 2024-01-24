@@ -89,6 +89,19 @@ impl RenderCore {
 		)
 	}
 
+	pub fn stage_after_ticket<T, E>(
+		&mut self, device: &CoreDevice, ticket: StageTicket,
+		exec: impl FnOnce(&mut StagingCtx, &mut DeletionQueue) -> std::result::Result<T, E>,
+	) -> std::result::Result<(T, StageTicket), StageError<E>> {
+		self.staging.stage(
+			device,
+			Some(ticket.as_info().as_submit_info())
+				.into_iter()
+				.collect_in(&device.arena),
+			|ctx| exec(ctx, &mut self.delete),
+		)
+	}
+
 	/// # Safety
 	/// Appropriate synchronization must be performed before calling this function.
 	pub unsafe fn destroy(self, device: &CoreDevice) {

@@ -13,11 +13,8 @@ use gltf::{
 	buffer,
 	camera::Projection,
 	image,
-	Accessor,
 	Document,
 	Gltf,
-	Primitive,
-	Semantic,
 };
 use meshopt::VertexDataAdapter;
 use rayon::prelude::*;
@@ -28,8 +25,7 @@ use vek::{Aabb, Mat4, Vec2, Vec3, Vec4};
 use crate::{
 	image::{Format, Image},
 	material::{AlphaMode, Material},
-	mesh::{Mesh, Meshlet, Vertex},
-	model::Model,
+	mesh::{Mesh, Meshlet, SubMesh, Vertex},
 	scene,
 	scene::{Camera, Node, Scene},
 	Asset,
@@ -44,15 +40,14 @@ use crate::{
 pub struct ImportProgress {
 	images: usize,
 	meshes: usize,
-	models: usize,
 	materials: usize,
 	scenes: usize,
 }
 
 impl ImportProgress {
 	pub fn as_percentage(self, total: Self) -> f32 {
-		let total = total.meshes + total.models + total.materials + total.scenes;
-		let self_ = self.meshes + self.models + self.materials + self.scenes;
+		let total = total.images + total.meshes + total.materials + total.scenes;
+		let self_ = self.images + self.meshes + self.materials + self.scenes;
 		(self_ as f32 / total as f32) * 100.0
 	}
 }
@@ -123,8 +118,7 @@ where
 
 		let total = ImportProgress {
 			images: imp.gltf.images().count(),
-			meshes: imp.gltf.meshes().flat_map(|x| x.primitives()).count(),
-			models: imp.gltf.meshes().count(),
+			meshes: imp.gltf.meshes().count(),
 			materials: imp.gltf.materials().count(),
 			scenes: imp.gltf.scenes().count(),
 		};
@@ -161,7 +155,6 @@ where
 						images: old + 1,
 						materials: 0,
 						meshes: 0,
-						models: 0,
 						scenes: 0,
 					},
 					total,
@@ -202,7 +195,6 @@ where
 						images: total.images,
 						materials: old + 1,
 						meshes: 0,
-						models: 0,
 						scenes: 0,
 					},
 					total,
@@ -213,17 +205,12 @@ where
 
 		// Meshes
 		let progress = AtomicUsize::new(0);
-		let prims: Vec<_> = imp
+		let meshes: Vec<_> = imp
 			.gltf
 			.meshes()
-			.flat_map(move |mesh| {
-				let name = mesh.name().unwrap_or("unnamed mesh");
-				let prims = mesh.primitives();
-				let mesh_id = mesh.index();
-				prims.map(move |prim| (mesh_id, name, prim))
-			})
-			.map(move |(mesh_id, name, prim)| {
+			.map(move |mesh| {
 				let uuid = Uuid::new_v4();
+				let name = mesh.name().unwrap_or("unnamed mesh");
 				let sink = c
 					.asset(
 						&name,
@@ -233,14 +220,13 @@ where
 						},
 					)
 					.map_err(|x| Error::<S, I>::Ctx(x))?;
-				Ok::<_, Error<S, I>>((mesh_id, uuid, name, prim, sink))
+				Ok::<_, Error<S, I>>((name, mesh, uuid, sink))
 			})
 			.collect::<Result<_, _>>()?;
-		let meshes: Vec<_> = prims
+		let meshes: Vec<_> = meshes
 			.into_par_iter()
-			.map(|(mesh_id, uuid, name, prim, sink)| {
-				let mesh = imp.mesh(&name, prim, &materials).map_err(|x| x.map_ignore())?;
-				let aabb = mesh.aabb;
+			.map(|(name, mesh, uuid, sink)| {
+				let mesh = imp.mesh(&name, mesh, &materials).map_err(|x| x.map_ignore())?;
 				sink.write_data(&Asset::Mesh(mesh).to_bytes())
 					.map_err(|x| ImportError::Sink(x))?;
 				let old = progress.fetch_add(1, Ordering::Relaxed);
@@ -248,79 +234,35 @@ where
 					ImportProgress {
 						images: total.images,
 						meshes: old + 1,
-						models: 0,
 						materials: total.materials,
 						scenes: 0,
 					},
 					total,
 				);
-				Ok::<_, ImportError<S::Error, I::Error>>((mesh_id, aabb, uuid, sink))
+				Ok::<_, ImportError<S::Error, I::Error>>((uuid, sink))
 			})
 			.collect::<Result<_, _>>()?;
-
-		// Models
-		let mut models: Vec<_> = imp
-			.gltf
-			.meshes()
-			.map(|mesh| {
-				(
-					mesh.name().unwrap_or("unnamed mesh").to_string(),
-					Model {
-						meshes: Vec::new(),
-						aabb: Aabb {
-							min: Vec3::broadcast(f32::INFINITY),
-							max: Vec3::broadcast(f32::NEG_INFINITY),
+		let meshes: Vec<_> = meshes
+			.into_iter()
+			.map(|(uuid, sink)| {
+				self.assets.insert(
+					uuid,
+					AssetMetadata {
+						header: AssetHeader {
+							uuid,
+							ty: AssetType::Mesh,
 						},
+						source: sink,
 					},
-				)
+				);
+				uuid
 			})
 			.collect();
-		for (mesh_id, aabb, uuid, sink) in meshes.into_iter() {
-			let model = &mut models[mesh_id].1;
-			model.meshes.push(uuid);
-			model.aabb = model.aabb.union(aabb);
-			self.assets.insert(
-				uuid,
-				AssetMetadata {
-					header: AssetHeader {
-						uuid,
-						ty: AssetType::Mesh,
-					},
-					source: sink,
-				},
-			);
-		}
-		let models: Vec<_> = models
-			.into_iter()
-			.enumerate()
-			.map(|(i, (name, model))| {
-				let uuid = Uuid::new_v4();
-				let header = AssetHeader {
-					uuid,
-					ty: AssetType::Model,
-				};
-				let sink = ctx.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
-				sink.write_data(&Asset::Model(model).to_bytes())
-					.map_err(|x| ImportError::Sink(x))?;
-				self.assets.insert(uuid, AssetMetadata { header, source: sink });
-				ctx.progress(
-					ImportProgress {
-						images: total.images,
-						meshes: total.meshes,
-						models: i + 1,
-						materials: total.materials,
-						scenes: 0,
-					},
-					total,
-				);
-				Ok::<_, ImportError<S::Error, I::Error>>(uuid)
-			})
-			.collect::<Result<_, _>>()?;
 
 		for scene in imp.gltf.scenes() {
 			let name = scene.name().unwrap_or("unnamed scene");
 			let i = scene.index();
-			let out = imp.scene(&name, scene, &models).map_err(|x| x.map_ignore())?;
+			let out = imp.scene(&name, scene, &meshes).map_err(|x| x.map_ignore())?;
 			let header = AssetHeader {
 				uuid: Uuid::new_v4(),
 				ty: AssetType::Scene,
@@ -333,7 +275,6 @@ where
 				ImportProgress {
 					images: total.images,
 					meshes: total.meshes,
-					models: total.models,
 					materials: total.materials,
 					scenes: i + 1,
 				},
@@ -465,157 +406,165 @@ impl<'a> Importer<'a> {
 		})
 	}
 
-	fn mesh(&self, name: &str, prim: Primitive, materials: &[Uuid]) -> ImportResult<Mesh> {
+	fn mesh(&self, name: &str, mesh: gltf::Mesh, materials: &[Uuid]) -> ImportResult<Mesh> {
 		let s = span!(Level::INFO, "importing mesh", name = name);
 		let _e = s.enter();
 
-		// Goofy GLTF things.
-		let indices = prim.indices().ok_or(ImportError::InvalidGltf)?;
-		let (indices, ty, comp) = self.accessor(indices)?;
-		if comp != Dimensions::Scalar {
-			return Err(ImportError::InvalidGltf);
-		}
-		let indices: Vec<_> = match ty {
-			DataType::U8 => indices.flatten().map(|&i| i as u32).collect(),
-			DataType::U16 => indices.map(|i| *from_bytes::<u16>(i) as u32).collect(),
-			DataType::U32 => indices.map(|i| *from_bytes::<u32>(i)).collect(),
-			_ => return Err(ImportError::InvalidGltf),
-		};
-
-		let positions = prim.get(&Semantic::Positions).ok_or(ImportError::InvalidGltf)?;
-		let (positions, ty, comp) = self.accessor(positions)?;
-		if comp != Dimensions::Vec3 || ty != DataType::F32 {
-			return Err(ImportError::InvalidGltf);
-		}
-		let positions = positions.map(|p| *from_bytes::<Vec3<f32>>(p));
-
-		let normals = prim.get(&Semantic::Normals).ok_or(ImportError::InvalidGltf)?;
-		let (normals, ty, comp) = self.accessor(normals)?;
-		if comp != Dimensions::Vec3 || ty != DataType::F32 {
-			return Err(ImportError::InvalidGltf);
-		}
-		let normals = normals.map(|n| *from_bytes::<Vec3<f32>>(n));
-
-		let uv = prim.get(&Semantic::TexCoords(0));
-		let mut uv = uv
-			.map(|uv| {
-				let (uv, ty, comp) = self.accessor(uv)?;
-				if comp != Dimensions::Vec2 {
-					return Err(ImportError::InvalidGltf);
-				}
-
-				if !matches!(ty, DataType::F32 | DataType::U8 | DataType::U16) {
-					return Err(ImportError::InvalidGltf);
-				}
-				Ok(uv.map(move |uv| match ty {
-					DataType::F32 => *from_bytes(uv),
-					DataType::U8 => from_bytes::<Vec2<u8>>(uv).map(|u| u as f32 / 255.0),
-					DataType::U16 => from_bytes::<Vec2<u16>>(uv).map(|u| u as f32 / 65535.0),
-					_ => panic!("yikes"),
-				}))
-			})
-			.transpose()?;
-
-		#[derive(Copy, Clone, Default, NoUninit)]
-		#[repr(C)]
-		struct TempVertex {
-			position: Vec3<f32>,
-			normal: Vec3<f32>,
-			uv: Vec2<f32>,
-		}
-		let vertices: Vec<TempVertex> = positions
-			.zip(normals)
-			.zip(std::iter::from_fn(move || {
-				if let Some(ref mut uv) = uv {
-					uv.next()
-				} else {
-					Some(Vec2::new(0.0, 0.0))
-				}
-			}))
-			.map(|((position, normal), uv)| TempVertex { position, normal, uv })
-			.collect();
-
-		// Optimizations and meshlet building.
-		let (vertices, indices) = {
-			let s = span!(Level::INFO, "optimizing mesh");
-			let _e = s.enter();
-
-			let (vertex_count, remap) = meshopt::generate_vertex_remap(&vertices, Some(&indices));
-			let mut vertices = meshopt::remap_vertex_buffer(&vertices, vertex_count, &remap);
-			let mut indices = meshopt::remap_index_buffer(Some(&indices), vertex_count, &remap);
-			meshopt::optimize_vertex_cache_in_place(&mut indices, vertices.len());
-			meshopt::optimize_vertex_fetch_in_place(&mut indices, &mut vertices);
-
-			(vertices, indices)
-		};
-
-		let adapter = VertexDataAdapter::new(
-			bytemuck::cast_slice(vertices.as_slice()),
-			std::mem::size_of::<TempVertex>(),
-			0,
-		)
-		.unwrap();
-		let meshlets = {
-			let s = span!(Level::INFO, "building meshlets");
-			let _e = s.enter();
-
-			meshopt::build_meshlets(&indices, &adapter, 64, 124, 0.5)
-		};
-
-		// Build the final mesh.
-		let mut mesh = Mesh {
-			vertices: Vec::with_capacity(vertices.len()),
-			indices: Vec::with_capacity(indices.len()),
-			meshlets: Vec::with_capacity(meshlets.len()),
+		let mut out = Mesh {
+			vertices: Vec::new(),
+			indices: Vec::new(),
+			meshlets: Vec::new(),
+			submeshes: Vec::new(),
 			aabb: Aabb {
 				min: Vec3::broadcast(f32::INFINITY),
 				max: Vec3::broadcast(f32::NEG_INFINITY),
 			},
-			material: materials[prim.material().index().ok_or(ImportError::InvalidGltf)?],
 		};
-		for m in meshlets.iter() {
-			let vertices = m.vertices.iter().map(|&x| vertices[x as usize]);
-			let aabb = {
-				let mut min = Vec3::broadcast(f32::INFINITY);
-				let mut max = Vec3::broadcast(f32::NEG_INFINITY);
-				for v in vertices.clone() {
-					min.x = min.x.min(v.position.x);
-					min.y = min.y.min(v.position.y);
-					min.z = min.z.min(v.position.z);
-					max.x = max.x.max(v.position.x);
-					max.y = max.y.max(v.position.y);
-					max.z = max.z.max(v.position.z);
-				}
-				Aabb { min, max }
+		for prim in mesh.primitives() {
+			// Goofy GLTF things.
+			let indices = prim.indices().ok_or(ImportError::InvalidGltf)?;
+			let (indices, ty, comp) = self.accessor(indices)?;
+			if comp != Dimensions::Scalar {
+				return Err(ImportError::InvalidGltf);
+			}
+			let indices: Vec<_> = match ty {
+				DataType::U8 => indices.flatten().map(|&i| i as u32).collect(),
+				DataType::U16 => indices.map(|i| *from_bytes::<u16>(i) as u32).collect(),
+				DataType::U32 => indices.map(|i| *from_bytes::<u32>(i)).collect(),
+				_ => return Err(ImportError::InvalidGltf),
 			};
-			let extent = aabb.max - aabb.min;
 
-			let index_offset = mesh.indices.len() as u32;
-			let vertex_offset = mesh.vertices.len() as u32;
-			let vert_count = m.vertices.len() as u8;
-			let tri_count = (m.triangles.len() / 3) as u8;
-			mesh.vertices.extend(vertices.map(|x| Vertex {
-				position: ((x.position - aabb.min) / extent * Vec3::broadcast(65535.0)).map(|x| x.round() as u16),
-				normal: (x.normal * Vec3::broadcast(32767.0)).map(|x| x.round() as i16),
-				uv: (x.uv * Vec2::broadcast(65535.0)).map(|x| x.round() as u16),
+			let positions = prim.get(&gltf::Semantic::Positions).ok_or(ImportError::InvalidGltf)?;
+			let (positions, ty, comp) = self.accessor(positions)?;
+			if comp != Dimensions::Vec3 || ty != DataType::F32 {
+				return Err(ImportError::InvalidGltf);
+			}
+			let positions = positions.map(|p| *from_bytes::<Vec3<f32>>(p));
+
+			let normals = prim.get(&gltf::Semantic::Normals).ok_or(ImportError::InvalidGltf)?;
+			let (normals, ty, comp) = self.accessor(normals)?;
+			if comp != Dimensions::Vec3 || ty != DataType::F32 {
+				return Err(ImportError::InvalidGltf);
+			}
+			let normals = normals.map(|n| *from_bytes::<Vec3<f32>>(n));
+
+			let uv = prim.get(&gltf::Semantic::TexCoords(0));
+			let mut uv = uv
+				.map(|uv| {
+					let (uv, ty, comp) = self.accessor(uv)?;
+					if comp != Dimensions::Vec2 {
+						return Err(ImportError::InvalidGltf);
+					}
+
+					if !matches!(ty, DataType::F32 | DataType::U8 | DataType::U16) {
+						return Err(ImportError::InvalidGltf);
+					}
+					Ok(uv.map(move |uv| match ty {
+						DataType::F32 => *from_bytes(uv),
+						DataType::U8 => from_bytes::<Vec2<u8>>(uv).map(|u| u as f32 / 255.0),
+						DataType::U16 => from_bytes::<Vec2<u16>>(uv).map(|u| u as f32 / 65535.0),
+						_ => panic!("yikes"),
+					}))
+				})
+				.transpose()?;
+
+			#[derive(Copy, Clone, Default, NoUninit)]
+			#[repr(C)]
+			struct TempVertex {
+				position: Vec3<f32>,
+				normal: Vec3<f32>,
+				uv: Vec2<f32>,
+			}
+			let vertices: Vec<TempVertex> = positions
+				.zip(normals)
+				.zip(std::iter::from_fn(move || {
+					if let Some(ref mut uv) = uv {
+						uv.next()
+					} else {
+						Some(Vec2::new(0.0, 0.0))
+					}
+				}))
+				.map(|((position, normal), uv)| TempVertex { position, normal, uv })
+				.collect();
+
+			// Optimizations and meshlet building.
+			let (vertices, indices) = {
+				let s = span!(Level::INFO, "optimizing submesh");
+				let _e = s.enter();
+
+				let (vertex_count, remap) = meshopt::generate_vertex_remap(&vertices, Some(&indices));
+				let mut vertices = meshopt::remap_vertex_buffer(&vertices, vertex_count, &remap);
+				let mut indices = meshopt::remap_index_buffer(Some(&indices), vertex_count, &remap);
+				meshopt::optimize_vertex_cache_in_place(&mut indices, vertices.len());
+				meshopt::optimize_vertex_fetch_in_place(&mut indices, &mut vertices);
+
+				(vertices, indices)
+			};
+
+			let adapter = VertexDataAdapter::new(
+				bytemuck::cast_slice(vertices.as_slice()),
+				std::mem::size_of::<TempVertex>(),
+				0,
+			)
+			.unwrap();
+
+			let meshlets = {
+				let s = span!(Level::INFO, "building meshlets");
+				let _e = s.enter();
+
+				meshopt::build_meshlets(&indices, &adapter, 64, 124, 0.5)
+			};
+
+			// Build the final mesh.
+			let off = out.meshlets.len() as u32;
+			let mut sub = SubMesh {
+				meshlets: off..(off + meshlets.len() as u32),
+				aabb: Aabb {
+					min: Vec3::broadcast(f32::INFINITY),
+					max: Vec3::broadcast(f32::NEG_INFINITY),
+				},
+				material: materials[prim.material().index().unwrap()],
+			};
+			out.meshlets.extend(meshlets.iter().map(|m| {
+				let vertices = m.vertices.iter().map(|&x| vertices[x as usize]);
+				let mut aabb = Aabb {
+					min: Vec3::broadcast(f32::INFINITY),
+					max: Vec3::broadcast(f32::NEG_INFINITY),
+				};
+				for v in vertices.clone() {
+					aabb.expand_to_contain_point(v.position);
+				}
+				sub.aabb.expand_to_contain(aabb);
+
+				let extent = aabb.max - aabb.min;
+
+				let index_offset = out.indices.len() as u32;
+				let vertex_offset = out.vertices.len() as u32;
+				let vert_count = m.vertices.len() as u8;
+				let tri_count = (m.triangles.len() / 3) as u8;
+				out.vertices.extend(vertices.map(|x| Vertex {
+					position: ((x.position - aabb.min) / extent * Vec3::broadcast(65535.0)).map(|x| x.round() as u16),
+					normal: (x.normal * Vec3::broadcast(32767.0)).map(|x| x.round() as i16),
+					uv: (x.uv * Vec2::broadcast(65535.0)).map(|x| x.round() as u16),
+				}));
+				out.indices.extend(m.triangles);
+
+				Meshlet {
+					aabb,
+					index_offset,
+					vertex_offset,
+					tri_count,
+					vert_count,
+				}
 			}));
-			mesh.indices.extend(m.triangles);
-			mesh.meshlets.push(Meshlet {
-				aabb_min: aabb.min,
-				aabb_extent: extent,
-				index_offset,
-				vertex_offset,
-				tri_count,
-				vert_count,
-				_pad: 0,
-			});
-			mesh.aabb = mesh.aabb.union(aabb);
+			out.aabb.expand_to_contain(sub.aabb);
+			out.submeshes.push(sub);
 		}
 
-		Ok(mesh)
+		Ok(out)
 	}
 
-	fn scene(&self, name: &str, scene: gltf::Scene, models: &[Uuid]) -> ImportResult<Scene> {
+	fn scene(&self, name: &str, scene: gltf::Scene, meshes: &[Uuid]) -> ImportResult<Scene> {
 		let s = span!(Level::INFO, "importing scene", name = name);
 		let _e = s.enter();
 
@@ -636,19 +585,19 @@ impl<'a> Importer<'a> {
 		};
 
 		for node in scene.nodes() {
-			self.node(node, Mat4::identity(), models, &mut out);
+			self.node(node, Mat4::identity(), meshes, &mut out);
 		}
 
 		Ok(out)
 	}
 
-	fn node(&self, node: gltf::Node, transform: Mat4<f32>, models: &[Uuid], out: &mut Scene) {
+	fn node(&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[Uuid], out: &mut Scene) {
 		let this_transform = Mat4::from_col_arrays(node.transform().matrix());
 		let transform = transform * this_transform;
 
-		let model = node.mesh().map(|model| {
+		let model = node.mesh().map(|mesh| {
 			let name = node.name().unwrap_or("unnamed node").to_string();
-			let model = models[model.index()];
+			let model = meshes[mesh.index()];
 
 			Node { name, transform, model }
 		});
@@ -676,11 +625,13 @@ impl<'a> Importer<'a> {
 		out.cameras.extend(camera);
 
 		for child in node.children() {
-			self.node(child, transform, models, out);
+			self.node(child, transform, meshes, out);
 		}
 	}
 
-	pub fn accessor(&self, accessor: Accessor) -> ImportResult<(impl Iterator<Item = &[u8]>, DataType, Dimensions)> {
+	pub fn accessor(
+		&self, accessor: gltf::Accessor,
+	) -> ImportResult<(impl Iterator<Item = &[u8]>, DataType, Dimensions)> {
 		if accessor.sparse().is_some() {
 			return Err(ImportError::UnsupportedFeature);
 		}

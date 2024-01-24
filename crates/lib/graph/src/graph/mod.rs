@@ -297,6 +297,16 @@ pub struct SemaphoreInfo {
 	pub stage: vk::PipelineStageFlags2KHR,
 }
 
+impl SemaphoreInfo {
+	pub fn as_submit_info(self) -> vk::SemaphoreSubmitInfo {
+		vk::SemaphoreSubmitInfo::builder()
+			.semaphore(self.semaphore)
+			.value(self.value)
+			.stage_mask(self.stage)
+			.build()
+	}
+}
+
 /// A builder for a pass.
 pub struct PassBuilder<'frame, 'pass, 'graph, C> {
 	name: Vec<u8, &'graph Arena>,
@@ -566,3 +576,4 @@ struct PassData<'pass, 'graph, C> {
 }
 
 type ArenaMap<'graph, K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>, &'graph Arena>;
+

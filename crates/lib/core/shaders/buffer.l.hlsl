@@ -39,7 +39,7 @@
 
 #define BUF_DECL_BYTES(U) \
     template<> \
-    struct Buf<Bytes, U##TY> { \
+    struct Buf<bytes, U##TY> { \
         u32 index; \
         \
         template<typename T> \
@@ -68,7 +68,7 @@ BUF_DECL(N)
 BUF_DECL_U32(U)
 BUF_DECL_U32(N)
 
-struct Bytes {};
+struct bytes {};
 BUF_DECL_BYTES(U)
 BUF_DECL_BYTES(N)
 
@@ -80,3 +80,60 @@ BUF_DECL_BYTES(N)
 #undef BUF_DECL
 #undef BUF_DECL_U32
 #undef BUF_DECL_BYTES
+
+template<typename T>
+struct ptr;
+
+template<typename T>
+ptr<T> tptr(u64 raw);
+
+template<typename T>
+struct ptr {
+    u64 raw;
+
+    ptr<T> operator+(i64 offset) {
+        return tptr<T>(raw + offset * sizeof(T));
+    }
+
+    ptr<T> operator-(i64 offset) {
+        return tptr<T>(raw - offset * sizeof(T));
+    }
+
+    T load(i64 offset = 0) {
+        return vk::RawBufferLoad<T>((this + offset).raw, 4);
+    }
+
+    void store(T obj, i64 offset = 0) {
+        vk::RawBufferStore<T>((this + offset).raw, obj, 4);
+    }
+
+    template<typename U>
+    ptr<U> cast() {
+        return tptr<U>(raw);
+    }
+};
+
+template<>
+struct ptr<bytes> {
+    u64 raw;
+
+    ptr<bytes> operator+(i64 offset) {
+        return tptr<bytes>(raw + offset);
+    }
+
+    ptr<bytes> operator-(i64 offset) {
+        return tptr<bytes>(raw - offset);
+    }
+
+    template<typename U>
+    ptr<U> cast() {
+        return tptr<U>(raw);
+    }
+};
+
+template<typename T>
+ptr<T> tptr(u64 raw) {
+    ptr<T> p;
+    p.raw = raw;
+    return p;
+}

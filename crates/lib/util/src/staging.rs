@@ -5,10 +5,10 @@ use radiance_graph::{
 	arena::Arena,
 	cmd::CommandPool,
 	device::{Device, QueueType, Queues},
-	gpu_allocator::MemoryLocation,
 	graph::{ImageUsageType, SemaphoreInfo, TimelineSemaphore},
 	resource::{Buffer, BufferDesc},
 	sync::{as_next_access, as_previous_access, get_access_info, ImageBarrierAccess, UsageType},
+	MemoryLocation,
 	Result,
 };
 
@@ -140,10 +140,10 @@ impl Staging {
 	}
 }
 
-pub struct StagingCtx<'a> {
-	pub device: &'a Device,
-	inner: &'a mut CircularBuffer,
-	queues: &'a mut Queues<CommandPool>,
+pub struct StagingCtx<'d> {
+	pub device: &'d Device,
+	inner: &'d mut CircularBuffer,
+	queues: &'d mut Queues<CommandPool>,
 	pre_bufs: Queues<Option<vk::CommandBuffer>>,
 	post_bufs: Queues<Option<vk::CommandBuffer>>,
 	min_granularity: vk::Extent3D,
@@ -165,10 +165,10 @@ impl StagingCtx<'_> {
 	/// Appropriate synchronization must be performed.
 	pub unsafe fn execute_before(&mut self, ty: QueueType) -> Result<vk::CommandBuffer> { self.pre_buf(ty) }
 
-	/// Get a command buffer to execute some custom staging commands after the other staging commands.
-	///
+	/// Get a command buffer to execute some custom staging commands with the other staging commands.
+	/// The ordering will be the same as the function call order on `self`.
 	/// Appropriate synchronization must be performed.
-	pub unsafe fn execute_after(&mut self, ty: QueueType) -> Result<vk::CommandBuffer> { self.post_buf(ty) }
+	pub unsafe fn execute_with(&mut self, ty: QueueType) -> Result<vk::CommandBuffer> { self.post_buf(ty) }
 
 	/// Copy data from CPU memory to a GPU buffer.
 	pub fn stage_buffer(&mut self, data: &[u8], dst: vk::Buffer, dst_offset: u64) -> Result<()> {
@@ -396,7 +396,7 @@ impl CircularBuffer {
 
 		let buffer = &mut self.buffers[self.tail.buffer];
 		unsafe {
-			let mut slice = &mut buffer.mapped_ptr().unwrap().as_mut()[self.tail.offset..];
+			let mut slice = &mut buffer.data().as_mut()[self.tail.offset..];
 			slice.write_all(data).unwrap();
 		}
 
@@ -521,3 +521,4 @@ fn submit(
 		Ok(())
 	}
 }
+

@@ -14,7 +14,6 @@ pub use uuid::Uuid;
 
 use crate::{
 	mesh::Mesh,
-	model::Model,
 	scene::Scene,
 	util::{SliceReader, SliceWriter},
 };
@@ -26,7 +25,6 @@ pub mod image;
 pub mod import;
 pub mod material;
 pub mod mesh;
-pub mod model;
 pub mod scene;
 pub mod util;
 
@@ -40,9 +38,8 @@ const CONTAINER_VERSION: u32 = 1;
 pub enum AssetType {
 	Image = 0,
 	Mesh = 1,
-	Model = 2,
-	Material = 3,
-	Scene = 4,
+	Material = 2,
+	Scene = 3,
 }
 
 impl TryFrom<u32> for AssetType {
@@ -52,9 +49,8 @@ impl TryFrom<u32> for AssetType {
 		Ok(match x {
 			0 => Self::Image,
 			1 => Self::Mesh,
-			2 => Self::Model,
-			3 => Self::Material,
-			4 => Self::Scene,
+			2 => Self::Material,
+			3 => Self::Scene,
 			_ => return Err(()),
 		})
 	}
@@ -69,7 +65,6 @@ impl From<AssetType> for u32 {
 pub enum Asset {
 	Image(Image),
 	Mesh(Mesh),
-	Model(Model),
 	Material(Material),
 	Scene(Scene),
 }
@@ -79,7 +74,6 @@ impl Asset {
 		match self {
 			Self::Image(_) => AssetType::Image,
 			Self::Mesh(_) => AssetType::Mesh,
-			Self::Model(_) => AssetType::Model,
 			Self::Material(_) => AssetType::Material,
 			Self::Scene(_) => AssetType::Scene,
 		}
@@ -94,7 +88,6 @@ impl Asset {
 		match self {
 			Asset::Image(i) => bincode::encode_into_std_write(i, &mut enc, config),
 			Asset::Mesh(m) => bincode::encode_into_std_write(m, &mut enc, config),
-			Asset::Model(m) => bincode::encode_into_std_write(m, &mut enc, config),
 			Asset::Material(m) => bincode::encode_into_std_write(m, &mut enc, config),
 			Asset::Scene(s) => bincode::encode_into_std_write(s, &mut enc, config),
 		}
@@ -321,9 +314,6 @@ impl<S: AssetSource> AssetSystem<S> {
 			AssetType::Mesh => Ok(Asset::Mesh(
 				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
 			)),
-			AssetType::Model => Ok(Asset::Model(
-				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
-			)),
 			AssetType::Material => Ok(Asset::Material(
 				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
 			)),
@@ -361,3 +351,4 @@ struct AssetMetadata<S> {
 	header: AssetHeader,
 	source: S,
 }
+

@@ -4,9 +4,9 @@
 #include "cull.l.hlsl"
 
 struct Vertex {
-	u16 position[3];
-	u16 normal[3];
-	u16 uv[2];
+    u16 position[3];
+    u16 normal[3];
+    u16 uv[2];
 };
 
 struct MeshletPointer {
@@ -16,7 +16,7 @@ struct MeshletPointer {
 
 struct Instance {
     f32 transform[12];
-    Buf<Bytes, NonUniform> mesh;
+    Buf<bytes> mesh;
     u32 _pad[3];
 
     float4x4 get_transform() {
@@ -32,12 +32,12 @@ struct Instance {
 };
 
 struct Meshlet {
-	f32 aabb_min[3];
-	f32 aabb_extent[3];
-	u32 vertex_offset;
-	u32 index_offset;
-	u16 vert_and_tri_count;
-	u16 pad;
+    f32 aabb_min[3];
+    f32 aabb_extent[3];
+    u32 vertex_offset;
+    u32 index_offset;
+    u16 vert_and_tri_count;
+    u16 pad;
 
     Aabb get_mesh_aabb() {
         Aabb ret;

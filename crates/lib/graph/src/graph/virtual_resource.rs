@@ -313,7 +313,7 @@ impl Clone for GpuBufferType<'_> {
 	fn clone(&self) -> Self {
 		match self {
 			GpuBufferType::Internal(size) => GpuBufferType::Internal(*size),
-			GpuBufferType::External(desc) => GpuBufferType::Internal(desc.handle.size),
+			GpuBufferType::External(desc) => GpuBufferType::Internal(desc.handle.data.len() as _),
 		}
 	}
 }
@@ -619,3 +619,4 @@ fn get_format_block(f: vk::Format) -> i32 {
 		(ASTC_12X12_UNORM_BLOCK:ASTC_12X12_SRGB_BLOCK) || (ASTC_12X12_SFLOAT_BLOCK),
 	}
 }
+

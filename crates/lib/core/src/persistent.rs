@@ -22,7 +22,7 @@ impl PersistentBuffer {
 		Ok(Self { buffers, current: 0 })
 	}
 
-	pub fn size(&self) -> u64 { self.buffers[0].inner.size() }
+	pub fn size(&self) -> u64 { self.buffers[0].size() }
 
 	pub fn next(
 		&mut self, pass: &mut CoreBuilder, read_usage: BufferUsage, write_usage: BufferUsage,
@@ -57,3 +57,4 @@ impl PersistentBuffer {
 		b2.destroy(device);
 	}
 }
+

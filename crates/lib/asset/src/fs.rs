@@ -135,7 +135,6 @@ where
 		let inter = match header.ty {
 			AssetType::Image => "images",
 			AssetType::Mesh => "meshes",
-			AssetType::Model => "models",
 			AssetType::Material => "materials",
 			AssetType::Scene => "scenes",
 		};
@@ -444,3 +443,4 @@ impl Deref for FsSystem {
 impl DerefMut for FsSystem {
 	fn deref_mut(&mut self) -> &mut Self::Target { &mut self.system }
 }
+

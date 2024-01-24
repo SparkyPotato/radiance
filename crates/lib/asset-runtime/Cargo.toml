@@ -11,6 +11,7 @@ radiance-util = { path = "../util" }
 
 ash = "0.37.2"
 bytemuck = { version = "1.13.1", features = ["derive"] }
+crossbeam-channel = "0.5.11"
 static_assertions = "1.1.0"
 rustc-hash = "1.1.0"
 tracing = "0.1.37"

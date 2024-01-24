@@ -1,25 +1,45 @@
 use radiance_graph::{
 	device::Device,
 	graph::FRAMES_IN_FLIGHT,
-	resource::{Buffer, GpuBuffer, Image, ImageView, Resource as R, UploadBuffer},
+	resource::{Buffer, GpuBuffer, Image, ImageView, Resource as R, UploadBuffer, AS},
 };
 
 pub enum Resource {
 	Buffer(Buffer),
 	Image(Image),
 	ImageView(ImageView),
+	AS(AS),
+}
+
+impl Resource {
+	unsafe fn destroy(self, device: &Device) {
+		match self {
+			Resource::Buffer(x) => x.destroy(device),
+			Resource::Image(x) => x.destroy(device),
+			Resource::ImageView(x) => x.destroy(device),
+			Resource::AS(x) => x.destroy(device),
+		}
+	}
 }
 
 pub trait IntoResource {
 	fn into_resource(self) -> Resource;
 }
 
+impl IntoResource for Resource {
+	fn into_resource(self) -> Resource { self }
+}
+
 impl IntoResource for UploadBuffer {
-	fn into_resource(self) -> Resource { Resource::Buffer(self.inner) }
+	fn into_resource(self) -> Resource { Resource::Buffer(self.into_inner()) }
 }
 
 impl IntoResource for GpuBuffer {
-	fn into_resource(self) -> Resource { Resource::Buffer(self.inner) }
+	fn into_resource(self) -> Resource { Resource::Buffer(self.into_inner()) }
+}
+
+impl IntoResource for Buffer {
+	fn into_resource(self) -> Resource { Resource::Buffer(self) }
 }
 
 impl IntoResource for Image {
@@ -28,6 +48,10 @@ impl IntoResource for Image {
 
 impl IntoResource for ImageView {
 	fn into_resource(self) -> Resource { Resource::ImageView(self) }
+}
+
+impl IntoResource for AS {
+	fn into_resource(self) -> Resource { Resource::AS(self) }
 }
 
 pub struct DeletionQueue {
@@ -55,11 +79,7 @@ impl DeletionQueue {
 	pub unsafe fn destroy(self, device: &Device) {
 		for queue in self.queues {
 			for x in queue {
-				match x {
-					Resource::Buffer(x) => x.destroy(device),
-					Resource::Image(x) => x.destroy(device),
-					Resource::ImageView(x) => x.destroy(device),
-				}
+				x.destroy(device)
 			}
 		}
 	}
@@ -67,11 +87,8 @@ impl DeletionQueue {
 	pub fn advance(&mut self, device: &Device) {
 		self.curr = (self.curr + 1) % self.queues.len();
 		for x in self.queues[self.curr].drain(..) {
-			match x {
-				Resource::Buffer(x) => unsafe { x.destroy(device) },
-				Resource::Image(x) => unsafe { x.destroy(device) },
-				Resource::ImageView(x) => unsafe { x.destroy(device) },
-			}
+			unsafe { x.destroy(device) }
 		}
 	}
 }
+

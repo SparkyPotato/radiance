@@ -9,6 +9,7 @@ use ash::{
 	extensions::{ext, khr},
 	vk,
 };
+pub use gpu_allocator::vulkan as alloc;
 use gpu_allocator::vulkan::Allocator;
 
 use crate::{device::descriptor::Descriptors, Result};
@@ -21,6 +22,7 @@ pub struct Device {
 	debug_messenger: vk::DebugUtilsMessengerEXT, // Can be null.
 	physical_device: vk::PhysicalDevice,
 	device: ash::Device,
+	as_ext: khr::AccelerationStructure,
 	surface_ext: Option<khr::Surface>,
 	debug_utils_ext: Option<ext::DebugUtils>,
 	queues: Queues<QueueData>,
@@ -221,6 +223,8 @@ impl Device {
 	pub fn device(&self) -> &ash::Device { &self.device }
 
 	pub fn physical_device(&self) -> vk::PhysicalDevice { self.physical_device }
+
+	pub fn as_ext(&self) -> &khr::AccelerationStructure { &self.as_ext }
 
 	pub fn surface_ext(&self) -> Option<&khr::Surface> { self.surface_ext.as_ref() }
 

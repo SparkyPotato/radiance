@@ -190,7 +190,7 @@ impl VisBuffer {
 		if new {
 			let values: Vec<_> = (0..info.scene.meshlet_count()).collect();
 			pass.stage(device, |cx, _| {
-				cx.stage_buffer(cast_slice(&values), data.buffers[data.current].inner.inner(), 0)
+				cx.stage_buffer(cast_slice(&values), data.buffers[data.current].inner(), 0)
 			})
 			.unwrap();
 			usages = &[BufferUsageType::TransferWrite];
@@ -477,3 +477,4 @@ fn infinite_projection(aspect: f32, yfov: f32, near: f32) -> Mat4<f32> {
 		0.0, 0.0, 1.0, 0.0, //
 	)
 }
+

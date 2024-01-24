@@ -1,4 +1,10 @@
-use std::{hash::Hash, ops::BitOr, ptr::NonNull};
+//! TODO: Resource names.
+
+use std::{
+	hash::Hash,
+	ops::{BitOr, Deref},
+	ptr::NonNull,
+};
 
 use ash::vk;
 use gpu_allocator::{
@@ -8,7 +14,7 @@ use gpu_allocator::{
 
 use crate::{
 	device::{
-		descriptor::{BufferId, ImageId, StorageImageId},
+		descriptor::{ASId, BufferId, ImageId, StorageImageId},
 		Device,
 		Queues,
 	},
@@ -42,13 +48,14 @@ pub struct Buffer {
 	inner: vk::Buffer,
 	alloc: Allocation,
 	id: Option<BufferId>,
+	addr: u64,
 }
 
 impl Buffer {
 	pub fn create(device: &Device, desc: BufferDesc, location: MemoryLocation) -> Result<Self> {
 		let info = vk::BufferCreateInfo::builder()
 			.size(desc.size)
-			.usage(desc.usage)
+			.usage(desc.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
 			.sharing_mode(vk::SharingMode::CONCURRENT);
 
 		let usage = info.usage;
@@ -86,27 +93,36 @@ impl Buffer {
 			.contains(vk::BufferUsageFlags::STORAGE_BUFFER)
 			.then(|| device.descriptors().get_buffer(device, buffer));
 
+		let addr = unsafe {
+			device
+				.device()
+				.get_buffer_device_address(&vk::BufferDeviceAddressInfo::builder().buffer(buffer))
+		};
+
 		Ok(Self {
 			inner: buffer,
 			alloc,
 			id,
+			addr,
 		})
 	}
 
 	pub fn size(&self) -> u64 { self.alloc.size() }
 
-	pub fn mapped_ptr(&self) -> Option<NonNull<[u8]>> {
+	pub fn data(&self) -> NonNull<[u8]> {
 		unsafe {
-			Some(NonNull::new_unchecked(std::ptr::slice_from_raw_parts_mut(
-				self.alloc.mapped_ptr()?.as_ptr() as _,
+			NonNull::new_unchecked(std::ptr::slice_from_raw_parts_mut(
+				self.alloc.mapped_ptr().unwrap().as_ptr() as _,
 				self.alloc.size() as _,
-			)))
+			))
 		}
 	}
 
 	pub fn id(&self) -> Option<BufferId> { self.id }
 
 	pub fn inner(&self) -> vk::Buffer { self.inner }
+
+	pub fn addr(&self) -> u64 { self.addr }
 
 	/// # Safety
 	/// The resource must not be used after being destroyed, and appropriate synchronization must be performed.
@@ -120,10 +136,10 @@ impl Buffer {
 	}
 }
 
-/// A handle to a buffer for uploading data from the CPU to the GPU.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct UploadBufferHandle {
 	pub buffer: vk::Buffer,
+	pub addr: u64,
 	pub id: Option<BufferId>,
 	pub data: NonNull<[u8]>,
 }
@@ -131,7 +147,13 @@ pub struct UploadBufferHandle {
 /// A buffer for uploading data from the CPU to the GPU.
 #[derive(Default)]
 pub struct UploadBuffer {
-	pub inner: Buffer,
+	inner: Buffer,
+}
+
+impl Deref for UploadBuffer {
+	type Target = Buffer;
+
+	fn deref(&self) -> &Self::Target { &self.inner }
 }
 
 impl Resource for UploadBuffer {
@@ -141,7 +163,8 @@ impl Resource for UploadBuffer {
 	fn handle(&self) -> Self::Handle {
 		UploadBufferHandle {
 			buffer: self.inner.inner,
-			data: self.inner.mapped_ptr().unwrap(),
+			addr: self.inner.addr,
+			data: self.inner.data(),
 			id: self.inner.id,
 		}
 	}
@@ -156,18 +179,28 @@ impl Resource for UploadBuffer {
 	unsafe fn destroy(self, device: &Device) { self.inner.destroy(device) }
 }
 
-/// A handle to a buffer on the GPU.
+impl UploadBuffer {
+	pub fn into_inner(self) -> Buffer { self.inner }
+}
+
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct GpuBufferHandle {
 	pub buffer: vk::Buffer,
+	pub addr: u64,
 	pub id: Option<BufferId>,
-	pub size: u64,
+	pub data: NonNull<[u8]>,
 }
 
 /// A buffer on the GPU.
 #[derive(Default)]
 pub struct GpuBuffer {
-	pub inner: Buffer,
+	inner: Buffer,
+}
+
+impl Deref for GpuBuffer {
+	type Target = Buffer;
+
+	fn deref(&self) -> &Self::Target { &self.inner }
 }
 
 impl Resource for GpuBuffer {
@@ -176,17 +209,22 @@ impl Resource for GpuBuffer {
 
 	fn handle(&self) -> Self::Handle {
 		GpuBufferHandle {
-			buffer: self.inner.inner,
-			id: self.inner.id,
-			size: self.inner.size(),
+			buffer: self.inner.inner(),
+			addr: self.inner.addr(),
+			id: self.inner.id(),
+			data: self.inner.data(),
 		}
 	}
 
 	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
-		Buffer::create(device, desc, MemoryLocation::GpuOnly).map(|inner| Self { inner })
+		Buffer::create(device, desc, MemoryLocation::CpuToGpu).map(|inner| Self { inner })
 	}
 
 	unsafe fn destroy(self, device: &Device) { self.inner.destroy(device) }
+}
+
+impl GpuBuffer {
+	pub fn into_inner(self) -> Buffer { self.inner }
 }
 
 /// A description for an image.
@@ -388,6 +426,59 @@ impl Resource for ImageView {
 	}
 }
 
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct ASDesc {
+	pub flags: vk::AccelerationStructureCreateFlagsKHR,
+	pub ty: vk::AccelerationStructureTypeKHR,
+	pub size: u64,
+}
+
+#[derive(Default)]
+pub struct AS {
+	pub inner: vk::AccelerationStructureKHR,
+	pub buffer: GpuBuffer,
+	pub id: Option<ASId>,
+}
+
+impl Resource for AS {
+	type Desc = ASDesc;
+	type Handle = vk::AccelerationStructureKHR;
+
+	fn handle(&self) -> Self::Handle { self.inner }
+
+	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
+		unsafe {
+			let buffer = GpuBuffer::create(
+				device,
+				BufferDesc {
+					size: desc.size,
+					usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+				},
+			)?;
+			let inner = device.as_ext().create_acceleration_structure(
+				&vk::AccelerationStructureCreateInfoKHR::builder()
+					.create_flags(desc.flags)
+					.buffer(buffer.inner.inner)
+					.offset(0)
+					.size(desc.size)
+					.ty(desc.ty),
+				None,
+			)?;
+			let id = (desc.ty == vk::AccelerationStructureTypeKHR::TOP_LEVEL)
+				.then(|| device.descriptors().get_as(device, inner));
+
+			Ok(Self { inner, buffer, id })
+		}
+	}
+
+	unsafe fn destroy(self, device: &Device) {
+		device.as_ext().destroy_acceleration_structure(self.inner, None);
+		self.buffer.destroy(device);
+		device.descriptors().return_as(self.id.unwrap());
+	}
+}
+
 #[derive(Default)]
 pub(crate) struct Event {
 	inner: vk::Event,
@@ -411,3 +502,4 @@ impl Resource for Event {
 
 	unsafe fn destroy(self, device: &Device) { device.device().destroy_event(self.inner, None); }
 }
+

@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use bincode::{Decode, Encode};
 use bytemuck::{Pod, Zeroable};
 use static_assertions::const_assert_eq;
@@ -21,14 +23,11 @@ pub struct Vertex {
 const_assert_eq!(std::mem::size_of::<Vertex>(), 16);
 const_assert_eq!(std::mem::align_of::<Vertex>(), 2);
 
-#[derive(Copy, Clone, Encode, Decode)]
-#[repr(C)]
+#[derive(Encode, Decode)]
 pub struct Meshlet {
 	/// AABB of the meshlet relative to the mesh origin.
 	#[bincode(with_serde)]
-	pub aabb_min: Vec3<f32>,
-	#[bincode(with_serde)]
-	pub aabb_extent: Vec3<f32>,
+	pub aabb: Aabb<f32>,
 	/// Offset of the meshlet index buffer relative to the parent mesh index buffer.
 	pub index_offset: u32,
 	/// Offset of the meshlet vertex buffer relative to the parent mesh vertex buffer.
@@ -37,13 +36,22 @@ pub struct Meshlet {
 	pub tri_count: u8,
 	/// Number of vertices in the meshlet.
 	pub vert_count: u8,
-	pub _pad: u16,
 }
 
-const_assert_eq!(std::mem::size_of::<Meshlet>(), 36);
-const_assert_eq!(std::mem::align_of::<Meshlet>(), 4);
+/// A part of mesh with a material assigned to it.
+#[derive(Encode, Decode)]
+pub struct SubMesh {
+	/// Meshlets of the submesh.
+	pub meshlets: Range<u32>,
+	/// AABB of the submesh.
+	#[bincode(with_serde)]
+	pub aabb: Aabb<f32>,
+	/// Material of the submesh.
+	#[bincode(with_serde)]
+	pub material: Uuid,
+}
 
-/// A mesh asset consisting of meshlets.
+/// A mesh consisting of multiple submeshes, each with a material assigned to it.
 #[derive(Encode, Decode)]
 pub struct Mesh {
 	/// Vertices of the mesh.
@@ -52,10 +60,9 @@ pub struct Mesh {
 	pub indices: Vec<u8>,
 	/// Meshlets of the mesh.
 	pub meshlets: Vec<Meshlet>,
-	/// AABB of the mesh.
+	/// Submeshes making up the mesh.
+	pub submeshes: Vec<SubMesh>,
 	#[bincode(with_serde)]
 	pub aabb: Aabb<f32>,
-	/// Material of the mesh.
-	#[bincode(with_serde)]
-	pub material: Uuid,
 }
+
