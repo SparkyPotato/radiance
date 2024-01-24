@@ -17,7 +17,7 @@ struct MeshletPointer {
 struct Instance {
     f32 transform[12];
     Buf<bytes> mesh;
-    u32 _pad[3];
+    u32 submesh_count;
 
     float4x4 get_transform() {
         f32 t[12] = this.transform;
@@ -37,7 +37,7 @@ struct Meshlet {
     u32 vertex_offset;
     u32 index_offset;
     u16 vert_and_tri_count;
-    u16 pad;
+    u16 submesh;
 
     Aabb get_mesh_aabb() {
         Aabb ret;

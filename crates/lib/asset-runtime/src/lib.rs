@@ -9,7 +9,7 @@ use crossbeam_channel::{Receiver, Sender};
 use material::GpuMaterial;
 use radiance_asset::{AssetError, AssetSource, AssetSystem};
 use radiance_core::{CoreDevice, RenderCore};
-use radiance_graph::resource::BufferDesc;
+use radiance_graph::{device::Device, resource::BufferDesc};
 use radiance_util::{
 	buffer::{AllocBuffer, BufSpan},
 	deletion::{DeletionQueue, Resource},
@@ -37,6 +37,7 @@ impl From<Resource> for DelRes {
 pub struct AssetRuntime {
 	deleter: Sender<DelRes>,
 	delete_recv: Receiver<DelRes>,
+	scenes: FxHashMap<Uuid, RWeak<scene::Scene>>,
 	images: FxHashMap<Uuid, RWeak<image::Image>>,
 	materials: FxHashMap<Uuid, RWeak<material::Material>>,
 	meshes: FxHashMap<Uuid, RWeak<mesh::Mesh>>,
@@ -49,6 +50,7 @@ impl AssetRuntime {
 		Ok(Self {
 			deleter: send,
 			delete_recv: recv,
+			scenes: FxHashMap::default(),
 			images: FxHashMap::default(),
 			materials: FxHashMap::default(),
 			meshes: FxHashMap::default(),
@@ -60,6 +62,42 @@ impl AssetRuntime {
 				},
 			)?,
 		})
+	}
+
+	pub unsafe fn destroy(self, device: &Device) {
+		for (_, s) in self.scenes {
+			assert!(
+				s.upgrade().is_none(),
+				"Cannot destroy `AssetRuntime` with scene still alive"
+			)
+		}
+		for (_, i) in self.images {
+			assert!(
+				i.upgrade().is_none(),
+				"Cannot destroy `AssetRuntime` with images still alive"
+			)
+		}
+		for (_, m) in self.materials {
+			assert!(
+				m.upgrade().is_none(),
+				"Cannot destroy `AssetRuntime` with materials still alive"
+			)
+		}
+		for (_, m) in self.meshes {
+			assert!(
+				m.upgrade().is_none(),
+				"Cannot destroy `AssetRuntime` with meshes still alive"
+			)
+		}
+
+		for x in self.delete_recv.try_iter() {
+			match x {
+				DelRes::Resource(r) => unsafe { r.destroy(device) },
+				DelRes::Material(_) => {},
+			}
+		}
+
+		self.material_buffer.destroy(device);
 	}
 
 	pub fn tick(&mut self, core: &mut RenderCore) {
@@ -96,6 +134,19 @@ impl AssetRuntime {
 				StageError::Vulkan(x) => StageError::Vulkan(x),
 			})?;
 		Ok((ret, ticket))
+	}
+
+	pub fn load_scene<S: AssetSource>(
+		&mut self, loader: &mut Loader<'_, '_, '_, S>, uuid: Uuid,
+	) -> LResult<scene::Scene, S> {
+		match Self::get_cache(&mut self.scenes, uuid) {
+			Some(x) => Ok(x),
+			None => {
+				let s = self.load_scene_from_disk(loader, uuid)?;
+				self.scenes.insert(uuid, s.downgrade());
+				Ok(s)
+			},
+		}
 	}
 
 	pub fn load_image<S: AssetSource>(

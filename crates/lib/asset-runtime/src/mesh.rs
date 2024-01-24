@@ -2,14 +2,11 @@ use ash::vk;
 use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
 use radiance_asset::{mesh::Vertex, util::SliceWriter, Asset, AssetSource};
-use radiance_graph::{
-	device::descriptor::BufferId,
-	resource::{BufferDesc, GpuBuffer, Resource},
-};
+use radiance_graph::resource::{BufferDesc, GpuBuffer, Resource};
 use radiance_util::{deletion::IntoResource, staging::StageError};
 use static_assertions::const_assert_eq;
 use uuid::Uuid;
-use vek::{Vec3, Vec4};
+use vek::Vec3;
 
 use crate::{
 	material::Material,
@@ -22,16 +19,6 @@ use crate::{
 };
 
 pub type GpuVertex = Vertex;
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-pub struct GpuMeshletPointer {
-	pub instance: u32,
-	pub meshlet: u32,
-}
-
-const_assert_eq!(std::mem::size_of::<GpuMeshletPointer>(), 8);
-const_assert_eq!(std::mem::align_of::<GpuMeshletPointer>(), 4);
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
@@ -56,18 +43,6 @@ pub struct GpuSubMesh {
 
 const_assert_eq!(std::mem::size_of::<GpuSubMesh>(), 4);
 const_assert_eq!(std::mem::align_of::<GpuSubMesh>(), 4);
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-pub struct GpuInstance {
-	pub transform: Vec4<Vec3<f32>>,
-	/// Mesh buffer containing meshlets + meshlet data.
-	pub mesh: BufferId,
-	pub submesh_count: u32,
-}
-
-const_assert_eq!(std::mem::size_of::<GpuInstance>(), 56);
-const_assert_eq!(std::mem::align_of::<GpuInstance>(), 4);
 
 pub struct Mesh {
 	pub buffer: GpuBuffer,

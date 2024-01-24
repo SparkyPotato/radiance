@@ -12,14 +12,28 @@ pub trait RuntimeAsset {
 	fn into_resources(self, queue: Sender<DelRes>);
 }
 
-#[derive(Clone)]
 pub struct RRef<T: RuntimeAsset> {
 	inner: Arc<Control<T>>,
 }
 
-#[derive(Clone)]
+impl<T: RuntimeAsset> Clone for RRef<T> {
+	fn clone(&self) -> Self {
+		Self {
+			inner: self.inner.clone(),
+		}
+	}
+}
+
 pub struct RWeak<T: RuntimeAsset> {
 	inner: Weak<Control<T>>,
+}
+
+impl<T: RuntimeAsset> Clone for RWeak<T> {
+	fn clone(&self) -> Self {
+		Self {
+			inner: self.inner.clone(),
+		}
+	}
 }
 
 struct Control<T: RuntimeAsset> {

@@ -12,7 +12,7 @@ pub enum Resource {
 }
 
 impl Resource {
-	unsafe fn destroy(self, device: &Device) {
+	pub unsafe fn destroy(self, device: &Device) {
 		match self {
 			Resource::Buffer(x) => x.destroy(device),
 			Resource::Image(x) => x.destroy(device),

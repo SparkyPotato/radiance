@@ -49,21 +49,27 @@ impl AllocBuffer {
 
 	pub fn alloc(&mut self, ctx: &mut StagingCtx, queue: &mut DeletionQueue, data: &[u8]) -> Result<BufSpan> {
 		let len = data.len() as u64;
-		match self.alloc.allocate_range(len) {
-			Ok(range) => unsafe {
-				std::ptr::copy_nonoverlapping(
-					data.as_ptr(),
-					self.data().as_ptr().cast::<u8>().add(range.start as usize),
-					data.len(),
-				);
-				Ok(BufSpan {
-					offset: range.start,
-					size: len,
-				})
-			},
+		let span = self.alloc_size(ctx, queue, len)?;
+		unsafe {
+			std::ptr::copy_nonoverlapping(
+				data.as_ptr(),
+				self.data().as_ptr().cast::<u8>().add(span.offset as usize),
+				data.len(),
+			);
+		}
+
+		Ok(span)
+	}
+
+	pub fn alloc_size(&mut self, ctx: &mut StagingCtx, queue: &mut DeletionQueue, size: u64) -> Result<BufSpan> {
+		match self.alloc.allocate_range(size) {
+			Ok(range) => Ok(BufSpan {
+				offset: range.start,
+				size,
+			}),
 			Err(_) => {
-				self.reserve(ctx, queue, self.inner.size() + len)?;
-				self.alloc(ctx, queue, data)
+				self.reserve(ctx, queue, self.inner.size() + size)?;
+				self.alloc_size(ctx, queue, size)
 			},
 		}
 	}

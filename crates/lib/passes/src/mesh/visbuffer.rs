@@ -2,7 +2,7 @@ use std::io::Write;
 
 use ash::{extensions::ext, vk};
 use bytemuck::{bytes_of, cast_slice, NoUninit};
-use radiance_asset_runtime::Scene;
+use radiance_asset_runtime::{rref::RRef, scene::Scene};
 use radiance_core::{
 	persistent::PersistentBuffer,
 	pipeline::GraphicsPipelineDesc,
@@ -41,9 +41,9 @@ pub struct Camera {
 	pub view: Mat4<f32>,
 }
 
-#[derive(Copy, Clone)]
-pub struct RenderInfo<'a> {
-	pub scene: &'a Scene,
+#[derive(Clone)]
+pub struct RenderInfo {
+	pub scene: RRef<Scene>,
 	pub camera: Camera,
 	pub cull_camera: Option<Camera>,
 	pub size: Vec2<u32>,
@@ -179,16 +179,16 @@ impl VisBuffer {
 	}
 
 	pub fn init_visibility<'pass>(
-		&mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo<'pass>,
+		&mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
 	) -> (ReadId<GpuBufferHandle>, ReadId<GpuBufferHandle>) {
-		let new = self.visibility(device, info.scene);
+		let new = self.visibility(device, &info.scene);
 		let work = &mut self.workgroups;
 		let data = self.visibility.as_mut().unwrap();
 		let mut pass = frame.pass("init visibility");
 
 		let mut usages: &[_] = &[];
 		if new {
-			let values: Vec<_> = (0..info.scene.meshlet_count()).collect();
+			let values: Vec<_> = (0..info.scene.meshlet_pointer_count()).collect();
 			pass.stage(device, |cx, _| {
 				cx.stage_buffer(cast_slice(&values), data.buffers[data.current].inner(), 0)
 			})
@@ -216,8 +216,8 @@ impl VisBuffer {
 					rw.buffer,
 					0,
 					bytes_of(&[
-						info.scene.meshlet_count(),
-						(info.scene.meshlet_count() + 63) / 64,
+						info.scene.meshlet_pointer_count(),
+						(info.scene.meshlet_pointer_count() + 63) / 64,
 						1,
 						1,
 						0,
@@ -234,9 +234,9 @@ impl VisBuffer {
 	}
 
 	pub fn run<'pass>(
-		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo<'pass>,
+		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
 	) -> ReadId<ImageView> {
-		let (rw, ww) = self.init_visibility(device, frame, info);
+		let (rw, ww) = self.init_visibility(device, frame, info.clone());
 
 		let mut pass = frame.pass("visbuffer");
 		pass.input(
@@ -321,15 +321,15 @@ impl VisBuffer {
 			self.execute(
 				ctx,
 				PassIO {
-					instances: info.scene.instances.inner().inner.id().unwrap(),
-					meshlet_pointers: info.scene.meshlet_pointers.inner().inner.id().unwrap(),
+					instances: info.scene.instances(),
+					meshlet_pointers: info.scene.meshlet_pointers(),
 					rw,
 					ww,
 					rd,
 					wd,
 					cull_camera,
 					draw_camera,
-					meshlet_count: info.scene.meshlet_count(),
+					meshlet_count: info.scene.meshlet_pointer_count(),
 					camera: c,
 					visbuffer,
 					depth,
@@ -438,7 +438,7 @@ impl VisBuffer {
 
 	fn visibility(&mut self, device: &CoreDevice, scene: &Scene) -> bool {
 		let mut new = false;
-		let size = scene.meshlet_count() as u64 * 2 * 4;
+		let size = scene.meshlet_pointer_count() as u64 * 2 * 4;
 		if self.visibility.is_none() || self.visibility.as_ref().unwrap().size() < size {
 			new = true;
 			if let Some(old) = self.visibility.replace(
