@@ -475,7 +475,9 @@ impl Resource for AS {
 	unsafe fn destroy(self, device: &Device) {
 		device.as_ext().destroy_acceleration_structure(self.inner, None);
 		self.buffer.destroy(device);
-		device.descriptors().return_as(self.id.unwrap());
+		if let Some(x) = self.id {
+			device.descriptors().return_as(x);
+		}
 	}
 }
 

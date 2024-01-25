@@ -56,6 +56,7 @@ impl Renderer {
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
 		system: Option<&AssetSystem<S>>,
 	) {
+		self.runtime.tick(frame.ctx());
 		CentralPanel::default().show(ctx, |ui| {
 			if let Some(x) = self.render_inner(device, frame, ctx, ui, window, system) {
 				if x {
