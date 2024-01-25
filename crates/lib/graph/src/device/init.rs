@@ -129,6 +129,7 @@ impl<'a> DeviceBuilder<'a> {
 		.map_err(|e| Error::Message(e.to_string()))?;
 
 		let as_ext = khr::AccelerationStructure::new(&instance, &device);
+		let rt_ext = khr::RayTracingPipeline::new(&instance, &device);
 
 		let descriptors = Descriptors::new(&device)?;
 
@@ -137,6 +138,7 @@ impl<'a> DeviceBuilder<'a> {
 				entry,
 				instance,
 				as_ext,
+				rt_ext,
 				debug_messenger,
 				debug_utils_ext,
 				surface_ext,
@@ -647,3 +649,4 @@ unsafe extern "system" fn debug_callback(
 
 	0
 }
+

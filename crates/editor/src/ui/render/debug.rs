@@ -6,6 +6,7 @@ use radiance_passes::mesh::visbuffer::Camera;
 use crate::ui::render::camera::CameraController;
 
 pub struct DebugWindows {
+	pub ground_truth: bool,
 	culling: bool,
 	cull_camera: Option<Camera>,
 	alloc: AllocatorVisualizer,
@@ -16,6 +17,7 @@ pub struct DebugWindows {
 impl DebugWindows {
 	pub fn new() -> Self {
 		Self {
+			ground_truth: false,
 			culling: false,
 			cull_camera: None,
 			alloc: AllocatorVisualizer::new(),
@@ -25,6 +27,7 @@ impl DebugWindows {
 	}
 
 	pub fn draw_menu(&mut self, ui: &mut Ui) {
+		ui.checkbox(&mut self.ground_truth, "ground truth");
 		ui.checkbox(&mut self.culling, "culling");
 		ui.checkbox(&mut self.alloc_breakdown, "alloc breakdown");
 		ui.checkbox(&mut self.alloc_block, "alloc blocks");
@@ -52,3 +55,4 @@ impl DebugWindows {
 
 	pub fn cull_camera(&self) -> Option<Camera> { self.cull_camera }
 }
+

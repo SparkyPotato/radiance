@@ -50,7 +50,7 @@ impl DebugMeshlets {
 							)
 							.build(),
 					],
-					color_attachments: &[vk::Format::R8G8B8A8_SRGB],
+					color_attachments: &[vk::Format::R8G8B8A8_UNORM],
 					raster: &no_cull(),
 					blend: &simple_blend(&[no_blend()]),
 					..Default::default()
@@ -77,7 +77,7 @@ impl DebugMeshlets {
 		let (ret, output) = pass.output(
 			visbuffer,
 			ImageUsage {
-				format: vk::Format::R8G8B8A8_SRGB,
+				format: vk::Format::R8G8B8A8_UNORM, // TODO: fix
 				usages: &[ImageUsageType::ColorAttachmentWrite],
 				view_type: vk::ImageViewType::TYPE_2D,
 				aspect: vk::ImageAspectFlags::COLOR,
@@ -163,3 +163,4 @@ impl DebugMeshlets {
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }
+

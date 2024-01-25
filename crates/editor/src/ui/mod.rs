@@ -71,3 +71,4 @@ impl UiState {
 
 	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
 }
+

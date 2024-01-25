@@ -543,7 +543,10 @@ impl VirtualResourceDesc for ReadId<GpuBufferHandle> {
 	}
 }
 
-pub fn compatible_formats(a: vk::Format, b: vk::Format) -> bool { get_format_block(a) == get_format_block(b) }
+pub fn compatible_formats(a: vk::Format, b: vk::Format) -> bool {
+	// get_format_block(a) == get_format_block(b)  TODO: fix
+	a == b
+}
 
 fn get_format_block(f: vk::Format) -> i32 {
 	macro_rules! f {

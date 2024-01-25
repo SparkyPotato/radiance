@@ -23,6 +23,7 @@ pub struct Device {
 	physical_device: vk::PhysicalDevice,
 	device: ash::Device,
 	as_ext: khr::AccelerationStructure,
+	rt_ext: khr::RayTracingPipeline,
 	surface_ext: Option<khr::Surface>,
 	debug_utils_ext: Option<ext::DebugUtils>,
 	queues: Queues<QueueData>,
@@ -226,6 +227,8 @@ impl Device {
 
 	pub fn as_ext(&self) -> &khr::AccelerationStructure { &self.as_ext }
 
+	pub fn rt_ext(&self) -> &khr::RayTracingPipeline { &self.rt_ext }
+
 	pub fn surface_ext(&self) -> Option<&khr::Surface> { self.surface_ext.as_ref() }
 
 	pub fn debug_utils_ext(&self) -> Option<&ext::DebugUtils> { self.debug_utils_ext.as_ref() }
@@ -301,3 +304,4 @@ impl Drop for Device {
 		}
 	}
 }
+

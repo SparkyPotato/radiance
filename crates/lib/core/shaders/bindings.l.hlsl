@@ -8,7 +8,7 @@
 [[vk::binding(1, 0)]] TextureCube TextureCubes[];
 
 // [[vk::binding(2, 0)]] RWTexture2D RWTexture1Ds[];
-// [[vk::binding(2, 0)]] RWTexture2D RWTexture2Ds[];
+[[vk::binding(2, 0)]] RWTexture2D<float4> RWTexture2Ds[];
 // [[vk::binding(2, 0)]] RWTexture2D RWTexture3Ds[];
 
 [[vk::binding(3, 0)]] SamplerState Samplers[];

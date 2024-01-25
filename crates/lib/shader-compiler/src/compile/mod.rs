@@ -242,6 +242,7 @@ enum ShaderType {
 	Compute,
 	Mesh,
 	Amplification,
+	RayTracing,
 }
 
 impl ShaderType {
@@ -266,6 +267,7 @@ impl ShaderType {
 			"c" => Some(ShaderType::Compute),
 			"m" => Some(ShaderType::Mesh),
 			"a" => Some(ShaderType::Amplification),
+			"r" => Some(ShaderType::RayTracing),
 			"hlsl" => return Err(err()),
 			_ => None,
 		};
@@ -283,6 +285,8 @@ impl ShaderType {
 			ShaderType::Compute => "cs_6_7",
 			ShaderType::Mesh => "ms_6_7",
 			ShaderType::Amplification => "as_6_7",
+			ShaderType::RayTracing => "lib_6_7",
 		}
 	}
 }
+

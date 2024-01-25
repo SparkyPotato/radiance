@@ -466,7 +466,7 @@ impl VisBuffer {
 	}
 }
 
-fn infinite_projection(aspect: f32, yfov: f32, near: f32) -> Mat4<f32> {
+pub fn infinite_projection(aspect: f32, yfov: f32, near: f32) -> Mat4<f32> {
 	let h = 1.0 / (yfov / 2.0).tan();
 	let w = h / aspect;
 

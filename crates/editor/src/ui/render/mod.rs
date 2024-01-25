@@ -6,6 +6,7 @@ use radiance_egui::to_texture_id;
 use radiance_graph::Result;
 use radiance_passes::{
 	debug::meshlet::DebugMeshlets,
+	ground_truth::GroundTruth,
 	mesh::visbuffer::{RenderInfo, VisBuffer},
 };
 use tracing::{event, Level};
@@ -33,6 +34,7 @@ pub struct Renderer {
 	scene: Scene,
 	visbuffer: VisBuffer,
 	debug: DebugMeshlets,
+	ground_truth: GroundTruth,
 	runtime: AssetRuntime,
 	debug_windows: DebugWindows,
 	camera: CameraController,
@@ -44,6 +46,7 @@ impl Renderer {
 			scene: Scene::None,
 			visbuffer: VisBuffer::new(device, core)?,
 			debug: DebugMeshlets::new(device, core)?,
+			ground_truth: GroundTruth::new(device, core)?,
 			runtime: AssetRuntime::new(device)?,
 			debug_windows: DebugWindows::new(),
 			camera: CameraController::new(),
@@ -116,18 +119,32 @@ impl Renderer {
 			pass.build(|_| {});
 		}
 
-		let visbuffer = self.visbuffer.run(
-			device,
-			frame,
-			RenderInfo {
-				scene,
-				camera: self.camera.get(),
-				cull_camera: self.debug_windows.cull_camera(),
-				size: Vec2::new(size.x as u32, size.y as u32),
-			},
-		);
-		let debug = self.debug.run(frame, visbuffer);
-		ui.image((to_texture_id(debug), size));
+		let s = Vec2::new(size.x as u32, size.y as u32);
+		if self.debug_windows.ground_truth {
+			let rt = self.ground_truth.run(
+				device,
+				frame,
+				radiance_passes::ground_truth::RenderInfo {
+					scene,
+					camera: self.camera.get(),
+					size: s,
+				},
+			);
+			ui.image((to_texture_id(rt), size));
+		} else {
+			let visbuffer = self.visbuffer.run(
+				device,
+				frame,
+				RenderInfo {
+					scene,
+					camera: self.camera.get(),
+					cull_camera: self.debug_windows.cull_camera(),
+					size: s,
+				},
+			);
+			let debug = self.debug.run(frame, visbuffer);
+			ui.image((to_texture_id(debug), size));
+		}
 
 		Some(false)
 	}
@@ -159,6 +176,7 @@ impl Renderer {
 		self.scene = Scene::None;
 		self.visbuffer.destroy(device);
 		self.debug.destroy(device);
+		self.ground_truth.destroy(device);
 		self.runtime.destroy(device);
 	}
 }

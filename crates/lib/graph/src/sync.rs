@@ -15,6 +15,7 @@ pub enum Shader {
 	Geometry,
 	Fragment,
 	Compute,
+	RayTracing,
 	/// Any or all shader stages.
 	Any,
 }
@@ -320,6 +321,7 @@ impl From<Shader> for vk::PipelineStageFlags2 {
 			Shader::Fragment => vk::PipelineStageFlags2::FRAGMENT_SHADER,
 			Shader::Compute => vk::PipelineStageFlags2::COMPUTE_SHADER,
 			Shader::Any => vk::PipelineStageFlags2::ALL_GRAPHICS,
+			Shader::RayTracing => vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
 		}
 	}
 }
@@ -616,3 +618,4 @@ pub fn as_next_access(usages: impl IntoIterator<Item = UsageType>, prev_access: 
 		.reduce(|a, b| a | b)
 		.unwrap_or_default()
 }
+
