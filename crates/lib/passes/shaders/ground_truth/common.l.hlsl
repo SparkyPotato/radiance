@@ -8,7 +8,6 @@ struct PushConstants {
 
 PUSH PushConstants Constants;
 
-struct [raypayload] Payload {};
-
-struct Attrs {};
+struct [raypayload] Payload {
+};
 
