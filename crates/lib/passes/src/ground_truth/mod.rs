@@ -5,7 +5,7 @@ use bytemuck::{bytes_of, NoUninit};
 use radiance_asset_runtime::{rref::RRef, scene::Scene};
 use radiance_core::{CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
-	device::descriptor::{ASId, BufferId, ImageId, StorageImageId},
+	device::descriptor::{ASId, BufferId, StorageImageId},
 	graph::{BufferUsage, BufferUsageType, ImageDesc, ImageUsage, ImageUsageType, ReadId, UploadBufferDesc, WriteId},
 	resource::{BufferDesc, GpuBuffer, ImageView, Resource, UploadBufferHandle},
 	sync::Shader,
@@ -14,7 +14,7 @@ use radiance_graph::{
 use radiance_shader_compiler::c_str;
 use vek::{Mat4, Vec2};
 
-use crate::mesh::visbuffer::{infinite_projection, Camera};
+use crate::mesh::visbuffer::Camera;
 
 #[derive(Clone)]
 pub struct RenderInfo {
@@ -28,6 +28,7 @@ pub struct GroundTruth {
 	pipeline: vk::Pipeline,
 	sbt: GpuBuffer,
 	rgen: vk::StridedDeviceAddressRegionKHR,
+	miss: vk::StridedDeviceAddressRegionKHR,
 	hit: vk::StridedDeviceAddressRegionKHR,
 }
 
@@ -45,7 +46,14 @@ struct PushConstants {
 	tlas: ASId,
 }
 
-fn align_up(size: u64, align: u64) -> u64 { ((size + align - 1) / align) * align }
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+struct CameraData {
+	view: Mat4<f32>,
+	proj: Mat4<f32>,
+}
+
+fn align_up(size: u64, align: u64) -> u64 { (size + align - 1) & !(align - 1) }
 
 impl GroundTruth {
 	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
@@ -54,7 +62,10 @@ impl GroundTruth {
 				&vk::PipelineLayoutCreateInfo::builder()
 					.set_layouts(&[device.descriptors().layout()])
 					.push_constant_ranges(&[vk::PushConstantRange::builder()
-						.stage_flags(vk::ShaderStageFlags::RAYGEN_KHR | vk::ShaderStageFlags::CLOSEST_HIT_KHR)
+						.stage_flags(
+							vk::ShaderStageFlags::RAYGEN_KHR
+								| vk::ShaderStageFlags::MISS_KHR | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+						)
 						.size(std::mem::size_of::<PushConstants>() as u32)
 						.build()]),
 				None,
@@ -75,6 +86,13 @@ impl GroundTruth {
 							.build(),
 						core.shaders
 							.shader(
+								c_str!("radiance-passes/ground_truth/miss"),
+								vk::ShaderStageFlags::MISS_KHR,
+								None,
+							)
+							.build(),
+						core.shaders
+							.shader(
 								c_str!("radiance-passes/ground_truth/hit"),
 								vk::ShaderStageFlags::CLOSEST_HIT_KHR,
 								None,
@@ -90,21 +108,28 @@ impl GroundTruth {
 							.intersection_shader(vk::SHADER_UNUSED_KHR)
 							.build(),
 						vk::RayTracingShaderGroupCreateInfoKHR::builder()
+							.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+							.general_shader(1)
+							.closest_hit_shader(vk::SHADER_UNUSED_KHR)
+							.any_hit_shader(vk::SHADER_UNUSED_KHR)
+							.intersection_shader(vk::SHADER_UNUSED_KHR)
+							.build(),
+						vk::RayTracingShaderGroupCreateInfoKHR::builder()
 							.ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
 							.general_shader(vk::SHADER_UNUSED_KHR)
-							.closest_hit_shader(1)
+							.closest_hit_shader(2)
 							.any_hit_shader(vk::SHADER_UNUSED_KHR)
 							.intersection_shader(vk::SHADER_UNUSED_KHR)
 							.build(),
 					])
 					.max_pipeline_ray_recursion_depth(2)
-					.dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder())
 					.layout(layout)
 					.build()],
 				None,
 			)?[0];
 
 			let mut rgen = vk::StridedDeviceAddressRegionKHR::default();
+			let mut miss = vk::StridedDeviceAddressRegionKHR::default();
 			let mut hit = vk::StridedDeviceAddressRegionKHR::default();
 
 			let mut props = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
@@ -113,38 +138,47 @@ impl GroundTruth {
 				.instance()
 				.get_physical_device_properties2(device.physical_device(), &mut p);
 
-			let handle_size = align_up(
-				props.shader_group_handle_size as u64,
-				props.shader_group_handle_alignment as u64,
-			);
-			rgen.stride = align_up(handle_size, props.shader_group_base_alignment as u64);
+			let handle_count = 1 + 1 + 1;
+			let handle_size = props.shader_group_handle_size as u64;
+			let handle_align = props.shader_group_handle_alignment as u64;
+			let base_align = props.shader_group_base_alignment as u64;
+			let handle_size_align = align_up(handle_size, handle_align);
+			rgen.stride = align_up(handle_size_align, base_align);
 			rgen.size = rgen.stride;
-			hit.stride = handle_size;
-			hit.size = align_up(handle_size, props.shader_group_base_alignment as u64);
+			miss.stride = handle_size_align;
+			miss.size = align_up(1 * handle_size_align, base_align);
+			hit.stride = handle_size_align;
+			hit.size = align_up(1 * handle_size, base_align);
 
 			let sbt = GpuBuffer::create(
 				device,
 				BufferDesc {
-					size: rgen.size + hit.size,
+					size: rgen.size + miss.size + hit.size,
 					usage: vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
 				},
 			)?;
 			rgen.device_address = sbt.addr();
-			hit.device_address = rgen.device_address + rgen.size;
+			miss.device_address = rgen.device_address + rgen.size;
+			hit.device_address = miss.device_address + miss.size;
 
 			let handles = device.rt_ext().get_ray_tracing_shader_group_handles(
 				pipeline,
 				0,
-				2,
-				props.shader_group_handle_size as usize * 2,
+				handle_count,
+				(handle_count as u64 * handle_size) as usize,
 			)?;
 
-			let ptr = sbt.data().as_ptr().cast::<u8>();
-			std::ptr::copy_nonoverlapping(handles.as_ptr(), ptr, props.shader_group_handle_size as usize);
+			let p = sbt.data().as_ptr().cast::<u8>();
+			std::ptr::copy_nonoverlapping(handles.as_ptr(), p, handle_size as usize);
 			std::ptr::copy_nonoverlapping(
-				handles.as_ptr().add(props.shader_group_handle_size as usize),
-				ptr.add(rgen.size as usize),
-				props.shader_group_handle_size as usize,
+				handles.as_ptr().add(1 * handle_size as usize),
+				p.add(rgen.size as usize),
+				handle_size as usize,
+			);
+			std::ptr::copy_nonoverlapping(
+				handles.as_ptr().add(2 * handle_size as usize),
+				p.add((rgen.size + miss.size) as usize),
+				handle_size as usize,
 			);
 
 			Ok(Self {
@@ -152,6 +186,7 @@ impl GroundTruth {
 				pipeline,
 				sbt,
 				rgen,
+				miss,
 				hit,
 			})
 		}
@@ -190,7 +225,7 @@ impl GroundTruth {
 
 		let (_, camera) = pass.output(
 			UploadBufferDesc {
-				size: std::mem::size_of::<Mat4<f32>>() as _,
+				size: std::mem::size_of::<CameraData>() as _,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::RayTracing)],
@@ -211,11 +246,15 @@ impl GroundTruth {
 
 		unsafe {
 			let s = io.info.size.map(|x| x as f32);
-			let proj = infinite_projection(s.y / s.x, io.info.camera.fov, io.info.camera.near);
+			let proj =
+				Mat4::perspective_fov_lh_zo(io.info.camera.fov, s.x, s.y, io.info.camera.near, 10000.0).inverted();
 			camera
 				.data
 				.as_mut()
-				.write(bytes_of(&(proj * io.info.camera.view).inverted()))
+				.write(bytes_of(&CameraData {
+					view: io.info.camera.view.inverted(),
+					proj,
+				}))
 				.unwrap();
 
 			dev.device()
@@ -231,7 +270,9 @@ impl GroundTruth {
 			dev.device().cmd_push_constants(
 				buf,
 				self.layout,
-				vk::ShaderStageFlags::RAYGEN_KHR | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+				vk::ShaderStageFlags::RAYGEN_KHR
+					| vk::ShaderStageFlags::MISS_KHR
+					| vk::ShaderStageFlags::CLOSEST_HIT_KHR,
 				0,
 				bytes_of(&PushConstants {
 					out: write.storage_id.unwrap(),
@@ -243,7 +284,7 @@ impl GroundTruth {
 			dev.rt_ext().cmd_trace_rays(
 				buf,
 				&self.rgen,
-				&vk::StridedDeviceAddressRegionKHR::default(),
+				&self.miss,
 				&self.hit,
 				&vk::StridedDeviceAddressRegionKHR::default(),
 				io.info.size.x,

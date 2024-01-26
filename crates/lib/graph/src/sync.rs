@@ -85,6 +85,12 @@ gen_usage_enums! {
 		HostRead,
 		/// Written on the host. Do not use for host writes before a submit - they are already synchronized.
 		HostWrite,
+		/// Read when building acceleration structures.
+		AccelerationStructureBuildRead,
+		/// Written when building acceleration structures.
+		AccelerationStructureBuildWrite,
+		/// Written as scratch data during acceleration structure build.
+		AccelerationStructureBuildScratch,
 	};
 
 	pub enum ImageOnlyUsage {
@@ -171,6 +177,11 @@ impl From<BufferUsage> for vk::BufferUsageFlags {
 			BufferUsage::TransferWrite => vk::BufferUsageFlags::TRANSFER_DST,
 			BufferUsage::HostWrite => vk::BufferUsageFlags::empty(),
 			BufferUsage::General => vk::BufferUsageFlags::empty(),
+			BufferUsage::AccelerationStructureBuildRead => {
+				vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+			},
+			BufferUsage::AccelerationStructureBuildWrite => vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
+			BufferUsage::AccelerationStructureBuildScratch => vk::BufferUsageFlags::STORAGE_BUFFER,
 		}
 	}
 }
@@ -305,6 +316,21 @@ impl From<UsageType> for AccessInfo {
 				access_mask: vk::AccessFlags2::MEMORY_READ | vk::AccessFlags2::MEMORY_WRITE,
 				image_layout: vk::ImageLayout::GENERAL,
 			},
+			UsageType::AccelerationStructureBuildRead => AccessInfo {
+				stage_mask: vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
+				access_mask: vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR,
+				image_layout: vk::ImageLayout::UNDEFINED,
+			},
+			UsageType::AccelerationStructureBuildWrite => AccessInfo {
+				stage_mask: vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
+				access_mask: vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR,
+				image_layout: vk::ImageLayout::UNDEFINED,
+			},
+			UsageType::AccelerationStructureBuildScratch => AccessInfo {
+				stage_mask: vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR,
+				access_mask: vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR,
+				image_layout: vk::ImageLayout::UNDEFINED,
+			},
 		}
 	}
 }
@@ -347,6 +373,8 @@ pub fn is_write_access(usage: UsageType) -> bool {
 			| UsageType::TransferWrite
 			| UsageType::HostWrite
 			| UsageType::General
+			| UsageType::AccelerationStructureBuildWrite
+			| UsageType::AccelerationStructureBuildScratch
 	)
 }
 

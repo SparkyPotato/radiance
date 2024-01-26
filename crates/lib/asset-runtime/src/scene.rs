@@ -8,6 +8,7 @@ use radiance_graph::{
 		QueueType,
 	},
 	resource::{ASDesc, BufferDesc, GpuBuffer, Resource, AS},
+	sync::{get_global_barrier, GlobalBarrier, UsageType},
 };
 use radiance_util::{buffer::AllocBuffer, deletion::IntoResource, staging::StageError};
 use static_assertions::const_assert_eq;
@@ -243,11 +244,20 @@ impl AssetRuntime {
 				device_address: scratch.addr(),
 			};
 
+			let buf = loader
+				.ctx
+				.execute_before(QueueType::Compute)
+				.map_err(StageError::Vulkan)?;
+
+			loader.device.device().cmd_pipeline_barrier2(
+				buf,
+				&vk::DependencyInfo::builder().memory_barriers(&[get_global_barrier(&GlobalBarrier {
+					previous_usages: &[UsageType::AccelerationStructureBuildWrite],
+					next_usages: &[UsageType::AccelerationStructureBuildRead],
+				})]),
+			);
 			ext.cmd_build_acceleration_structures(
-				loader
-					.ctx
-					.execute_before(QueueType::Compute)
-					.map_err(StageError::Vulkan)?,
+				buf,
 				&[info.build()],
 				&[&[vk::AccelerationStructureBuildRangeInfoKHR::builder()
 					.primitive_count(count)

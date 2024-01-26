@@ -171,7 +171,7 @@ impl AssetRuntime {
 							device_address: temp_build_buffer.addr(),
 						})
 						.vertex_stride(std::mem::size_of::<Vec3<f32>>() as u64)
-						.max_vertex(m.vertices.len() as u32)
+						.max_vertex(m.vertices.len() as u32 - 1)
 						.index_type(vk::IndexType::UINT32)
 						.index_data(vk::DeviceOrHostAddressConstKHR {
 							device_address: temp_build_buffer.addr() + vertex_size,
