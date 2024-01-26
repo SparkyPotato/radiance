@@ -52,13 +52,16 @@ const_assert_eq!(std::mem::align_of::<GpuSubMesh>(), 4);
 pub struct Mesh {
 	pub buffer: GpuBuffer,
 	pub submeshes: Vec<RRef<Material>>,
+	pub raw_mesh: GpuBuffer,
 	pub acceleration_structure: AS,
+	pub index_byte_offset: u32,
 	pub meshlet_count: u32,
 }
 
 impl RuntimeAsset for Mesh {
 	fn into_resources(self, queue: Sender<DelRes>) {
 		queue.send(self.buffer.into_resource().into()).unwrap();
+		queue.send(self.raw_mesh.into_resource().into()).unwrap();
 		queue.send(self.acceleration_structure.into_resource().into()).unwrap();
 	}
 }
@@ -103,16 +106,17 @@ impl AssetRuntime {
 			.collect::<Result<_, LErr<S>>>()?;
 
 		let vertex_size = (std::mem::size_of::<Vec3<f32>>() * m.vertices.len()) as u64;
-		let temp_build_buffer = GpuBuffer::create(
+		let raw_mesh = GpuBuffer::create(
 			loader.device,
 			BufferDesc {
 				size: vertex_size + (std::mem::size_of::<u32>() * m.indices.len()) as u64,
-				usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
+				usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+					| vk::BufferUsageFlags::STORAGE_BUFFER,
 			},
 		)
 		.map_err(StageError::Vulkan)?;
-		let mut vwriter = SliceWriter::new(unsafe { &mut temp_build_buffer.data().as_mut()[..vertex_size as usize] });
-		let mut iwriter = SliceWriter::new(unsafe { &mut temp_build_buffer.data().as_mut()[vertex_size as usize..] });
+		let mut vwriter = SliceWriter::new(unsafe { &mut raw_mesh.data().as_mut()[..vertex_size as usize] });
+		let mut iwriter = SliceWriter::new(unsafe { &mut raw_mesh.data().as_mut()[vertex_size as usize..] });
 
 		let mut srs = m.submeshes.into_iter().map(|x| x.meshlets);
 		let mut curr = srs.next().unwrap();
@@ -168,13 +172,13 @@ impl AssetRuntime {
 					triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::builder()
 						.vertex_format(vk::Format::R32G32B32_SFLOAT)
 						.vertex_data(vk::DeviceOrHostAddressConstKHR {
-							device_address: temp_build_buffer.addr(),
+							device_address: raw_mesh.addr(),
 						})
 						.vertex_stride(std::mem::size_of::<Vec3<f32>>() as u64)
 						.max_vertex(m.vertices.len() as u32 - 1)
 						.index_type(vk::IndexType::UINT32)
 						.index_data(vk::DeviceOrHostAddressConstKHR {
-							device_address: temp_build_buffer.addr() + vertex_size,
+							device_address: raw_mesh.addr() + vertex_size,
 						})
 						.build(),
 				})
@@ -228,7 +232,6 @@ impl AssetRuntime {
 					.build()]],
 			);
 
-			loader.queue.delete(temp_build_buffer);
 			loader.queue.delete(scratch);
 
 			as_
@@ -238,7 +241,9 @@ impl AssetRuntime {
 			Mesh {
 				buffer,
 				submeshes,
+				raw_mesh,
 				meshlet_count,
+				index_byte_offset: vertex_size as u32,
 				acceleration_structure,
 			},
 			loader.deleter.clone(),

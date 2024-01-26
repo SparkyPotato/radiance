@@ -20,7 +20,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
         u32 mpid = Constants.rd.load(DATA_OFFSET + id);
         MeshletPointer pointer = Constants.meshlet_pointers.load(mpid);
         Instance instance = Constants.instances.load(pointer.instance);
-        Meshlet meshlet = instance.mesh.load<Meshlet>(sizeof(u32) * instance.submesh_count, pointer.meshlet);
+        Meshlet meshlet = instance.mesh.load<Meshlet>(sizeof(Submesh) * instance.submesh_count, pointer.meshlet);
         Camera camera = Constants.camera.load(CULL_CAMERA);
 
         float4x4 transform = instance.get_transform();

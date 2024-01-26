@@ -5,7 +5,7 @@ void main() {
 	uint2 pixel = DispatchRaysIndex().xy;
 	uint2 total = DispatchRaysDimensions().xy;
 
-	Camera cam = Constants.inv_camera.load(0);
+	CameraData cam = Constants.inv_camera.load(0);
 
 	RayDesc ray;
 	float2 clip = (float2(pixel) + 0.5f) / float2(total) * 2.f - 1.f;

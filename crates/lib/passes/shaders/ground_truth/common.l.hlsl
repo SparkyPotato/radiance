@@ -1,13 +1,14 @@
-#include "radiance-core/interface.l.hlsl"
+#include "radiance-passes/mesh/data.l.hlsl"
 
-struct Camera {
+struct CameraData {
 	float4x4 view;
 	float4x4 proj;
 };
 
 struct PushConstants {
 	u32 img;
-	Buf<Camera> inv_camera;
+	Buf<CameraData> inv_camera;
+    Buf<Instance> instances;
 	AS as;
 };
 
@@ -15,5 +16,9 @@ PUSH PushConstants Constants;
 
 struct [raypayload] Payload {
 	float4 value : read(caller) : write(miss, closesthit);
+};
+
+struct [raypayload] ShadowPayload {
+	bool unshadowed : read(caller) : write(caller, miss);
 };
 

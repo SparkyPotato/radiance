@@ -43,6 +43,7 @@ struct PassIO {
 struct PushConstants {
 	out: StorageImageId,
 	camera: BufferId,
+	instances: BufferId,
 	tlas: ASId,
 }
 
@@ -93,6 +94,13 @@ impl GroundTruth {
 							.build(),
 						core.shaders
 							.shader(
+								c_str!("radiance-passes/ground_truth/shadow"),
+								vk::ShaderStageFlags::MISS_KHR,
+								None,
+							)
+							.build(),
+						core.shaders
+							.shader(
 								c_str!("radiance-passes/ground_truth/hit"),
 								vk::ShaderStageFlags::CLOSEST_HIT_KHR,
 								None,
@@ -115,9 +123,16 @@ impl GroundTruth {
 							.intersection_shader(vk::SHADER_UNUSED_KHR)
 							.build(),
 						vk::RayTracingShaderGroupCreateInfoKHR::builder()
+							.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+							.general_shader(2)
+							.closest_hit_shader(vk::SHADER_UNUSED_KHR)
+							.any_hit_shader(vk::SHADER_UNUSED_KHR)
+							.intersection_shader(vk::SHADER_UNUSED_KHR)
+							.build(),
+						vk::RayTracingShaderGroupCreateInfoKHR::builder()
 							.ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
 							.general_shader(vk::SHADER_UNUSED_KHR)
-							.closest_hit_shader(2)
+							.closest_hit_shader(3)
 							.any_hit_shader(vk::SHADER_UNUSED_KHR)
 							.intersection_shader(vk::SHADER_UNUSED_KHR)
 							.build(),
@@ -138,7 +153,7 @@ impl GroundTruth {
 				.instance()
 				.get_physical_device_properties2(device.physical_device(), &mut p);
 
-			let handle_count = 1 + 1 + 1;
+			let handle_count = 1 + 2 + 1;
 			let handle_size = props.shader_group_handle_size as u64;
 			let handle_align = props.shader_group_handle_alignment as u64;
 			let base_align = props.shader_group_base_alignment as u64;
@@ -146,7 +161,7 @@ impl GroundTruth {
 			rgen.stride = align_up(handle_size_align, base_align);
 			rgen.size = rgen.stride;
 			miss.stride = handle_size_align;
-			miss.size = align_up(1 * handle_size_align, base_align);
+			miss.size = align_up(2 * handle_size_align, base_align);
 			hit.stride = handle_size_align;
 			hit.size = align_up(1 * handle_size, base_align);
 
@@ -177,6 +192,11 @@ impl GroundTruth {
 			);
 			std::ptr::copy_nonoverlapping(
 				handles.as_ptr().add(2 * handle_size as usize),
+				p.add((rgen.size + handle_size_align) as usize),
+				handle_size as usize,
+			);
+			std::ptr::copy_nonoverlapping(
+				handles.as_ptr().add(3 * handle_size as usize),
 				p.add((rgen.size + miss.size) as usize),
 				handle_size as usize,
 			);
@@ -277,6 +297,7 @@ impl GroundTruth {
 				bytes_of(&PushConstants {
 					out: write.storage_id.unwrap(),
 					camera: camera.id.unwrap(),
+					instances: io.info.scene.instances(),
 					tlas: io.info.scene.acceleration_structure(),
 				}),
 			);

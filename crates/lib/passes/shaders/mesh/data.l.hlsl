@@ -5,7 +5,7 @@
 
 struct Vertex {
     u16 position[3];
-    u16 normal[3];
+    i16 normal[3];
     u16 uv[2];
 };
 
@@ -14,9 +14,20 @@ struct MeshletPointer {
     u32 meshlet;
 };
 
+struct Submesh {
+    u32 mat_index;
+};
+
+struct Pos {
+    f32 pos[3];
+};
+
 struct Instance {
     f32 transform[12];
     Buf<bytes> mesh;
+    Buf<bytes> raw_mesh;
+    u32 index_byte_offset;
+    u32 meshlet_count;
     u32 submesh_count;
 
     float4x4 get_transform() {
