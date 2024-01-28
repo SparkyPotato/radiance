@@ -8,7 +8,7 @@ use radiance_graph::{
 	device::descriptor::{ASId, BufferId, StorageImageId},
 	graph::{BufferUsage, BufferUsageType, ImageDesc, ImageUsage, ImageUsageType, ReadId, UploadBufferDesc, WriteId},
 	resource::{BufferDesc, GpuBuffer, ImageView, Resource, UploadBufferHandle},
-	sync::Shader,
+	sync::{get_global_barrier, GlobalBarrier, Shader, UsageType},
 	Result,
 };
 use radiance_shader_compiler::c_str;
@@ -19,6 +19,7 @@ use crate::mesh::visbuffer::Camera;
 #[derive(Clone)]
 pub struct RenderInfo {
 	pub scene: RRef<Scene>,
+	pub materials: BufferId,
 	pub camera: Camera,
 	pub size: Vec2<u32>,
 }
@@ -44,6 +45,7 @@ struct PushConstants {
 	out: StorageImageId,
 	camera: BufferId,
 	instances: BufferId,
+	materials: BufferId,
 	tlas: ASId,
 }
 
@@ -266,8 +268,7 @@ impl GroundTruth {
 
 		unsafe {
 			let s = io.info.size.map(|x| x as f32);
-			let proj =
-				Mat4::perspective_fov_lh_zo(io.info.camera.fov, s.x, s.y, io.info.camera.near, 10000.0).inverted();
+			let proj = Mat4::perspective_fov_lh_zo(io.info.camera.fov, s.x, s.y, io.info.camera.near, 10.0).inverted();
 			camera
 				.data
 				.as_mut()
@@ -298,6 +299,7 @@ impl GroundTruth {
 					out: write.storage_id.unwrap(),
 					camera: camera.id.unwrap(),
 					instances: io.info.scene.instances(),
+					materials: io.info.materials,
 					tlas: io.info.scene.acceleration_structure(),
 				}),
 			);

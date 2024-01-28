@@ -8,6 +8,7 @@ use uuid::Uuid;
 use vek::{Vec3, Vec4};
 
 use crate::{
+	image::Image,
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
 	DelRes,
@@ -34,18 +35,15 @@ const_assert_eq!(std::mem::align_of::<GpuMaterial>(), 4);
 
 pub struct Material {
 	pub index: u32,
+	pub base_color: Option<RRef<Image>>,
+	pub metallic_roughness: Option<RRef<Image>>,
+	pub normal: Option<RRef<Image>>,
+	pub occlusion: Option<RRef<Image>>,
+	pub emissive: Option<RRef<Image>>,
 }
 
 impl RuntimeAsset for Material {
-	fn into_resources(self, queue: Sender<DelRes>) {
-		let size = std::mem::size_of::<GpuMaterial>() as u64;
-		queue
-			.send(DelRes::Material(BufSpan {
-				offset: self.index as u64 * size,
-				size,
-			}))
-			.unwrap();
-	}
+	fn into_resources(self, queue: Sender<DelRes>) { queue.send(DelRes::Material(self.index)).unwrap(); }
 }
 
 impl AssetRuntime {
@@ -56,49 +54,42 @@ impl AssetRuntime {
 			unreachable!("Material asset is not a material");
 		};
 
-		let base_color = m
-			.base_color
-			.map(|x| self.load_image(loader, x, true))
-			.transpose()?
-			.map(|x| x.view.id.unwrap());
+		let base_color = m.base_color.map(|x| self.load_image(loader, x, true)).transpose()?;
 		let metallic_roughness = m
 			.metallic_roughness
 			.map(|x| self.load_image(loader, x, false))
-			.transpose()?
-			.map(|x| x.view.id.unwrap());
-		let normal = m
-			.normal
-			.map(|x| self.load_image(loader, x, false))
-			.transpose()?
-			.map(|x| x.view.id.unwrap());
-		let occlusion = m
-			.occlusion
-			.map(|x| self.load_image(loader, x, false))
-			.transpose()?
-			.map(|x| x.view.id.unwrap());
-		let emissive = m
-			.emissive
-			.map(|x| self.load_image(loader, x, false))
-			.transpose()?
-			.map(|x| x.view.id.unwrap());
+			.transpose()?;
+		let normal = m.normal.map(|x| self.load_image(loader, x, false)).transpose()?;
+		let occlusion = m.occlusion.map(|x| self.load_image(loader, x, false)).transpose()?;
+		let emissive = m.emissive.map(|x| self.load_image(loader, x, false)).transpose()?;
 		let mat = GpuMaterial {
 			base_color_factor: m.base_color_factor,
-			base_color,
+			base_color: base_color.as_ref().map(|x| x.view.id.unwrap()),
 			metallic_factor: m.metallic_factor,
 			roughness_factor: m.roughness_factor,
-			metallic_roughness,
-			normal,
-			occlusion,
+			metallic_roughness: metallic_roughness.as_ref().map(|x| x.view.id.unwrap()),
+			normal: normal.as_ref().map(|x| x.view.id.unwrap()),
+			occlusion: occlusion.as_ref().map(|x| x.view.id.unwrap()),
 			emissive_factor: m.emissive_factor,
-			emissive,
+			emissive: emissive.as_ref().map(|x| x.view.id.unwrap()),
 		};
 
 		let BufSpan { offset, .. } = self
 			.material_buffer
 			.alloc(loader.ctx, loader.queue, bytes_of(&mat))
 			.map_err(StageError::Vulkan)?;
-		let index = (offset / std::mem::size_of::<Material>() as u64) as u32;
-		Ok(RRef::new(Material { index }, loader.deleter.clone()))
+		let index = (offset / std::mem::size_of::<GpuMaterial>() as u64) as u32;
+		Ok(RRef::new(
+			Material {
+				index,
+				base_color,
+				metallic_roughness,
+				normal,
+				occlusion,
+				emissive,
+			},
+			loader.deleter.clone(),
+		))
 	}
 }
 

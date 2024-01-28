@@ -126,6 +126,7 @@ impl Renderer {
 				frame,
 				radiance_passes::ground_truth::RenderInfo {
 					scene,
+					materials: self.runtime.materials(),
 					camera: self.camera.get(),
 					size: s,
 				},

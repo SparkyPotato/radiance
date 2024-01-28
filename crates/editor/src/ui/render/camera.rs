@@ -4,7 +4,7 @@ use radiance_passes::mesh::visbuffer::Camera;
 use vek::{num_traits::FloatConst, Mat4, Vec2, Vec3, Vec4};
 use winit::{
 	dpi::PhysicalPosition,
-	event::{ElementState, VirtualKeyCode, WindowEvent},
+	event::{ElementState, MouseScrollDelta, VirtualKeyCode, WindowEvent},
 	window::CursorGrabMode,
 };
 
@@ -76,6 +76,10 @@ impl CameraController {
 	}
 
 	pub fn control(&mut self, ctx: &Context) {
+		if self.mode != Mode::Camera {
+			return;
+		}
+
 		let yaw = Mat4::rotation_3d(self.yaw, Vec3::unit_y());
 		let forward = (yaw * Vec4::unit_z()).xyz();
 		let right = (yaw * Vec4::unit_x()).xyz();
@@ -125,8 +129,8 @@ impl CameraController {
 			},
 			WindowEvent::MouseWheel { delta, .. } => {
 				let delta = match delta {
-					winit::event::MouseScrollDelta::LineDelta(_, y) => *y,
-					winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
+					MouseScrollDelta::LineDelta(_, y) => *y,
+					MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,
 				};
 				let factor = 2f32.powf(delta);
 				self.move_speed *= factor;
@@ -150,3 +154,4 @@ impl CameraController {
 		}
 	}
 }
+

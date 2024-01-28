@@ -9,7 +9,10 @@ use crossbeam_channel::{Receiver, Sender};
 use material::GpuMaterial;
 use radiance_asset::{AssetError, AssetSource, AssetSystem};
 use radiance_core::{CoreDevice, RenderCore};
-use radiance_graph::{device::Device, resource::BufferDesc};
+use radiance_graph::{
+	device::{descriptor::BufferId, Device},
+	resource::BufferDesc,
+};
 use radiance_util::{
 	buffer::{AllocBuffer, BufSpan},
 	deletion::{DeletionQueue, Resource},
@@ -27,7 +30,7 @@ pub mod scene;
 
 pub enum DelRes {
 	Resource(Resource),
-	Material(BufSpan),
+	Material(u32),
 }
 
 impl From<Resource> for DelRes {
@@ -105,11 +108,16 @@ impl AssetRuntime {
 			match x {
 				DelRes::Resource(x) => unsafe { core.delete.delete(x) },
 				DelRes::Material(r) => {
-					self.material_buffer.dealloc(r);
+					self.material_buffer.dealloc(BufSpan {
+						offset: r as u64 * std::mem::size_of::<GpuMaterial>() as u64,
+						size: std::mem::size_of::<GpuMaterial>() as u64,
+					});
 				},
 			}
 		}
 	}
+
+	pub fn materials(&self) -> BufferId { self.material_buffer.id().unwrap() }
 
 	pub fn load<S: AssetSource, R>(
 		&mut self, device: &CoreDevice, core: &mut RenderCore, sys: &AssetSystem<S>,

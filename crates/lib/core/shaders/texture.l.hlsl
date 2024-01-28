@@ -17,7 +17,7 @@ template<typename T>
 struct TextureBase<T, NonUniform> {
     u32 index;
     Texture2D<T> get() {
-        return (Texture2D<T>) Texture2Ds[NonUniformResoruceIndex(this.index)];
+        return (Texture2D<T>) Texture2Ds[NonUniformResourceIndex(this.index)];
     }
 };
 

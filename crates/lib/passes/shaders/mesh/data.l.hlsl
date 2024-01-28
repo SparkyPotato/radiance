@@ -25,8 +25,6 @@ struct Pos {
 struct Instance {
     f32 transform[12];
     Buf<bytes> mesh;
-    Buf<bytes> raw_mesh;
-    u32 index_byte_offset;
     u32 meshlet_count;
     u32 submesh_count;
 
@@ -57,6 +55,18 @@ struct Meshlet {
         ret.max = ret.min + ret.extent;
         return ret;
     }
+};
+
+struct Material {
+    f32 base_color_factor[4];
+    u32 base_color;
+    f32 metallic_factor;
+    f32 roughness_factor;
+    u32 metallic_roughness;
+    u32 normal;
+    u32 occlusion;
+    f32 emissive_factor[3];
+    u32 emissive;
 };
 
 #define CULL_CAMERA 0

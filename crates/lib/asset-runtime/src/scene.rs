@@ -57,13 +57,11 @@ pub struct GpuInstance {
 	pub transform: Vec4<Vec3<f32>>,
 	/// Mesh buffer containing meshlets + meshlet data.
 	pub mesh: BufferId,
-	pub raw_mesh: BufferId,
-	pub index_byte_offset: u32,
 	pub meshlet_count: u32,
 	pub submesh_count: u32,
 }
 
-const_assert_eq!(std::mem::size_of::<GpuInstance>(), 68);
+const_assert_eq!(std::mem::size_of::<GpuInstance>(), 60);
 const_assert_eq!(std::mem::align_of::<GpuInstance>(), 4);
 
 #[repr(C)]
@@ -136,8 +134,6 @@ impl AssetRuntime {
 					.write(GpuInstance {
 						transform: n.transform.cols.map(|x| x.xyz()),
 						mesh: mesh.buffer.id().unwrap(),
-						raw_mesh: mesh.raw_mesh.id().unwrap(),
-						index_byte_offset: mesh.index_byte_offset,
 						meshlet_count: mesh.meshlet_count,
 						submesh_count: mesh.submeshes.len() as u32,
 					})
