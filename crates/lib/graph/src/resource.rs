@@ -504,4 +504,3 @@ impl Resource for Event {
 
 	unsafe fn destroy(self, device: &Device) { device.device().destroy_event(self.inner, None); }
 }
-

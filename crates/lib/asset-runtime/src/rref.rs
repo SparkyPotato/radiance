@@ -75,4 +75,3 @@ impl<T: RuntimeAsset> Drop for Control<T> {
 		}
 	}
 }
-

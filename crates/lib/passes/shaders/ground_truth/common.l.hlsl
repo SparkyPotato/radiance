@@ -7,6 +7,7 @@ struct CameraData {
 
 struct PushConstants {
 	u32 img;
+	u32 samples;
 	Buf<CameraData> inv_camera;
 	Buf<Instance> instances;
 	Buf<Material> materials;

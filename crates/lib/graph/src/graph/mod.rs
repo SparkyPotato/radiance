@@ -576,4 +576,3 @@ struct PassData<'pass, 'graph, C> {
 }
 
 type ArenaMap<'graph, K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>, &'graph Arena>;
-

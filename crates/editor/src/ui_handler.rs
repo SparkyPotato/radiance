@@ -21,7 +21,7 @@ impl UiHandler {
 		let (defs, fonts) = Fonts::defs();
 		ctx.set_fonts(defs);
 
-		let mut platform_state = egui_winit::State::new(
+		let platform_state = egui_winit::State::new(
 			ViewportId::default(),
 			event_loop,
 			Some(window.window.scale_factor() as _),
@@ -84,3 +84,4 @@ impl UiHandler {
 
 	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
 }
+

@@ -9,7 +9,6 @@ use radiance_asset::{
 	import::{ImportError, ImportProgress},
 	AssetType,
 };
-use radiance_core::CoreFrame;
 use tracing::{event, Level};
 
 use crate::ui::{
@@ -139,10 +138,7 @@ impl AssetManager {
 		self.cursor = buf;
 	}
 
-	pub fn render(
-		&mut self, ctx: &Context, notifs: &mut NotifStack, renderer: &mut Renderer, frame: &mut CoreFrame<'_, '_>,
-		fonts: &Fonts,
-	) {
+	pub fn render(&mut self, ctx: &Context, notifs: &mut NotifStack, renderer: &mut Renderer, fonts: &Fonts) {
 		for msg in self.recv.try_iter() {
 			match msg {
 				ThreadRecv::OpenedSystem { sys, existed } => {
@@ -278,7 +274,7 @@ impl AssetManager {
 													.double_clicked()
 												{
 													if sys.metadata(uuid).unwrap().ty == AssetType::Scene {
-														renderer.set_scene(frame.ctx(), uuid);
+														renderer.set_scene(uuid);
 													}
 												}
 												ui.add(Label::new(name).truncate(true));
@@ -297,3 +293,4 @@ impl AssetManager {
 			});
 	}
 }
+

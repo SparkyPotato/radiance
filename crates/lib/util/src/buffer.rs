@@ -122,4 +122,3 @@ impl AllocBuffer {
 impl IntoResource for AllocBuffer {
 	fn into_resource(self) -> crate::deletion::Resource { self.inner.into_resource() }
 }
-

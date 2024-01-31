@@ -53,7 +53,7 @@ impl Renderer {
 		})
 	}
 
-	pub fn set_scene(&mut self, core: &mut RenderCore, scene: Uuid) { self.scene = Scene::Unloaded(scene); }
+	pub fn set_scene(&mut self, scene: Uuid) { self.scene = Scene::Unloaded(scene); }
 
 	pub fn render<'pass, S: AssetSource>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,

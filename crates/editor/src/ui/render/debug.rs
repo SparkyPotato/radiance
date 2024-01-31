@@ -55,4 +55,3 @@ impl DebugWindows {
 
 	pub fn cull_camera(&self) -> Option<Camera> { self.cull_camera }
 }
-

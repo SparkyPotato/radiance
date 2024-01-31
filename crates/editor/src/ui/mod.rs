@@ -58,7 +58,7 @@ impl UiState {
 		self.renderer.draw_debug_windows(ctx, device);
 
 		self.assets
-			.render(ctx, &mut self.notifs, &mut self.renderer, frame, &self.fonts);
+			.render(ctx, &mut self.notifs, &mut self.renderer, &self.fonts);
 		self.renderer
 			.render(device, frame, ctx, window, self.assets.system.as_deref().map(|x| &**x));
 

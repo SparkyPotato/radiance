@@ -18,6 +18,9 @@ void main() {
 	Payload p;
 	TraceRay(ASes[Constants.as.index], RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, ray, p);
 
-	RWTexture2Ds[Constants.img][pixel] = p.value;
+	float4 value = RWTexture2Ds[Constants.img][pixel];
+	f32 samples = Constants.samples;
+	f32 p1 = samples + 1.f;
+	RWTexture2Ds[Constants.img][pixel] = (samples * value) / p1 + p.value / p1;
 }
 

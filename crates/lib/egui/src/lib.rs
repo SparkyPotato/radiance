@@ -551,4 +551,3 @@ impl ScissorRect {
 }
 
 pub fn to_texture_id(r: ReadId<ImageView>) -> TextureId { TextureId::User(r.into_raw() as _) }
-

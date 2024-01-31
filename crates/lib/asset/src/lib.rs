@@ -351,4 +351,3 @@ struct AssetMetadata<S> {
 	header: AssetHeader,
 	source: S,
 }
-

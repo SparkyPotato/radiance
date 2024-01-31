@@ -65,4 +65,3 @@ pub struct Mesh {
 	#[bincode(with_serde)]
 	pub aabb: Aabb<f32>,
 }
-

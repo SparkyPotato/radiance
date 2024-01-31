@@ -32,7 +32,7 @@ use radiance_shader_compiler::c_str;
 use radiance_util::pipeline::{no_blend, reverse_depth, simple_blend};
 use vek::{Mat4, Vec2};
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default, PartialEq)]
 pub struct Camera {
 	/// Vertical FOV in radians.
 	pub fov: f32,

@@ -622,4 +622,3 @@ fn get_format_block(f: vk::Format) -> i32 {
 		(ASTC_12X12_UNORM_BLOCK:ASTC_12X12_SRGB_BLOCK) || (ASTC_12X12_SFLOAT_BLOCK),
 	}
 }
-

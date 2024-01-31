@@ -220,4 +220,3 @@ pub struct Loader<'a, 'b, 'c, S> {
 	sys: &'a AssetSystem<S>,
 	deleter: Sender<DelRes>,
 }
-

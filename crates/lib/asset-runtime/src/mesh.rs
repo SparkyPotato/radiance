@@ -250,4 +250,3 @@ impl AssetRuntime {
 		))
 	}
 }
-

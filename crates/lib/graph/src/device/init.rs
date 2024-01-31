@@ -649,4 +649,3 @@ unsafe extern "system" fn debug_callback(
 
 	0
 }
-

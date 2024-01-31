@@ -1,7 +1,7 @@
 use radiance_graph::{
 	ash::vk,
-	graph::{BufferUsage, ExternalBuffer, ReadId, WriteId},
-	resource::{BufferDesc, GpuBuffer, GpuBufferHandle, Resource},
+	graph::{BufferUsage, ExternalBuffer, ExternalImage, ImageUsage, ReadId, WriteId},
+	resource::{BufferDesc, GpuBuffer, GpuBufferHandle, Image, ImageDesc, ImageView, Resource},
 	Result,
 };
 
@@ -58,3 +58,62 @@ impl PersistentBuffer {
 	}
 }
 
+#[derive(Default)]
+pub struct PersistentImage {
+	pub images: [Image; 2],
+	pub current: usize,
+	pub desc: ImageDesc,
+}
+
+impl PersistentImage {
+	pub fn new(device: &CoreDevice, desc: ImageDesc) -> Result<Self> {
+		let images = [Image::create(device, desc)?, Image::create(device, desc)?];
+
+		Ok(Self {
+			images,
+			current: 0,
+			desc,
+		})
+	}
+
+	pub fn next(
+		&mut self, pass: &mut CoreBuilder, read_usage: ImageUsage, write_usage: ImageUsage,
+	) -> (ReadId<ImageView>, WriteId<ImageView>) {
+		let next = self.current ^ 1;
+
+		let (read, _) = pass.output(
+			ExternalImage {
+				handle: self.images[self.current].handle(),
+				size: self.desc.size,
+				levels: self.desc.levels,
+				layers: self.desc.layers,
+				samples: self.desc.samples,
+				prev_usage: None,
+				next_usage: None,
+			},
+			read_usage,
+		);
+		let (_, write) = pass.output(
+			ExternalImage {
+				handle: self.images[next].handle(),
+				size: self.desc.size,
+				levels: self.desc.levels,
+				layers: self.desc.layers,
+				samples: self.desc.samples,
+				prev_usage: None,
+				next_usage: None,
+			},
+			write_usage,
+		);
+
+		self.current = next;
+
+		(read, write)
+	}
+
+	pub unsafe fn destroy(self, device: &CoreDevice) {
+		let [b1, b2] = self.images;
+		b1.destroy(device);
+		b2.destroy(device);
+	}
+}

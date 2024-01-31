@@ -122,4 +122,3 @@ impl AssetRuntime {
 		Ok(RRef::new(Image { image: img, view }, loader.deleter.clone()))
 	}
 }
-

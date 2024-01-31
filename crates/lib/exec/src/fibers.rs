@@ -48,4 +48,3 @@ unsafe extern "sysv64" fn swap_context(store: *mut ThreadContext, load: *mut Thr
 		options(noreturn)
 	);
 }
-

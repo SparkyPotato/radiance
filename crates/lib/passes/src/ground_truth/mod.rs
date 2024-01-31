@@ -6,9 +6,19 @@ use radiance_asset_runtime::{rref::RRef, scene::Scene};
 use radiance_core::{CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::{ASId, BufferId, StorageImageId},
-	graph::{BufferUsage, BufferUsageType, ImageDesc, ImageUsage, ImageUsageType, ReadId, UploadBufferDesc, WriteId},
-	resource::{BufferDesc, GpuBuffer, ImageView, Resource, UploadBufferHandle},
-	sync::{get_global_barrier, GlobalBarrier, Shader, UsageType},
+	graph::{
+		BufferUsage,
+		BufferUsageType,
+		ExternalImage,
+		ImageDesc,
+		ImageUsage,
+		ImageUsageType,
+		ReadId,
+		UploadBufferDesc,
+		WriteId,
+	},
+	resource::{BufferDesc, GpuBuffer, Image, ImageView, Resource, UploadBufferHandle},
+	sync::Shader,
 	Result,
 };
 use radiance_shader_compiler::c_str;
@@ -28,6 +38,10 @@ pub struct GroundTruth {
 	layout: vk::PipelineLayout,
 	pipeline: vk::Pipeline,
 	sbt: GpuBuffer,
+	accum: Image,
+	size: vk::Extent3D,
+	samples: u32,
+	last_cam: Camera,
 	rgen: vk::StridedDeviceAddressRegionKHR,
 	miss: vk::StridedDeviceAddressRegionKHR,
 	hit: vk::StridedDeviceAddressRegionKHR,
@@ -43,6 +57,7 @@ struct PassIO {
 #[repr(C)]
 struct PushConstants {
 	out: StorageImageId,
+	samples: u32,
 	camera: BufferId,
 	instances: BufferId,
 	materials: BufferId,
@@ -207,6 +222,10 @@ impl GroundTruth {
 				layout,
 				pipeline,
 				sbt,
+				size: vk::Extent3D::default(),
+				samples: 0,
+				accum: Image::default(),
+				last_cam: Camera::default(),
 				rgen,
 				miss,
 				hit,
@@ -217,6 +236,7 @@ impl GroundTruth {
 	pub fn destroy(self, device: &CoreDevice) {
 		unsafe {
 			self.sbt.destroy(device);
+			self.accum.destroy(device);
 			device.device().destroy_pipeline(self.pipeline, None);
 			device.device().destroy_pipeline_layout(self.layout, None);
 		}
@@ -225,25 +245,71 @@ impl GroundTruth {
 	pub fn run<'pass>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
 	) -> ReadId<ImageView> {
+		let size = vk::Extent3D {
+			width: info.size.x,
+			height: info.size.y,
+			depth: 1,
+		};
+		let new = self.size != size;
+		let clear = self.last_cam != info.camera || new;
+
+		if new {
+			unsafe {
+				std::mem::take(&mut self.accum).destroy(device);
+				self.accum = Image::create(
+					device,
+					radiance_graph::resource::ImageDesc {
+						flags: vk::ImageCreateFlags::empty(),
+						format: vk::Format::R8G8B8A8_UNORM,
+						size,
+						levels: 1,
+						layers: 1,
+						samples: vk::SampleCountFlags::TYPE_1,
+						usage: vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+					},
+				)
+				.unwrap();
+				self.size = size;
+			}
+		}
+
+		self.samples = if clear { 0 } else { self.samples + 1 };
+
 		let mut pass = frame.pass("raytrace");
 		let (read, write) = pass.output(
-			ImageDesc {
-				size: vk::Extent3D {
-					width: info.size.x,
-					height: info.size.y,
-					depth: 1,
-				},
+			ExternalImage {
+				handle: self.accum.handle(),
+				size,
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
+				prev_usage: None,
+				next_usage: None,
 			},
 			ImageUsage {
 				format: vk::Format::R8G8B8A8_UNORM,
-				usages: &[ImageUsageType::ShaderStorageWrite(Shader::RayTracing)],
+				usages: &[
+					ImageUsageType::ShaderStorageRead(Shader::RayTracing),
+					ImageUsageType::ShaderStorageWrite(Shader::RayTracing),
+				],
 				view_type: vk::ImageViewType::TYPE_2D,
 				aspect: vk::ImageAspectFlags::COLOR,
 			},
 		);
+		// let (read, write) = pass.output(
+		// ImageDesc {
+		// size,
+		// levels: 1,
+		// layers: 1,
+		// samples: vk::SampleCountFlags::TYPE_1,
+		// },
+		// ImageUsage {
+		// format: vk::Format::R8G8B8A8_UNORM,
+		// usages: &[ImageUsageType::ShaderStorageWrite(Shader::RayTracing)],
+		// view_type: vk::ImageViewType::TYPE_2D,
+		// aspect: vk::ImageAspectFlags::COLOR,
+		// },
+		// );
 
 		let (_, camera) = pass.output(
 			UploadBufferDesc {
@@ -297,6 +363,7 @@ impl GroundTruth {
 				0,
 				bytes_of(&PushConstants {
 					out: write.storage_id.unwrap(),
+					samples: self.samples,
 					camera: camera.id.unwrap(),
 					instances: io.info.scene.instances(),
 					materials: io.info.materials,

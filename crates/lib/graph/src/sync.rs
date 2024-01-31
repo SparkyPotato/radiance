@@ -646,4 +646,3 @@ pub fn as_next_access(usages: impl IntoIterator<Item = UsageType>, prev_access: 
 		.reduce(|a, b| a | b)
 		.unwrap_or_default()
 }
-
