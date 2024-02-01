@@ -5,7 +5,7 @@ use bytemuck::{bytes_of, NoUninit};
 use radiance_asset_runtime::{rref::RRef, scene::Scene};
 use radiance_core::{CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
-	device::descriptor::{ASId, BufferId, StorageImageId},
+	device::descriptor::{ASId, BufferId, SamplerId, StorageImageId},
 	graph::{
 		BufferUsage,
 		BufferUsageType,
@@ -37,6 +37,8 @@ pub struct RenderInfo {
 pub struct GroundTruth {
 	layout: vk::PipelineLayout,
 	pipeline: vk::Pipeline,
+	sampler: vk::Sampler,
+	sampler_id: SamplerId,
 	sbt: GpuBuffer,
 	accum: Image,
 	size: vk::Extent3D,
@@ -62,6 +64,7 @@ struct PushConstants {
 	instances: BufferId,
 	materials: BufferId,
 	tlas: ASId,
+	sampler: SamplerId,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -160,6 +163,16 @@ impl GroundTruth {
 				None,
 			)?[0];
 
+			let sampler = device.device().create_sampler(
+				&vk::SamplerCreateInfo::builder()
+					.mag_filter(vk::Filter::LINEAR)
+					.min_filter(vk::Filter::LINEAR)
+					.mipmap_mode(vk::SamplerMipmapMode::LINEAR)
+					.address_mode_u(vk::SamplerAddressMode::REPEAT)
+					.address_mode_v(vk::SamplerAddressMode::REPEAT),
+				None,
+			)?;
+
 			let mut rgen = vk::StridedDeviceAddressRegionKHR::default();
 			let mut miss = vk::StridedDeviceAddressRegionKHR::default();
 			let mut hit = vk::StridedDeviceAddressRegionKHR::default();
@@ -221,6 +234,8 @@ impl GroundTruth {
 			Ok(Self {
 				layout,
 				pipeline,
+				sampler,
+				sampler_id: device.descriptors().get_sampler(device, sampler),
 				sbt,
 				size: vk::Extent3D::default(),
 				samples: 0,
@@ -237,6 +252,8 @@ impl GroundTruth {
 		unsafe {
 			self.sbt.destroy(device);
 			self.accum.destroy(device);
+			device.descriptors().return_sampler(self.sampler_id);
+			device.device().destroy_sampler(self.sampler, None);
 			device.device().destroy_pipeline(self.pipeline, None);
 			device.device().destroy_pipeline_layout(self.layout, None);
 		}
@@ -368,6 +385,7 @@ impl GroundTruth {
 					instances: io.info.scene.instances(),
 					materials: io.info.materials,
 					tlas: io.info.scene.acceleration_structure(),
+					sampler: self.sampler_id,
 				}),
 			);
 

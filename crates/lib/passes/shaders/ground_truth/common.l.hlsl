@@ -12,6 +12,7 @@ struct PushConstants {
 	Buf<Instance> instances;
 	Buf<Material> materials;
 	AS as;
+	Sampler sampler;
 };
 
 PUSH PushConstants Constants;
