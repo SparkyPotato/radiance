@@ -26,7 +26,7 @@ impl ShaderBuilder {
 
 		Ok(Self {
 			vfs: VirtualFileSystem::new(),
-			debug,
+			debug: true,
 			dependencies: DependencyInfo::default(),
 			compiler,
 			library,
@@ -289,3 +289,4 @@ impl ShaderType {
 		}
 	}
 }
+

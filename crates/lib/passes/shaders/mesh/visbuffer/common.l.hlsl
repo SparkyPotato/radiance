@@ -1,6 +1,7 @@
 #pragma once
 
-#include "radiance-passes/mesh/data.l.hlsl"
+#include "radiance-asset-runtime/data.l.hlsl"
+#include "radiance-passes/mesh/cull.l.hlsl"
 
 struct PushConstants {
     Buf<Instance> instances;

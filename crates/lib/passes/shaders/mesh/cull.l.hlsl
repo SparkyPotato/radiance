@@ -1,16 +1,5 @@
 #pragma once
 
-struct Sphere {
-    float3 center;
-    float radius;
-};
-
-struct Aabb {
-    float4 min;
-    float4 extent;
-    float4 max;
-};
-
 float4 normalize_plane(float4 p) {
     float3 n = p.xyz;
     float l = length(n);

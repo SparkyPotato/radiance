@@ -65,6 +65,7 @@ struct PushConstants {
 	materials: BufferId,
 	tlas: ASId,
 	sampler: SamplerId,
+	seed: u32,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -269,6 +270,7 @@ impl GroundTruth {
 		};
 		let new = self.size != size;
 		let clear = self.last_cam != info.camera || new;
+		self.last_cam = info.camera;
 
 		if new {
 			unsafe {
@@ -386,6 +388,7 @@ impl GroundTruth {
 					materials: io.info.materials,
 					tlas: io.info.scene.acceleration_structure(),
 					sampler: self.sampler_id,
+					seed: rand::random(),
 				}),
 			);
 

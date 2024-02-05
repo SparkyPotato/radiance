@@ -1,7 +1,12 @@
 #pragma once
 
 #include "radiance-core/interface.l.hlsl"
-#include "cull.l.hlsl"
+
+struct Aabb {
+    float4 min;
+    float4 extent;
+    float4 max;
+};
 
 struct Vertex {
     u16 position[3];
@@ -59,14 +64,14 @@ struct Meshlet {
 
 struct Material {
     f32 base_color_factor[4];
-    u32 base_color;
+    OTex2D<NonUniform> base_color;
     f32 metallic_factor;
     f32 roughness_factor;
-    u32 metallic_roughness;
-    u32 normal;
-    u32 occlusion;
+    OTex2D<NonUniform> metallic_roughness;
+    OTex2D<NonUniform> normal;
+    OTex2D<NonUniform> occlusion;
     f32 emissive_factor[3];
-    u32 emissive;
+    OTex2D<NonUniform> emissive;
 };
 
 #define CULL_CAMERA 0

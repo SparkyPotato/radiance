@@ -1,6 +1,5 @@
 #include "common.l.hlsl"
-
-#define PI 3.14159265359f
+#include "radiance-passes/brdf/brdf.l.hlsl"
 
 struct Hit {
 	float3 position;
@@ -53,103 +52,61 @@ Hit EvalHit(BuiltInTriangleIntersectionAttributes attrs) {
 	return hit;
 }
 
-struct LightingInput {
-	float4 base_color;
-	float3 normal;
-	float3 emissive;
-	f32 metallic;
-	f32 roughness;
-};
-
-LightingInput EvalMaterial(Hit hit) {
+MatInput EvalMaterial(Hit hit) {
+	Sampler s = Constants.sampler;
+	float2 uv = hit.uv;
 	Material mat = Constants.materials.load(hit.mat);
-	float4 base_color = float4(mat.base_color_factor);
+	float4 base_color = float4(mat.base_color_factor) * mat.base_color.sample_mip(s, uv, 0.f, 1.f);
 	float3 normal = hit.normal; // TODO: Eval normal map.
-	float3 emissive = float3(mat.emissive_factor);
-	f32 metallic = mat.metallic_factor;
-	f32 roughness = mat.roughness_factor;
+	float3 emissive = float3(mat.emissive_factor) * mat.emissive.sample_mip(s, uv, 0.f, 1.f).rgb;
+	float3 mr = mat.metallic_roughness.sample_mip(s, uv, 0.f, 1.f).rgb;
+	f32 metallic = mat.metallic_factor * mr.g;
+	f32 roughness = max(mat.roughness_factor * mr.b, 0.045f);
 
-	SamplerState s = Constants.sampler.get();
-	if (mat.base_color != 0) {
-		Texture2D t = Texture2Ds[NonUniformResourceIndex(mat.base_color)];
-		base_color *= t.SampleLevel(s, hit.uv, 0.f);
-	}
-	if (mat.emissive != 0) {
-		Texture2D t = Texture2Ds[NonUniformResourceIndex(mat.emissive)];
-		emissive *= t.SampleLevel(s, hit.uv, 0.f).xyz;
-	}
-	if (mat.metallic_roughness != 0) {
-		Texture2D t = Texture2Ds[NonUniformResourceIndex(mat.metallic_roughness)];
-		float3 mr = t.SampleLevel(s, hit.uv, 0.f).xyz;
-		roughness *= mr.g;
-		metallic *= mr.b;
-	}
-	roughness = max(roughness, 0.045f);
+	// SamplerState s = Constants.sampler.get();
+	// if (mat.base_color != 0) {
+	//	Texture2D t = Texture2Ds[NonUniformResourceIndex(mat.base_color)];
+	//	base_color *= t.SampleLevel(s, hit.uv, 0.f);
+	// }
+	// if (mat.emissive != 0) {
+	//	Texture2D t = Texture2Ds[NonUniformResourceIndex(mat.emissive)];
+	//	emissive *= t.SampleLevel(s, hit.uv, 0.f).xyz;
+	// }
+	// if (mat.metallic_roughness != 0) {
+	//	Texture2D t = Texture2Ds[NonUniformResourceIndex(mat.metallic_roughness)];
+	//	float3 mr = t.SampleLevel(s, hit.uv, 0.f).xyz;
+	//	roughness *= mr.g;
+	//	metallic *= mr.b;
+	// }
+	// roughness = max(roughness, 0.045f);
 
-	LightingInput l = { base_color, normal, emissive, metallic, roughness };
-	return l;
+	MatInput ret = { base_color, normal, emissive, metallic, roughness * roughness };
+	return ret;
 }
 
-f32 D_GGX(f32 n_h, f32 rough) {
-	f32 a = n_h * rough;
-	f32 k = rough / (1.f - n_h * n_h + a * a);
-	return k * k * (1.f / PI);
-}
-
-f32 V_GGX(f32 n_v, f32 n_l, f32 rough) {
-	f32 a = rough * rough;
-	f32 v = n_l * sqrt(n_v * n_v * (1.f - a) + a);
-	f32 l = n_v * sqrt(n_l * n_l * (1.f - a) + a);
-	return 0.5f / (v + l);
-}
-
-float3 F_Schlick(f32 u, float3 f0, f32 f90) {
-	return f0 + (float3(f90, f90, f90) - f0) * pow(1.f - u, 5.f);
-}
-
-float3 Fd_Burley(f32 n_v, f32 n_l, f32 l_h, f32 rough) {
-	f32 f90 = 0.5f + 2.f * rough * l_h * l_h;
-	f32 l_f = F_Schlick(n_l, 1.f, f90);
-	f32 v_f = F_Schlick(n_v, 1.f, f90);
-	return l_f * v_f / PI;
-}
-
-float3 EvalBRDF(LightingInput input, float3 v, float3 l) {
-	float3 h = normalize(v + l);
-	f32 n_v = abs(dot(input.normal, v)) + 1e-5;
-	f32 n_l = clamp(dot(input.normal, l), 0.f, 1.f);
-	f32 n_h = clamp(dot(input.normal, h), 0.f, 1.f);
-	f32 l_h = clamp(dot(l, h), 0.f, 1.f);
-
-	f32 rough = input.roughness * input.roughness;
-	float3 f0 = 0.04f * (1.f - input.metallic) + input.base_color.rgb * input.metallic; // TODO: Get from material.
-	f32 f90 = 1.f;
-	float3 diff_color = (1.f - input.metallic) * input.base_color.rgb;
-
-	f32 D = D_GGX(n_h, rough);
-	float3 F = F_Schlick(l_h, f0, f90);
-	f32 V = V_GGX(n_v, n_l, rough);
-
-	float3 Fr = D * V * F;
-	float3 Fd = diff_color * Fd_Burley(n_v, n_l, l_h, rough);
+float3 EvalBRDF(LightingData l, MatInput m) {
+	float3 Fr = BRDF_CookTorrance(l, m);
+	float3 Fd = BRDF_Burley(l, m);
 	return Fr + Fd; // TODO: Sample one at random.
 }
 
 [shader("closesthit")]
 void main(inout Payload payload, BuiltInTriangleIntersectionAttributes attrs) {
 	Hit hit = EvalHit(attrs);
-	LightingInput input = EvalMaterial(hit);
-	float3 v = -WorldRayDirection();
-	float3 l = normalize(float3(1.f, 1.f, 1.f));
-	float3 c = EvalBRDF(input, v, l);
-	float3 ret = c * abs(dot(l, input.normal));
+	MatInput m = EvalMaterial(hit);
+	float3 vv = -WorldRayDirection();
+	float3 lv = m.normal;
+	LightingData l = LightingData::calculate(vv, lv, m.normal);
+
+	float3 c = EvalBRDF(l, m);
+	float3 irradiance = max(dot(lv, m.normal), 0.f);
+	float3 radiance = c * irradiance;
 
 	RayDesc ray;
-	ray.Origin = hit.position + hit.normal * 0.0000001f;
-	ray.Direction = l;
+	ray.Origin = hit.position;
+	ray.Direction = lv;
 	ray.TMin = 0.1f;
 	ray.TMax = 10000.f;
-
 	ShadowPayload s;
 	s.unshadowed = false;
 	TraceRay(
@@ -163,6 +120,6 @@ void main(inout Payload payload, BuiltInTriangleIntersectionAttributes attrs) {
 		s
 	);
 
-	payload.value = float4(ret * s.unshadowed, 1.f);
+	payload.value = float4(radiance, 1.f);
 }
 

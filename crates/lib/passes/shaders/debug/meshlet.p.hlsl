@@ -3,7 +3,7 @@
 #include "radiance-passes/mesh/visbuffer/visbuffer.l.hlsl"
 
 struct PushConstants {
-    Tex2D<float4> visbuffer;
+    Tex2D visbuffer;
 };
 
 PUSH PushConstants Constants;
@@ -22,7 +22,7 @@ u32 hash(u32 a) {
 
 float4 main(VertexOutput input): SV_Target0 {
     uint2 pixel = Constants.visbuffer.pixel_of_uv(input.uv);
-    u32 value = asuint(Constants.visbuffer.load(pixel));
+    u32 value = asuint(Constants.visbuffer.load(pixel).x);
     VisBufferData data = VisBufferData::decode(value);
 
     if (data.meshlet_pointer_id == 0xffffffff) {

@@ -1,7 +1,7 @@
 #include "common.l.hlsl"
 
 struct PushConstants {
-    [[vk::offset(12)]] Tex2D<float4> image;
+    [[vk::offset(12)]] Tex2D image;
     Sampler sampler;
 };
 
