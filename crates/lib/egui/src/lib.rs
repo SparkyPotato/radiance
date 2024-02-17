@@ -207,7 +207,7 @@ impl Renderer {
 						TextureId::User(x) => pass.input::<ImageView>(
 							ReadId::from_raw(x as _),
 							ImageUsage {
-								format: vk::Format::R8G8B8A8_UNORM, // TODO: fix
+								format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
 								usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
 								view_type: vk::ImageViewType::TYPE_2D,
 								aspect: vk::ImageAspectFlags::COLOR,
@@ -551,3 +551,4 @@ impl ScissorRect {
 }
 
 pub fn to_texture_id(r: ReadId<ImageView>) -> TextureId { TextureId::User(r.into_raw() as _) }
+

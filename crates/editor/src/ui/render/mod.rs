@@ -8,6 +8,7 @@ use radiance_passes::{
 	debug::meshlet::DebugMeshlets,
 	ground_truth::GroundTruth,
 	mesh::visbuffer::{RenderInfo, VisBuffer},
+	tonemap::aces::AcesTonemap,
 };
 use tracing::{event, Level};
 use vek::Vec2;
@@ -35,6 +36,7 @@ pub struct Renderer {
 	visbuffer: VisBuffer,
 	debug: DebugMeshlets,
 	ground_truth: GroundTruth,
+	tonemap: AcesTonemap,
 	runtime: AssetRuntime,
 	debug_windows: DebugWindows,
 	camera: CameraController,
@@ -47,6 +49,7 @@ impl Renderer {
 			visbuffer: VisBuffer::new(device, core)?,
 			debug: DebugMeshlets::new(device, core)?,
 			ground_truth: GroundTruth::new(device, core)?,
+			tonemap: AcesTonemap::new(device, core)?,
 			runtime: AssetRuntime::new(device)?,
 			debug_windows: DebugWindows::new(),
 			camera: CameraController::new(),
@@ -131,7 +134,8 @@ impl Renderer {
 					size: s,
 				},
 			);
-			ui.image((to_texture_id(rt), size));
+			let mapped = self.tonemap.run(frame, rt);
+			ui.image((to_texture_id(mapped), size));
 		} else {
 			let visbuffer = self.visbuffer.run(
 				device,

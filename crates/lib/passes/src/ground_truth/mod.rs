@@ -2,7 +2,10 @@ use std::io::Write;
 
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
-use radiance_asset_runtime::{rref::RRef, scene::Scene};
+use radiance_asset_runtime::{
+	rref::{RRef, RWeak},
+	scene::Scene,
+};
 use radiance_core::{CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::{ASId, BufferId, SamplerId, StorageImageId},
@@ -44,6 +47,7 @@ pub struct GroundTruth {
 	size: vk::Extent3D,
 	samples: u32,
 	last_cam: Camera,
+	last_scene: RWeak<Scene>,
 	rgen: vk::StridedDeviceAddressRegionKHR,
 	miss: vk::StridedDeviceAddressRegionKHR,
 	hit: vk::StridedDeviceAddressRegionKHR,
@@ -242,6 +246,7 @@ impl GroundTruth {
 				samples: 0,
 				accum: Image::default(),
 				last_cam: Camera::default(),
+				last_scene: RWeak::new(),
 				rgen,
 				miss,
 				hit,
@@ -269,8 +274,10 @@ impl GroundTruth {
 			depth: 1,
 		};
 		let new = self.size != size;
-		let clear = self.last_cam != info.camera || new;
+		let w = info.scene.downgrade();
+		let clear = self.last_cam != info.camera || new || !self.last_scene.ptr_eq(&w);
 		self.last_cam = info.camera;
+		self.last_scene = w;
 
 		if new {
 			unsafe {
@@ -279,7 +286,7 @@ impl GroundTruth {
 					device,
 					radiance_graph::resource::ImageDesc {
 						flags: vk::ImageCreateFlags::empty(),
-						format: vk::Format::R8G8B8A8_UNORM,
+						format: vk::Format::R16G16B16A16_SFLOAT,
 						size,
 						levels: 1,
 						layers: 1,
@@ -306,7 +313,7 @@ impl GroundTruth {
 				next_usage: None,
 			},
 			ImageUsage {
-				format: vk::Format::R8G8B8A8_UNORM,
+				format: vk::Format::R16G16B16A16_SFLOAT,
 				usages: &[
 					ImageUsageType::ShaderStorageRead(Shader::RayTracing),
 					ImageUsageType::ShaderStorageWrite(Shader::RayTracing),

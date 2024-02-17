@@ -10,7 +10,7 @@ use radiance_graph::{
 use radiance_shader_compiler::c_str;
 use radiance_util::pipeline::{no_blend, no_cull, simple_blend};
 
-pub struct DebugMeshlets {
+pub struct AcesTonemap {
 	pipeline: vk::Pipeline,
 	layout: vk::PipelineLayout,
 }
@@ -18,10 +18,10 @@ pub struct DebugMeshlets {
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
-	visbuffer: ImageId,
+	input: ImageId,
 }
 
-impl DebugMeshlets {
+impl AcesTonemap {
 	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
@@ -44,7 +44,7 @@ impl DebugMeshlets {
 							.build(),
 						core.shaders
 							.shader(
-								c_str!("radiance-passes/debug/meshlet"),
+								c_str!("radiance-passes/tonemap/aces"),
 								vk::ShaderStageFlags::FRAGMENT,
 								None,
 							)
@@ -61,21 +61,19 @@ impl DebugMeshlets {
 		}
 	}
 
-	pub fn run<'pass>(
-		&'pass self, frame: &mut CoreFrame<'pass, '_>, visbuffer: ReadId<ImageView>,
-	) -> ReadId<ImageView> {
-		let mut pass = frame.pass("debug meshlets");
+	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, hdr: ReadId<ImageView>) -> ReadId<ImageView> {
+		let mut pass = frame.pass("aces tonemap");
 		pass.input(
-			visbuffer,
+			hdr,
 			ImageUsage {
-				format: vk::Format::R32_UINT,
+				format: vk::Format::R16G16B16A16_SFLOAT,
 				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
 				view_type: vk::ImageViewType::TYPE_2D,
 				aspect: vk::ImageAspectFlags::COLOR,
 			},
 		);
 		let (ret, output) = pass.output(
-			visbuffer,
+			hdr,
 			ImageUsage {
 				format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
 				usages: &[ImageUsageType::ColorAttachmentWrite],
@@ -84,13 +82,13 @@ impl DebugMeshlets {
 			},
 		);
 
-		pass.build(move |ctx| self.execute(ctx, visbuffer, output));
+		pass.build(move |ctx| self.execute(ctx, hdr, output));
 
 		ret
 	}
 
-	fn execute(&self, mut pass: CorePass, visbuffer: ReadId<ImageView>, out: WriteId<ImageView>) {
-		let visbuffer = pass.read(visbuffer);
+	fn execute(&self, mut pass: CorePass, hdr: ReadId<ImageView>, out: WriteId<ImageView>) {
+		let hdr = pass.read(hdr);
 		let out = pass.write(out);
 
 		let dev = pass.device.device();
@@ -99,8 +97,8 @@ impl DebugMeshlets {
 		unsafe {
 			let area = vk::Rect2D::builder()
 				.extent(vk::Extent2D {
-					width: visbuffer.size.width,
-					height: visbuffer.size.height,
+					width: hdr.size.width,
+					height: hdr.size.height,
 				})
 				.build();
 			dev.cmd_begin_rendering(
@@ -126,8 +124,8 @@ impl DebugMeshlets {
 				&[vk::Viewport {
 					x: 0.0,
 					y: 0.0,
-					width: visbuffer.size.width as f32,
-					height: visbuffer.size.height as f32,
+					width: hdr.size.width as f32,
+					height: hdr.size.height as f32,
 					min_depth: 0.0,
 					max_depth: 1.0,
 				}],
@@ -147,9 +145,7 @@ impl DebugMeshlets {
 				self.layout,
 				vk::ShaderStageFlags::FRAGMENT,
 				0,
-				bytes_of(&PushConstants {
-					visbuffer: visbuffer.id.unwrap(),
-				}),
+				bytes_of(&PushConstants { input: hdr.id.unwrap() }),
 			);
 
 			dev.cmd_draw(buf, 3, 1, 0, 0);

@@ -79,6 +79,7 @@ impl RuntimeAsset for Scene {
 	fn into_resources(self, queue: Sender<DelRes>) {
 		queue.send(self.instance_buffer.into_resource().into()).unwrap();
 		queue.send(self.meshlet_pointer_buffer.into_resource().into()).unwrap();
+		queue.send(self.acceleration_structure.into_resource().into()).unwrap();
 	}
 }
 
@@ -285,3 +286,4 @@ impl AssetRuntime {
 		))
 	}
 }
+

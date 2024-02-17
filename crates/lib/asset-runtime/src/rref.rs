@@ -54,10 +54,16 @@ impl<T: RuntimeAsset> RRef<T> {
 		let inner = Arc::downgrade(&self.inner);
 		RWeak { inner }
 	}
+
+	pub fn ptr_eq(&self, other: &Self) -> bool { Arc::ptr_eq(&self.inner, &other.inner) }
 }
 
 impl<T: RuntimeAsset> RWeak<T> {
+	pub fn new() -> Self { Self { inner: Weak::new() } }
+
 	pub fn upgrade(&self) -> Option<RRef<T>> { self.inner.upgrade().map(|inner| RRef { inner }) }
+
+	pub fn ptr_eq(&self, other: &Self) -> bool { Weak::ptr_eq(&self.inner, &other.inner) }
 }
 
 impl<T: RuntimeAsset> Deref for RRef<T> {
@@ -75,3 +81,4 @@ impl<T: RuntimeAsset> Drop for Control<T> {
 		}
 	}
 }
+

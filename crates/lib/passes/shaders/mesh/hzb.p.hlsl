@@ -1,7 +1,7 @@
 #include "radiance-core/interface.l.hlsl"
 
 struct PushConstants {
-    Tex2D<float4> depth;
+    Tex2D depth;
     u32 prev_level;
     uint2 prev_size;
 };
