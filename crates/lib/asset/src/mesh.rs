@@ -4,24 +4,23 @@ use bincode::{Decode, Encode};
 use bytemuck::{Pod, Zeroable};
 use static_assertions::const_assert_eq;
 use uuid::Uuid;
-use vek::{Aabb, Vec2, Vec3};
+use vek::{Aabb, Vec2, Vec3, Vec4};
 
 #[derive(Pod, Zeroable, Copy, Clone, Default, Encode, Decode)]
 #[repr(C)]
 pub struct Vertex {
-	/// Normalized vertex coordinates relative to the meshlet AABB.
 	#[bincode(with_serde)]
-	pub position: Vec3<u16>,
-	/// Signed normalized normal vector.
+	pub position: Vec3<f32>,
 	#[bincode(with_serde)]
-	pub normal: Vec3<i16>,
-	/// Normalized UV coordinates relative to the [0.0, 1.0] UV range.
+	pub normal: Vec3<f32>,
 	#[bincode(with_serde)]
-	pub uv: Vec2<u16>,
+	pub tangent: Vec4<f32>,
+	#[bincode(with_serde)]
+	pub uv: Vec2<f32>,
 }
 
-const_assert_eq!(std::mem::size_of::<Vertex>(), 16);
-const_assert_eq!(std::mem::align_of::<Vertex>(), 2);
+const_assert_eq!(std::mem::size_of::<Vertex>(), 48);
+const_assert_eq!(std::mem::align_of::<Vertex>(), 4);
 
 #[derive(Encode, Decode)]
 pub struct Meshlet {
@@ -65,3 +64,4 @@ pub struct Mesh {
 	#[bincode(with_serde)]
 	pub aabb: Aabb<f32>,
 }
+

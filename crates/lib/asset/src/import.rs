@@ -448,6 +448,13 @@ impl<'a> Importer<'a> {
 			}
 			let normals = normals.map(|n| *from_bytes::<Vec3<f32>>(n));
 
+			let tangents = prim.get(&gltf::Semantic::Tangents).ok_or(ImportError::InvalidGltf)?;
+			let (tangents, ty, comp) = self.accessor(tangents)?;
+			if comp != Dimensions::Vec4 || ty != DataType::F32 {
+				return Err(ImportError::InvalidGltf);
+			}
+			let tangents = tangents.map(|n| *from_bytes::<Vec4<f32>>(n));
+
 			let uv = prim.get(&gltf::Semantic::TexCoords(0));
 			let mut uv = uv
 				.map(|uv| {
@@ -468,15 +475,9 @@ impl<'a> Importer<'a> {
 				})
 				.transpose()?;
 
-			#[derive(Copy, Clone, Default, NoUninit)]
-			#[repr(C)]
-			struct TempVertex {
-				position: Vec3<f32>,
-				normal: Vec3<f32>,
-				uv: Vec2<f32>,
-			}
-			let vertices: Vec<TempVertex> = positions
+			let vertices: Vec<Vertex> = positions
 				.zip(normals)
+				.zip(tangents)
 				.zip(std::iter::from_fn(move || {
 					if let Some(ref mut uv) = uv {
 						uv.next()
@@ -484,7 +485,12 @@ impl<'a> Importer<'a> {
 						Some(Vec2::new(0.0, 0.0))
 					}
 				}))
-				.map(|((position, normal), uv)| TempVertex { position, normal, uv })
+				.map(|(((position, normal), tangent), uv)| Vertex {
+					position,
+					normal,
+					tangent,
+					uv,
+				})
 				.collect();
 
 			// Optimizations and meshlet building.
@@ -503,7 +509,7 @@ impl<'a> Importer<'a> {
 
 			let adapter = VertexDataAdapter::new(
 				bytemuck::cast_slice(vertices.as_slice()),
-				std::mem::size_of::<TempVertex>(),
+				std::mem::size_of::<Vertex>(),
 				0,
 			)
 			.unwrap();
@@ -536,17 +542,11 @@ impl<'a> Importer<'a> {
 				}
 				sub.aabb.expand_to_contain(aabb);
 
-				let extent = aabb.max - aabb.min;
-
 				let index_offset = out.indices.len() as u32;
 				let vertex_offset = out.vertices.len() as u32;
 				let vert_count = m.vertices.len() as u8;
 				let tri_count = (m.triangles.len() / 3) as u8;
-				out.vertices.extend(vertices.map(|x| Vertex {
-					position: ((x.position - aabb.min) / extent * Vec3::broadcast(65535.0)).map(|x| x.round() as u16),
-					normal: (x.normal * Vec3::broadcast(32767.0)).map(|x| x.round() as i16),
-					uv: (x.uv * Vec2::broadcast(65535.0)).map(|x| x.round() as u16),
-				}));
+				out.vertices.extend(vertices);
 				out.indices.extend(m.triangles);
 
 				Meshlet {
@@ -662,3 +662,4 @@ impl<'a> Importer<'a> {
 		))
 	}
 }
+

@@ -19,10 +19,10 @@ struct LightingData {
 	static LightingData calculate(float3 view, float3 light, float3 normal) {
 		LightingData ret;
 		ret.half = normalize(view + light);
-		ret.n_v = abs(dot(normal, view)) + 1e-5;
-		ret.n_l = clamp(dot(normal, light), 0.f, 1.f);
-		ret.n_h = clamp(dot(normal, ret.half), 0.f, 1.f);
-		ret.l_h = clamp(dot(light, ret.half), 0.f, 1.f);
+		ret.n_v = saturate(dot(normal, view));
+		ret.n_l = saturate(dot(normal, light));
+		ret.n_h = saturate(dot(normal, ret.half));
+		ret.l_h = saturate(dot(light, ret.half));
 		ret.view = view;
 		ret.light = light;
 		return ret;
@@ -38,15 +38,15 @@ struct MatInput {
 	f32 alpha;
 
 	float3 tangent() {
-		return this.basis[0];
+		return this.basis._m00_m10_m20;
 	}
 
 	float3 normal() {
-		return this.basis[1];
+		return this.basis._m01_m11_m21;
 	}
 
 	float3 binormal() {
-		return this.basis[2];
+		return this.basis._m02_m12_m22;
 	}
 };
 
@@ -71,13 +71,9 @@ struct SampleResult {
 // GGX (Trowbridge-Reitz) normal distribution. [3]
 // Basically everyone uses this.
 f32 D_GGX(LightingData l, MatInput m) {
-	// f32 a = l.n_h * m.alpha;
-	// f32 k = m.alpha / (1.f - l.n_h * l.n_h + a * a);
-	// return k * k / PI;
-
-	f32 a2 = m.alpha * m.alpha;
-	f32 d = ((l.n_h * a2 - l.n_h) * l.n_h + 1.f);
-	return a2 / max(PI * d * d, 0.001f);
+	f32 a = l.n_h * m.alpha;
+	f32 k = m.alpha / (1.f - l.n_h * l.n_h + a * a);
+	return k * k / PI;
 }
 
 // Sample the GGX lobe, returning the half vector.
@@ -109,7 +105,7 @@ f32 V_GGX(LightingData l, MatInput m) {
 
 // The Schlick fresnel.
 float3 F_Schlick(f32 u, float3 f0, float3 f90 = 1.f) {
-	return f0 + (f90 - f0) * pow(clamp(1.f - u, 0.f, 1.f), 5.f);
+	return f0 + (f90 - f0) * pow(saturate(1.f - u), 5.f);
 }
 
 // The Burley Diffuse BRDF. [2]
@@ -117,7 +113,7 @@ float3 BRDF_Burley(LightingData l, MatInput m) {
 	f32 f90 = 0.5f + 2.f * m.alpha * l.l_h * l.l_h;
 	f32 lf = F_Schlick(l.n_l, 1.f, f90).x;
 	f32 vf = F_Schlick(l.n_v, 1.f, f90).x;
-	float3 diff_color = (1.f - m.metallic) * m.base_color.rgb;
+	float3 diff_color = (1.f - m.metallic) * m.base_color.xyz;
 	return diff_color * lf * vf / PI;
 }
 

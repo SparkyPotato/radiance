@@ -17,13 +17,11 @@ RayDesc gen_ray(inout Rng rng) {
 	return ray;
 }
 
-static const u32 SAMPLE_COUNT = 2;
-
-void write_samples(float3 acc) {
+void write_samples(float3 acc, u32 sample_count) {
 	uint2 pixel = DispatchRaysIndex().xy;
 	float3 value = RWTexture2Ds[Constants.img][pixel].xyz;
 	f32 samples = Constants.samples;
-	f32 p1 = samples + SAMPLE_COUNT;
+	f32 p1 = samples + sample_count;
 	RWTexture2Ds[Constants.img][pixel] = float4((samples * value + acc) / p1, 1.f);
 }
 
@@ -32,6 +30,8 @@ f32 lum(float3 col) {
 	return mul.x + mul.y + mul.z;
 }
 
+static const u32 SAMPLE_COUNT = 10;
+
 [shader("raygeneration")]
 void main() {
 	uint2 pixel = DispatchRaysIndex().xy;
@@ -39,10 +39,12 @@ void main() {
 	Rng rng = Constants.rng.init(pixel.y * total.x + pixel.x);
 	
 	float3 acc = 0.f;
+	u32 samples = SAMPLE_COUNT;
 	for (int i = 0; i < SAMPLE_COUNT; i++) {
 		float3 b = 1.f;
 		RayDesc ray = gen_ray(rng);
 		bool specular = true;
+		float3 sample = 0.f;
 		for (u16 bounces = 0; bounces < 16; bounces++) {
 			Payload p = Payload::init(rng, specular);
 			TraceRay(ASes[Constants.as.index], RAY_FLAG_FORCE_OPAQUE, 0xff, 0, 0, 0, ray, p);
@@ -50,9 +52,12 @@ void main() {
 			specular = p.specular;
 
 			float3 val = b * p.radiance;
-			if (any(or(isinf(val) ,isnan(val)))) break;
-			acc += val;
-			if (!p.hit || any(float4(p.color, p.pdf) == 0.f)) break;
+			if (any(or(isinf(val), isnan(val)))) {
+				samples--;
+				break;
+			}
+			sample += val;
+			if (!p.hit || all(p.color == 0.f) || p.pdf == 0.f) break;
 
 			b *= p.color * p.dot / p.pdf;
 			ray.Origin = p.origin;
@@ -65,8 +70,10 @@ void main() {
 				b /= 1.f - q;
 			}
 		}
+
+		acc += sample;
 	}
 
-	write_samples(acc);
+	write_samples(acc, samples);
 }
 

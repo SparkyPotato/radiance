@@ -31,10 +31,7 @@ void main(
     // 64 threads per group and upto 64 vertices per meshlet.
     if (gtid < vert_count) {
         Vertex vertex = instance.mesh.load<Vertex>(meshlet.vertex_offset, gtid);
-
-        float4 normalized = float4(vertex.position, 0.f) / 65535.0;
-        float4 pos = aabb.min + aabb.extent * normalized;
-        vertices[gtid].position = mul(mvp, pos);
+        vertices[gtid].position = mul(mvp, float4(vertex.position, 1.f));
     }
 
     for (u32 t = gtid; t < tri_count; t += 64) {

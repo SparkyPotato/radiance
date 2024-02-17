@@ -45,7 +45,7 @@ struct Rng {
 
 	float3 sample_cos_hemi() {
 		float2 p = this.sample_disk();
-		f32 y = sqrt(max(0.f, 1.f - p.x * p.x + p.y * p.y));
+		f32 y = sqrt(max(0.f, 1.f - p.x * p.x - p.y * p.y));
 		return float3(p.x, y, p.y);
 	}
 };

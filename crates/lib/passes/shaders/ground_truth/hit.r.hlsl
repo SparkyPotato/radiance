@@ -32,22 +32,34 @@ Hit EvalHit(BuiltInTriangleIntersectionAttributes attrs) {
 	Vertex v1 = instance.mesh.load<Vertex>(meshlet.vertex_offset, i.y);
 	Vertex v2 = instance.mesh.load<Vertex>(meshlet.vertex_offset, i.z);
 
-	float3 min = float3(meshlet.aabb_min);
-	float3 extent = float3(meshlet.aabb_extent);
-	float3 p0 = float3(min + extent * float3(v0.position) / 65535.f);
-	float3 p1 = float3(min + extent * float3(v1.position) / 65535.f);
-	float3 p2 = float3(min + extent * float3(v2.position) / 65535.f);
+	float3 p0 = float3(v0.position);
+	float3 p1 = float3(v1.position);
+	float3 p2 = float3(v2.position);
 	hit.position = mul(tmat, float4(bary.x * p0 + bary.y * p1 + bary.z * p2, 1.f)).xyz;
 
-	float3 n0 = (float3(v0.normal) / 32767.f) * 2.f - 1.f;
-	float3 n1 = (float3(v1.normal) / 32767.f) * 2.f - 1.f;
-	float3 n2 = (float3(v2.normal) / 32767.f) * 2.f - 1.f;
+	float3 n0 = float3(v0.normal);
+	float3 n1 = float3(v1.normal);
+	float3 n2 = float3(v2.normal);
 	float3 normal = normalize(mul(tmat, float4(bary.x * n0 + bary.y * n1 + bary.z * n2, 0.f))).xyz;
-	hit.basis = gen_basis(normal);
 
-	float2 u0 = float2(v0.uv) / 65535.f;
-	float2 u1 = float2(v1.uv) / 65535.f;
-	float2 u2 = float2(v2.uv) / 65535.f;
+	float4 t0 = float4(v0.tangent);
+	float4 t1 = float4(v1.tangent);
+	float4 t2 = float4(v2.tangent);
+	float4 gen = bary.x * t0 + bary.y * t1 + bary.z * t2;
+	float4 tangent = float4(normalize(mul(tmat, float4(gen.xyz, 0.f))).xyz, gen.w);
+
+	float3 binormal = cross(normal, tangent.xyz) * tangent.w;
+
+	float3x3 basis = {
+		tangent.x, normal.x, binormal.x,
+		tangent.y, normal.y, binormal.y,
+		tangent.z, normal.z, binormal.z
+	};
+	hit.basis = basis;
+
+	float2 u0 = float2(v0.uv);
+	float2 u1 = float2(v1.uv);
+	float2 u2 = float2(v2.uv);
 	hit.uv = bary.x * u0 + bary.y * u1 + bary.z * u2;
 
 	return hit;
@@ -59,7 +71,11 @@ MatInput EvalMaterial(Hit hit) {
 	Material mat = Constants.materials.load(hit.mat);
 	MatInput ret;
 	ret.base_color = float4(mat.base_color_factor) * mat.base_color.sample_mip(s, uv, 0.f, 1.f);
-	ret.basis = hit.basis; // TODO: Eval normal map.
+	float3 normal = mat.normal.sample_mip(s, uv, 0.f, float4(0.5f, 0.5f, 1.f, 0.f)).xzy;
+	normal = normal * 2.f - 1.f;
+	normal = normalize(mul(hit.basis, normal));
+	hit.basis._m01_m11_m21 = normal; 
+	ret.basis = hit.basis;
 	ret.emissive = float3(mat.emissive_factor) * mat.emissive.sample_mip(s, uv, 0.f, 1.f).rgb;
 	float3 mr = mat.metallic_roughness.sample_mip(s, uv, 0.f, 1.f).rgb;
 	ret.metallic = mat.metallic_factor * mr.g;
@@ -114,11 +130,11 @@ LightEstimate EstimateLight(inout Rng rng, MatInput m) {
 
 [shader("closesthit")]
 void main(inout Payload p, BuiltInTriangleIntersectionAttributes attrs) {
-	p.hit = true;
+	Rng rng = p.rng;
 
 	Hit hit = EvalHit(attrs);
 	MatInput m = EvalMaterial(hit);
-	LightEstimate e = EstimateLight(p.rng, m);
+	LightEstimate e = EstimateLight(rng, m);
 
 	RayDesc ray;
 	ray.Origin = hit.position;
@@ -132,14 +148,23 @@ void main(inout Payload p, BuiltInTriangleIntersectionAttributes attrs) {
 		RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,
 		0xff, 0, 0, 1, ray, s
 	);
-	
-	p.radiance = e.color * s.unshadowed + m.emissive * p.specular;
 
-	SampleResult brdf = SampleBRDF(p.rng, m, p.specular);
+	bool specular;
+	SampleResult brdf = SampleBRDF(rng, m, specular);
+	p.radiance = e.color * s.unshadowed + m.emissive * p.specular;
+	// p.radiance = 0.f;
+	p.hit = true;
+	p.specular = specular;
+	// p.specular = true;
 	p.color = brdf.color;
+	// p.color = 0.f;
 	p.pdf = brdf.pdf;
-	p.origin = ray.Origin;
+	// p.pdf = 1.f;
+	p.origin = hit.position;
 	p.dir = brdf.dir;
-	p.dot = abs(dot(brdf.dir, m.normal()));
+	// p.dir = reflect(WorldRayDirection(), m.normal());
+	p.dot = abs(dot(p.dir, m.normal()));
+	// p.dot = 1.f;
+	p.rng = rng;
 }
 

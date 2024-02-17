@@ -86,7 +86,8 @@ impl AssetRuntime {
 			loader.device,
 			BufferDesc {
 				size,
-				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+				usage: vk::BufferUsageFlags::STORAGE_BUFFER
+					| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
 			},
 		)
 		.map_err(StageError::Vulkan)?;
@@ -102,18 +103,16 @@ impl AssetRuntime {
 			})
 			.collect::<Result<_, LErr<S>>>()?;
 
-		let vertex_size = (std::mem::size_of::<Vec3<f32>>() * m.vertices.len()) as u64;
 		let raw_mesh = GpuBuffer::create(
 			loader.device,
 			BufferDesc {
-				size: vertex_size + (std::mem::size_of::<u16>() * m.indices.len()) as u64,
+				size: (std::mem::size_of::<u16>() * m.indices.len()) as u64,
 				usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
 					| vk::BufferUsageFlags::STORAGE_BUFFER,
 			},
 		)
 		.map_err(StageError::Vulkan)?;
-		let mut vwriter = SliceWriter::new(unsafe { &mut raw_mesh.data().as_mut()[..vertex_size as usize] });
-		let mut iwriter = SliceWriter::new(unsafe { &mut raw_mesh.data().as_mut()[vertex_size as usize..] });
+		let mut iwriter = SliceWriter::new(unsafe { raw_mesh.data().as_mut() });
 		let mut geo = Vec::with_capacity(m.submeshes.len());
 		let mut counts = Vec::with_capacity(m.submeshes.len());
 		let mut ranges = Vec::with_capacity(m.submeshes.len());
@@ -121,18 +120,12 @@ impl AssetRuntime {
 		for (s, sub) in m.submeshes.iter().enumerate() {
 			for me in sub.meshlets.clone().map(|i| &m.meshlets[i as usize]) {
 				let aabb_extent = me.aabb.max - me.aabb.min;
-				let off = me.vertex_offset as usize;
-				for v in m.vertices[off..off + me.vert_count as usize].iter() {
-					vwriter
-						.write(me.aabb.min + aabb_extent * v.position.map(|x| x as f32 / u16::MAX as f32))
-						.unwrap();
-				}
 				let off = me.index_offset as usize;
 				for &i in m.indices[off..off + me.tri_count as usize * 3].iter() {
 					iwriter.write(i as u16).unwrap();
 				}
 
-				let stride = std::mem::size_of::<Vec3<f32>>() as u64;
+				let stride = std::mem::size_of::<GpuVertex>() as u64;
 				geo.push(
 					vk::AccelerationStructureGeometryKHR::builder()
 						.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
@@ -140,15 +133,14 @@ impl AssetRuntime {
 							triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::builder()
 								.vertex_format(vk::Format::R32G32B32_SFLOAT)
 								.vertex_data(vk::DeviceOrHostAddressConstKHR {
-									device_address: raw_mesh.addr() + me.vertex_offset as u64 * stride,
+									device_address: buffer.addr() + vertex_byte_offset,
 								})
 								.vertex_stride(stride)
 								.max_vertex(me.tri_count as u32 - 1)
 								.index_type(vk::IndexType::UINT16)
 								.index_data(vk::DeviceOrHostAddressConstKHR {
 									device_address: raw_mesh.addr()
-										+ vertex_size + me.index_offset as u64
-										* std::mem::size_of::<u16>() as u64,
+										+ me.index_offset as u64 * std::mem::size_of::<u16>() as u64,
 								})
 								.build(),
 						})
@@ -250,3 +242,4 @@ impl AssetRuntime {
 		))
 	}
 }
+

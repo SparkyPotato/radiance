@@ -9,9 +9,10 @@ struct Aabb {
 };
 
 struct Vertex {
-    u16 position[3];
-    i16 normal[3];
-    u16 uv[2];
+    f32 position[3];
+    f32 normal[3];
+    f32 tangent[4];
+    f32 uv[2];
 };
 
 struct MeshletPointer {
