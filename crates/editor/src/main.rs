@@ -131,12 +131,14 @@ fn main() {
 		Event::NewEvents(StartCause::Init) => state.window.window.set_visible(true),
 		Event::MainEventsCleared => state.window.request_redraw(),
 		Event::RedrawRequested(_) => {
+			let arena_size = state.device.arena.memory_usage();
+			state.device.arena.reset();
 			let mut frame = state.core.frame(&state.device, &mut state.graph).unwrap();
 
 			state.ui.begin_frame(&state.window);
 			state
 				.state
-				.render(&state.device, &mut frame, &state.ui.ctx, &state.window);
+				.render(&state.device, &mut frame, &state.ui.ctx, &state.window, arena_size);
 			let id = state.ui.run(&state.device, &mut frame, &state.window).unwrap();
 
 			frame.run(&state.device).unwrap();
@@ -155,3 +157,4 @@ fn main() {
 		_ => {},
 	})
 }
+

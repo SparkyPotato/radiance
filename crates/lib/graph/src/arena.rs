@@ -74,6 +74,21 @@ impl Arena {
 	/// Creates a new arena with a default block size of 1 MiB.
 	pub fn new() -> Self { Self::with_block_size(1024 * 1024) }
 
+	pub fn memory_usage(&self) -> usize {
+		unsafe {
+			let mut size = 0;
+			let inner = self.inner.get();
+
+			let mut block = Some((*inner).head);
+			while let Some(mut b) = block {
+				size += b.as_mut().header.offset;
+				block = b.as_mut().header.next;
+			}
+
+			size
+		}
+	}
+
 	/// Creates a new arena with the given block size in bytes.
 	pub fn with_block_size(block_size: usize) -> Self {
 		let head = match Self::allocate_block(block_size) {
@@ -99,22 +114,18 @@ impl Arena {
 		if count != 0 {
 			panic!("tried to reset Arena with living allocations ({})", count);
 		}
+		unsafe {
+			self.reset_all_blocks();
+		}
 	}
 
 	/// [`Allocator::deallocate`], but doesn't require a layout.
 	///
 	/// # Safety
 	/// Same as `Allocator::deallocate`.
-	pub unsafe fn deallocate(&self, ptr: NonNull<u8>) {
+	pub unsafe fn deallocate(&self, _: NonNull<u8>) {
 		let inner = self.inner.get();
-
 		(*inner).alloc_count -= 1;
-		if unlikely((*inner).alloc_count == 0) {
-			self.reset_all_blocks()
-		} else if ptr.addr().get() == (*inner).last_alloc {
-			let offset = ptr.as_ptr().offset_from((*(*inner).curr_block.as_ptr()).data.as_ptr());
-			(*(*inner).curr_block.as_ptr()).header.offset = offset as _;
-		}
 	}
 
 	unsafe fn reset_all_blocks(&self) {
@@ -221,7 +232,7 @@ unsafe impl Allocator for Arena {
 	) -> Result<NonNull<[u8]>, AllocError> {
 		let inner = self.inner.get();
 
-		if ptr.addr().get() == (*inner).last_alloc {
+		if likely(ptr.addr().get() == (*inner).last_alloc) {
 			// Reuse the last allocation if possible.
 			let offset = ptr.as_ptr().offset_from((*(*inner).curr_block.as_ptr()).data.as_ptr());
 			let new_offset = offset as usize + new_layout.size();
@@ -327,3 +338,4 @@ mod tests {
 		}
 	}
 }
+

@@ -15,15 +15,14 @@ use vek::Vec2;
 use winit::event::WindowEvent;
 
 use crate::{
-	ui::render::{
-		camera::{CameraController, Mode},
-		debug::DebugWindows,
+	ui::{
+		debug::{Debug, RenderMode},
+		render::camera::{CameraController, Mode},
 	},
 	window::Window,
 };
 
 mod camera;
-mod debug;
 
 enum Scene {
 	None,
@@ -38,7 +37,6 @@ pub struct Renderer {
 	ground_truth: GroundTruth,
 	tonemap: AcesTonemap,
 	runtime: AssetRuntime,
-	debug_windows: DebugWindows,
 	camera: CameraController,
 }
 
@@ -51,7 +49,6 @@ impl Renderer {
 			ground_truth: GroundTruth::new(device, core)?,
 			tonemap: AcesTonemap::new(device, core)?,
 			runtime: AssetRuntime::new(device)?,
-			debug_windows: DebugWindows::new(),
 			camera: CameraController::new(),
 		})
 	}
@@ -60,11 +57,11 @@ impl Renderer {
 
 	pub fn render<'pass, S: AssetSource>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
-		system: Option<&AssetSystem<S>>,
+		debug: &Debug, system: Option<&AssetSystem<S>>,
 	) {
 		self.runtime.tick(frame.ctx());
 		CentralPanel::default().show(ctx, |ui| {
-			if let Some(x) = self.render_inner(device, frame, ctx, ui, window, system) {
+			if let Some(x) = self.render_inner(device, frame, ctx, ui, window, system, debug) {
 				if x {
 					ui.centered_and_justified(|ui| {
 						ui.label(RichText::new("no scene loaded").size(20.0));
@@ -80,7 +77,7 @@ impl Renderer {
 
 	fn render_inner<'pass, S: AssetSource>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, ui: &mut Ui,
-		window: &Window, system: Option<&AssetSystem<S>>,
+		window: &Window, system: Option<&AssetSystem<S>>, debug: &Debug,
 	) -> Option<bool> {
 		let Some(system) = system else {
 			return Some(true);
@@ -123,38 +120,38 @@ impl Renderer {
 		}
 
 		let s = Vec2::new(size.x as u32, size.y as u32);
-		if self.debug_windows.ground_truth {
-			let rt = self.ground_truth.run(
-				device,
-				frame,
-				radiance_passes::ground_truth::RenderInfo {
-					scene,
-					materials: self.runtime.materials(),
-					camera: self.camera.get(),
-					size: s,
-				},
-			);
-			let mapped = self.tonemap.run(frame, rt);
-			ui.image((to_texture_id(mapped), size));
-		} else {
-			let visbuffer = self.visbuffer.run(
-				device,
-				frame,
-				RenderInfo {
-					scene,
-					camera: self.camera.get(),
-					cull_camera: self.debug_windows.cull_camera(),
-					size: s,
-				},
-			);
-			let debug = self.debug.run(frame, visbuffer);
-			ui.image((to_texture_id(debug), size));
-		}
+		let img = match debug.render_mode() {
+			RenderMode::Realtime => {
+				let visbuffer = self.visbuffer.run(
+					device,
+					frame,
+					RenderInfo {
+						scene,
+						camera: self.camera.get(),
+						cull_camera: debug.cull_camera(),
+						size: s,
+					},
+				);
+				self.debug.run(frame, visbuffer)
+			},
+			RenderMode::GroundTruth => {
+				let rt = self.ground_truth.run(
+					device,
+					frame,
+					radiance_passes::ground_truth::RenderInfo {
+						scene,
+						materials: self.runtime.materials(),
+						camera: self.camera.get(),
+						size: s,
+					},
+				);
+				self.tonemap.run(frame, rt)
+			},
+		};
+		ui.image((to_texture_id(img), size));
 
 		Some(false)
 	}
-
-	pub fn draw_debug_menu(&mut self, ui: &mut Ui) { self.debug_windows.draw_menu(ui) }
 
 	pub fn draw_camera_menu(&mut self, ui: &mut Ui) {
 		match self.scene {
@@ -169,10 +166,6 @@ impl Renderer {
 		}
 	}
 
-	pub fn draw_debug_windows(&mut self, ctx: &Context, device: &CoreDevice) {
-		self.debug_windows.draw(ctx, device, &self.camera);
-	}
-
 	pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
 		self.camera.on_window_event(window, event);
 	}
@@ -183,6 +176,7 @@ impl Renderer {
 		self.debug.destroy(device);
 		self.ground_truth.destroy(device);
 		self.runtime.destroy(device);
+		self.tonemap.destroy(device);
 	}
 }
 

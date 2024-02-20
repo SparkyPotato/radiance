@@ -1,6 +1,7 @@
 //! The entire editor UI.
 
 mod assets;
+mod debug;
 mod notif;
 mod render;
 mod widgets;
@@ -13,13 +14,14 @@ pub use widgets::Fonts;
 use winit::event::WindowEvent;
 
 use crate::{
-	ui::{assets::AssetManager, notif::NotifStack, render::Renderer},
+	ui::{assets::AssetManager, debug::Debug, notif::NotifStack, render::Renderer},
 	window::Window,
 };
 
 pub struct UiState {
-	assets: AssetManager,
 	fonts: Fonts,
+	assets: AssetManager,
+	debug: Debug,
 	renderer: Renderer,
 	notifs: NotifStack,
 }
@@ -28,6 +30,7 @@ impl UiState {
 	pub fn new(device: &CoreDevice, core: &RenderCore, fonts: Fonts) -> Result<Self> {
 		Ok(Self {
 			fonts,
+			debug: Debug::new(),
 			assets: AssetManager::new(),
 			renderer: Renderer::new(device, core)?,
 			notifs: NotifStack::new(),
@@ -36,10 +39,11 @@ impl UiState {
 
 	pub fn render<'pass>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
+		arena_size: usize,
 	) {
 		TopBottomPanel::top("menu").show(ctx, |ui| {
 			menu::bar(ui, |ui| {
-				ui.menu_button("project", |ui| {
+				ui.menu_button("file", |ui| {
 					let new = ui.button("new").clicked();
 					let load = ui.button("load").clicked();
 					if new || load {
@@ -49,18 +53,27 @@ impl UiState {
 					}
 				});
 
-				ui.menu_button("debug", |ui| self.renderer.draw_debug_menu(ui));
+				ui.menu_button("window", |ui| {
+					ui.checkbox(&mut self.debug.enabled, "debug");
+				});
 
 				ui.menu_button("cameras", |ui| self.renderer.draw_camera_menu(ui));
 			});
 		});
 
-		self.renderer.draw_debug_windows(ctx, device);
+		self.debug.set_arena_size(arena_size);
+		self.debug.render(ctx, device);
 
 		self.assets
 			.render(ctx, &mut self.notifs, &mut self.renderer, &self.fonts);
-		self.renderer
-			.render(device, frame, ctx, window, self.assets.system.as_deref().map(|x| &**x));
+		self.renderer.render(
+			device,
+			frame,
+			ctx,
+			window,
+			&self.debug,
+			self.assets.system.as_deref().map(|x| &**x),
+		);
 
 		self.notifs.render(ctx, &self.fonts);
 	}
