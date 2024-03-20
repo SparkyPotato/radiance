@@ -167,7 +167,11 @@ impl VirtualFileSystem {
 
 fn get_cargo_package_name(root: &Path) -> Result<String, Box<dyn Error>> {
 	let manifest = root.join("Cargo.toml");
-	let manifest = cargo_toml::Manifest::from_path(manifest)?;
+	let manifest = cargo_toml::Manifest::from_str(
+		&std::fs::read_to_string(&manifest)
+			.map_err(|e| format!("failed to open file `{}`: {:?}", manifest.display(), e))?,
+	)?;
 	let name = manifest.package.ok_or("Cargo.toml has no package")?.name;
 	Ok(name)
 }
+

@@ -31,13 +31,8 @@ impl ShaderRuntime {
 			.flat_map(|x| x.modules.iter())
 			.map(|(name, spirv)| {
 				let module = unsafe {
-					device.create_shader_module(
-						&vk::ShaderModuleCreateInfo::builder().code(std::slice::from_raw_parts(
-							spirv.as_ptr() as *const u32,
-							spirv.len() / 4,
-						)),
-						None,
-					)
+					let s = ash::util::read_spv(&mut std::io::Cursor::new(spirv)).unwrap();
+					device.create_shader_module(&vk::ShaderModuleCreateInfo::builder().code(&s), None)
 				}
 				.unwrap();
 				(*name, module)
@@ -74,3 +69,4 @@ impl ShaderRuntime {
 		}
 	}
 }
+

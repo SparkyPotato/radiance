@@ -11,10 +11,11 @@ build-script = ["compile"]
 [dependencies]
 radiance-shader-compiler-macros = { path = "../shader-compiler-macros" }
 
-ash = { version = "0.37.2", optional = true }
-cargo_toml = { version = "0.17.1", optional = true }
-hassle-rs = { version = "0.11.0", optional = true }
-rustc-hash = "1.1.0"
-serde = { version = "1.0.160", features = ["derive"], optional = true }
-serde_json = { version = "1.0.96", optional = true }
-walkdir = "2.3.3"
+ash = { workspace = true, optional = true  }
+rustc-hash = { workspace = true }
+walkdir = { workspace = true }
+cargo_toml = { workspace = true, optional = true }
+hassle-rs = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+

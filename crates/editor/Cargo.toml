@@ -14,17 +14,17 @@ radiance-egui = { path = "../lib/egui" }
 radiance-graph = { path = "../lib/graph", features = ["bytemuck"] }
 radiance-passes = { path = "../lib/passes" }
 
-ash = "0.37.2"
-bytemuck = { version = "1.13.1", features = ["derive"] }
-crossbeam-channel = "0.5.8"
-egui = { version = "0.24.0", features = ["bytemuck"] }
-egui_extras = "0.24.0"
-egui_grid = "0.4.0"
-egui-winit = "0.24.0"
-rfd = "0.12.1"
-rustc-hash = "1.1.0"
-tracing = "0.1.37"
-tracing-subscriber = { version = "0.3.16", features = ["env-filter"] }
-tracy = { package = "tracy_full", version = "1.6.1", features = ["enable", "tracing"] }
-vek = "0.16.1"
-winit = "0.28"
+ash = { workspace = true }
+bytemuck = { workspace = true }
+crossbeam-channel = { workspace = true }
+egui = { workspace = true }
+rustc-hash = { workspace = true }
+tracing = { workspace = true }
+vek = { workspace = true }
+egui_extras = { workspace = true }
+egui_grid = { workspace = true }
+egui-winit = { workspace = true }
+rfd = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracy = { workspace = true }
+winit = { workspace = true }
