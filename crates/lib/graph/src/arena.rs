@@ -136,6 +136,7 @@ impl Arena {
 			(*b).header.offset = 0;
 			block = (*b).header.next;
 		}
+		(*inner).curr_block = (*inner).head;
 	}
 
 	fn block_layout(size: usize) -> Layout {
