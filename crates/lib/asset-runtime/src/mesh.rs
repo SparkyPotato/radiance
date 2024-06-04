@@ -206,7 +206,8 @@ impl AssetRuntime {
 				loader.device,
 				BufferDesc {
 					size: size.build_scratch_size,
-					usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+					usage: vk::BufferUsageFlags::STORAGE_BUFFER
+						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
 				},
 			)
 			.map_err(StageError::Vulkan)?;
@@ -242,4 +243,3 @@ impl AssetRuntime {
 		))
 	}
 }
-

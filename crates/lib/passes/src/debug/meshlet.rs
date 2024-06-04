@@ -3,7 +3,7 @@ use bytemuck::{bytes_of, NoUninit};
 use radiance_core::{pipeline::GraphicsPipelineDesc, CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::ImageId,
-	graph::{ImageUsage, ImageUsageType, ReadId, Shader, WriteId},
+	graph::{ImageUsage, ImageUsageType, Res, Shader},
 	resource::ImageView,
 	Result,
 };
@@ -61,9 +61,7 @@ impl DebugMeshlets {
 		}
 	}
 
-	pub fn run<'pass>(
-		&'pass self, frame: &mut CoreFrame<'pass, '_>, visbuffer: ReadId<ImageView>,
-	) -> ReadId<ImageView> {
+	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, visbuffer: Res<ImageView>) -> Res<ImageView> {
 		let mut pass = frame.pass("debug meshlets");
 		pass.input(
 			visbuffer,
@@ -74,7 +72,7 @@ impl DebugMeshlets {
 				aspect: vk::ImageAspectFlags::COLOR,
 			},
 		);
-		let (ret, output) = pass.output(
+		let output = pass.output(
 			visbuffer,
 			ImageUsage {
 				format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
@@ -86,12 +84,12 @@ impl DebugMeshlets {
 
 		pass.build(move |ctx| self.execute(ctx, visbuffer, output));
 
-		ret
+		output
 	}
 
-	fn execute(&self, mut pass: CorePass, visbuffer: ReadId<ImageView>, out: WriteId<ImageView>) {
-		let visbuffer = pass.read(visbuffer);
-		let out = pass.write(out);
+	fn execute(&self, mut pass: CorePass, visbuffer: Res<ImageView>, out: Res<ImageView>) {
+		let visbuffer = pass.get(visbuffer);
+		let out = pass.get(out);
 
 		let dev = pass.device.device();
 		let buf = pass.buf;
@@ -163,4 +161,3 @@ impl DebugMeshlets {
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }
-

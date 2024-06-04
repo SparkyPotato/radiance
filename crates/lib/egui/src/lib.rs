@@ -35,11 +35,10 @@ use radiance_graph::{
 		BufferUsageType,
 		ImageUsage,
 		ImageUsageType,
-		ReadId,
+		Res,
 		Shader,
 		UploadBufferDesc,
 		VirtualResourceDesc,
-		WriteId,
 	},
 	resource::{Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, UploadBufferHandle},
 	Error,
@@ -78,9 +77,9 @@ pub struct Renderer {
 }
 
 struct PassIO {
-	vertex: WriteId<UploadBufferHandle>,
-	index: WriteId<UploadBufferHandle>,
-	out: WriteId<ImageView>,
+	vertex: Res<UploadBufferHandle>,
+	index: Res<UploadBufferHandle>,
+	out: Res<ImageView>,
 }
 
 #[repr(C)]
@@ -176,19 +175,19 @@ impl Renderer {
 
 		let mut pass = frame.pass("ui");
 
-		let (_, vertex) = pass.output(
+		let vertex = pass.output(
 			UploadBufferDesc { size: self.vertex_size },
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::Vertex)],
 			},
 		);
-		let (_, index) = pass.output(
+		let index = pass.output(
 			UploadBufferDesc { size: self.index_size },
 			BufferUsage {
 				usages: &[BufferUsageType::IndexBuffer],
 			},
 		);
-		let (_, out) = pass.output(
+		let out = pass.output(
 			out,
 			ImageUsage {
 				format: self.format,
@@ -205,7 +204,7 @@ impl Renderer {
 				match &tris.primitive {
 					Primitive::Mesh(m) => match m.texture_id {
 						TextureId::User(x) => pass.input::<ImageView>(
-							ReadId::from_raw(x as _),
+							Res::from_raw(x as _),
 							ImageUsage {
 								format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
 								usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
@@ -241,9 +240,9 @@ impl Renderer {
 	}
 
 	unsafe fn execute(&mut self, mut pass: CorePass, io: PassIO, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
-		let vertex = pass.write(io.vertex);
-		let index = pass.write(io.index);
-		let out = pass.write(io.out);
+		let vertex = pass.get(io.vertex);
+		let index = pass.get(io.index);
+		let out = pass.get(io.out);
 
 		Self::generate_buffers(vertex, index, tris);
 
@@ -339,7 +338,7 @@ impl Renderer {
 							(image.id.unwrap(), *sampler)
 						},
 						TextureId::User(x) => {
-							let image: ImageView = pass.read(ReadId::from_raw(x as _));
+							let image: ImageView = pass.get(Res::from_raw(x as _));
 							let sampler = self.samplers[&TextureOptions {
 								magnification: TextureFilter::Linear,
 								minification: TextureFilter::Linear,
@@ -550,5 +549,4 @@ impl ScissorRect {
 	}
 }
 
-pub fn to_texture_id(r: ReadId<ImageView>) -> TextureId { TextureId::User(r.into_raw() as _) }
-
+pub fn to_texture_id(r: Res<ImageView>) -> TextureId { TextureId::User(r.into_raw() as _) }

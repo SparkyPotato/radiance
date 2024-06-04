@@ -7,7 +7,7 @@ use std::{
 	sync::atomic::{AtomicUsize, Ordering},
 };
 
-use bytemuck::{from_bytes, NoUninit};
+use bytemuck::from_bytes;
 use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
@@ -662,4 +662,3 @@ impl<'a> Importer<'a> {
 		))
 	}
 }
-

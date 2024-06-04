@@ -1,4 +1,4 @@
-use egui::{ComboBox, Context, Ui, Window};
+use egui::{ComboBox, Context, Window};
 use radiance_core::CoreDevice;
 use radiance_graph::alloc::AllocatorVisualizer;
 use radiance_passes::mesh::visbuffer::Camera;
@@ -82,4 +82,3 @@ impl Debug {
 
 	pub fn cull_camera(&self) -> Option<Camera> { self.cull_camera }
 }
-

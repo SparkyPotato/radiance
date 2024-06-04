@@ -1,6 +1,6 @@
 use radiance_graph::{
 	ash::vk,
-	graph::{BufferUsage, ExternalBuffer, ExternalImage, ImageUsage, ReadId, WriteId},
+	graph::{BufferUsage, ExternalBuffer, ExternalImage, ImageUsage, Res},
 	resource::{BufferDesc, GpuBuffer, GpuBufferHandle, Image, ImageDesc, ImageView, Resource},
 	Result,
 };
@@ -26,10 +26,10 @@ impl PersistentBuffer {
 
 	pub fn next(
 		&mut self, pass: &mut CoreBuilder, read_usage: BufferUsage, write_usage: BufferUsage,
-	) -> (ReadId<GpuBufferHandle>, WriteId<GpuBufferHandle>) {
+	) -> (Res<GpuBufferHandle>, Res<GpuBufferHandle>) {
 		let next = self.current ^ 1;
 
-		let (read, _) = pass.output(
+		let read = pass.output(
 			ExternalBuffer {
 				handle: self.buffers[self.current].handle(),
 				prev_usage: None,
@@ -37,7 +37,7 @@ impl PersistentBuffer {
 			},
 			read_usage,
 		);
-		let (_, write) = pass.output(
+		let write = pass.output(
 			ExternalBuffer {
 				handle: self.buffers[next].handle(),
 				prev_usage: None,
@@ -78,10 +78,10 @@ impl PersistentImage {
 
 	pub fn next(
 		&mut self, pass: &mut CoreBuilder, read_usage: ImageUsage, write_usage: ImageUsage,
-	) -> (ReadId<ImageView>, WriteId<ImageView>) {
+	) -> (Res<ImageView>, Res<ImageView>) {
 		let next = self.current ^ 1;
 
-		let (read, _) = pass.output(
+		let read = pass.output(
 			ExternalImage {
 				handle: self.images[self.current].handle(),
 				size: self.desc.size,
@@ -93,7 +93,7 @@ impl PersistentImage {
 			},
 			read_usage,
 		);
-		let (_, write) = pass.output(
+		let write = pass.output(
 			ExternalImage {
 				handle: self.images[next].handle(),
 				size: self.desc.size,

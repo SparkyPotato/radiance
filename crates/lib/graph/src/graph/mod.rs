@@ -320,7 +320,7 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 	pub fn ctx(&mut self) -> &mut C { &mut self.frame.ctx }
 
 	/// Read GPU data that another pass outputs.
-	pub fn input<T: VirtualResource>(&mut self, id: ReadId<T>, usage: T::Usage<'_>) {
+	pub fn input<T: VirtualResource>(&mut self, id: Res<T>, usage: T::Usage<'_>) {
 		let id = id.id.wrapping_sub(self.frame.graph.resource_base_id);
 
 		unsafe {
@@ -333,7 +333,7 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 	/// Output GPU data for other passes.
 	pub fn output<D: VirtualResourceDesc>(
 		&mut self, desc: D, usage: <D::Resource as VirtualResource>::Usage<'_>,
-	) -> (ReadId<D::Resource>, WriteId<D::Resource>) {
+	) -> Res<D::Resource> {
 		let real_id = self.frame.virtual_resources.len();
 		let id = real_id.wrapping_add(self.frame.graph.resource_base_id);
 
@@ -349,16 +349,10 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 			ty,
 		});
 
-		(
-			ReadId {
-				id,
-				_marker: PhantomData,
-			},
-			WriteId {
-				id,
-				_marker: PhantomData,
-			},
-		)
+		Res {
+			id,
+			_marker: PhantomData,
+		}
 	}
 
 	/// Read CPU data that another pass outputs.
@@ -469,17 +463,8 @@ impl<'frame, 'graph, C> PassContext<'frame, 'graph, C> {
 		}
 	}
 
-	/// Read a GPU resource output by another pass.
-	pub fn read<T: VirtualResource>(&mut self, id: ReadId<T>) -> T {
-		let id = id.id.wrapping_sub(self.base_id);
-		unsafe {
-			let res = self.resource_map.get(id as u32);
-			T::from_res(self.pass, res, self.caches, self.device)
-		}
-	}
-
-	/// Write a GPU resource as an output of this pass.
-	pub fn write<T: VirtualResource>(&mut self, id: WriteId<T>) -> T {
+	/// Get a GPU resource.
+	pub fn get<T: VirtualResource>(&mut self, id: Res<T>) -> T {
 		let id = id.id.wrapping_sub(self.base_id);
 		unsafe {
 			let res = self.resource_map.get(id as u32);
@@ -530,28 +515,13 @@ impl<T> From<GetId<T>> for RefId<T> {
 	fn from(id: GetId<T>) -> Self { id.to_ref() }
 }
 
-/// An ID to write GPU resources.
-pub struct WriteId<T: VirtualResource> {
-	id: usize,
-	_marker: PhantomData<T>,
-}
-
-impl<T: VirtualResource> WriteId<T> {
-	pub fn to_read(&self) -> ReadId<T> {
-		ReadId {
-			id: self.id,
-			_marker: PhantomData,
-		}
-	}
-}
-
 /// An ID to read GPU resources.
-pub struct ReadId<T: VirtualResource> {
+pub struct Res<T: VirtualResource> {
 	id: usize,
 	_marker: PhantomData<T>,
 }
 
-impl<T: VirtualResource> ReadId<T> {
+impl<T: VirtualResource> Res<T> {
 	pub fn into_raw(self) -> usize { self.id }
 
 	pub unsafe fn from_raw(id: usize) -> Self {
@@ -562,8 +532,8 @@ impl<T: VirtualResource> ReadId<T> {
 	}
 }
 
-impl<T: VirtualResource> Copy for ReadId<T> {}
-impl<T: VirtualResource> Clone for ReadId<T> {
+impl<T: VirtualResource> Copy for Res<T> {}
+impl<T: VirtualResource> Clone for Res<T> {
 	fn clone(&self) -> Self { *self }
 }
 

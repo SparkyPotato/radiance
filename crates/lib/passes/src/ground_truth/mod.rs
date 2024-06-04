@@ -9,17 +9,7 @@ use radiance_asset_runtime::{
 use radiance_core::{CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::{ASId, BufferId, SamplerId, StorageImageId},
-	graph::{
-		BufferUsage,
-		BufferUsageType,
-		ExternalImage,
-		ImageDesc,
-		ImageUsage,
-		ImageUsageType,
-		ReadId,
-		UploadBufferDesc,
-		WriteId,
-	},
+	graph::{BufferUsage, BufferUsageType, ExternalImage, ImageUsage, ImageUsageType, Res, UploadBufferDesc},
 	resource::{BufferDesc, GpuBuffer, Image, ImageView, Resource, UploadBufferHandle},
 	sync::Shader,
 	Result,
@@ -54,8 +44,8 @@ pub struct GroundTruth {
 }
 
 struct PassIO {
-	write: WriteId<ImageView>,
-	camera: WriteId<UploadBufferHandle>,
+	write: Res<ImageView>,
+	camera: Res<UploadBufferHandle>,
 	info: RenderInfo,
 }
 
@@ -267,7 +257,7 @@ impl GroundTruth {
 
 	pub fn run<'pass>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
-	) -> ReadId<ImageView> {
+	) -> Res<ImageView> {
 		let size = vk::Extent3D {
 			width: info.size.x,
 			height: info.size.y,
@@ -302,7 +292,7 @@ impl GroundTruth {
 		self.samples = if clear { 0 } else { self.samples + 1 };
 
 		let mut pass = frame.pass("raytrace");
-		let (read, write) = pass.output(
+		let write = pass.output(
 			ExternalImage {
 				handle: self.accum.handle(),
 				size,
@@ -337,7 +327,7 @@ impl GroundTruth {
 		// },
 		// );
 
-		let (_, camera) = pass.output(
+		let camera = pass.output(
 			UploadBufferDesc {
 				size: std::mem::size_of::<CameraData>() as _,
 			},
@@ -346,14 +336,14 @@ impl GroundTruth {
 			},
 		);
 
-		pass.build(|pass| self.execute(pass, PassIO { write, camera, info }));
+		pass.build(move |pass| self.execute(pass, PassIO { write, camera, info }));
 
-		read
+		write
 	}
 
 	fn execute(&self, mut pass: CorePass, io: PassIO) {
-		let mut camera = pass.write(io.camera);
-		let write = pass.write(io.write);
+		let mut camera = pass.get(io.camera);
+		let write = pass.get(io.write);
 
 		let dev = pass.device;
 		let buf = pass.buf;
@@ -412,4 +402,3 @@ impl GroundTruth {
 		}
 	}
 }
-

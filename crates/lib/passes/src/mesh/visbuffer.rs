@@ -14,17 +14,7 @@ use radiance_core::{
 };
 use radiance_graph::{
 	device::descriptor::BufferId,
-	graph::{
-		BufferUsage,
-		BufferUsageType,
-		ImageDesc,
-		ImageUsage,
-		ImageUsageType,
-		ReadId,
-		Shader,
-		UploadBufferDesc,
-		WriteId,
-	},
+	graph::{BufferUsage, BufferUsageType, ImageDesc, ImageUsage, ImageUsageType, Res, Shader, UploadBufferDesc},
 	resource::{GpuBufferHandle, ImageView, UploadBufferHandle},
 	Result,
 };
@@ -92,16 +82,16 @@ struct PushConstants {
 struct PassIO {
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	rw: ReadId<GpuBufferHandle>,
-	ww: ReadId<GpuBufferHandle>,
-	rd: ReadId<GpuBufferHandle>,
-	wd: ReadId<GpuBufferHandle>,
+	rw: Res<GpuBufferHandle>,
+	ww: Res<GpuBufferHandle>,
+	rd: Res<GpuBufferHandle>,
+	wd: Res<GpuBufferHandle>,
 	cull_camera: CameraData,
 	draw_camera: CameraData,
 	meshlet_count: u32,
-	camera: WriteId<UploadBufferHandle>,
-	visbuffer: WriteId<ImageView>,
-	depth: WriteId<ImageView>,
+	camera: Res<UploadBufferHandle>,
+	visbuffer: Res<ImageView>,
+	depth: Res<ImageView>,
 }
 
 impl VisBuffer {
@@ -180,7 +170,7 @@ impl VisBuffer {
 
 	pub fn init_visibility<'pass>(
 		&mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
-	) -> (ReadId<GpuBufferHandle>, ReadId<GpuBufferHandle>) {
+	) -> (Res<GpuBufferHandle>, Res<GpuBufferHandle>) {
 		let new = self.visibility(device, &info.scene);
 		let work = &mut self.workgroups;
 		let data = self.visibility.as_mut().unwrap();
@@ -202,11 +192,10 @@ impl VisBuffer {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		let ww = ww.to_read();
 
 		pass.build(move |mut ctx| unsafe {
-			let rw = ctx.read(rw);
-			let ww = ctx.read(ww);
+			let rw = ctx.get(rw);
+			let ww = ctx.get(ww);
 			let dev = ctx.device.device();
 			let buf = ctx.buf;
 
@@ -235,7 +224,7 @@ impl VisBuffer {
 
 	pub fn run<'pass>(
 		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
-	) -> ReadId<ImageView> {
+	) -> Res<ImageView> {
 		let (rw, ww) = self.init_visibility(device, frame, info.clone());
 
 		let mut pass = frame.pass("visbuffer");
@@ -267,7 +256,6 @@ impl VisBuffer {
 				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Task)],
 			},
 		);
-		let wd = wd.to_read();
 
 		let aspect = info.size.x as f32 / info.size.y as f32;
 		let draw_camera = CameraData::new(aspect, info.camera);
@@ -276,7 +264,7 @@ impl VisBuffer {
 			.map(|c| CameraData::new(aspect, c))
 			.unwrap_or(draw_camera);
 
-		let (_, c) = pass.output(
+		let c = pass.output(
 			UploadBufferDesc {
 				size: (std::mem::size_of::<CameraData>() * 2) as _,
 			},
@@ -298,7 +286,7 @@ impl VisBuffer {
 			layers: 1,
 			samples: vk::SampleCountFlags::TYPE_1,
 		};
-		let (out, visbuffer) = pass.output(
+		let visbuffer = pass.output(
 			desc,
 			ImageUsage {
 				format: vk::Format::R32_UINT,
@@ -307,7 +295,7 @@ impl VisBuffer {
 				aspect: vk::ImageAspectFlags::COLOR,
 			},
 		);
-		let (_, depth) = pass.output(
+		let depth = pass.output(
 			desc,
 			ImageUsage {
 				format: vk::Format::D32_SFLOAT,
@@ -337,17 +325,17 @@ impl VisBuffer {
 			)
 		});
 
-		out
+		visbuffer
 	}
 
 	fn execute(&self, mut pass: CorePass, io: PassIO) {
-		let mut camera = pass.write(io.camera);
-		let visbuffer = pass.write(io.visbuffer);
-		let depth = pass.write(io.depth);
-		let rw = pass.read(io.rw);
-		let ww = pass.read(io.ww);
-		let rd = pass.read(io.rd);
-		let wd = pass.read(io.wd);
+		let mut camera = pass.get(io.camera);
+		let visbuffer = pass.get(io.visbuffer);
+		let depth = pass.get(io.depth);
+		let rw = pass.get(io.rw);
+		let ww = pass.get(io.ww);
+		let rd = pass.get(io.rd);
+		let wd = pass.get(io.wd);
 
 		let dev = pass.device.device();
 		let buf = pass.buf;
@@ -477,4 +465,3 @@ pub fn infinite_projection(aspect: f32, yfov: f32, near: f32) -> Mat4<f32> {
 		0.0, 0.0, 1.0, 0.0, //
 	)
 }
-

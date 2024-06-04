@@ -3,7 +3,7 @@ use bytemuck::{bytes_of, NoUninit};
 use radiance_core::{pipeline::GraphicsPipelineDesc, CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
 	device::descriptor::ImageId,
-	graph::{ImageUsage, ImageUsageType, ReadId, Shader, WriteId},
+	graph::{ImageUsage, ImageUsageType, Res, Shader},
 	resource::ImageView,
 	Result,
 };
@@ -61,7 +61,7 @@ impl AcesTonemap {
 		}
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, hdr: ReadId<ImageView>) -> ReadId<ImageView> {
+	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, hdr: Res<ImageView>) -> Res<ImageView> {
 		let mut pass = frame.pass("aces tonemap");
 		pass.input(
 			hdr,
@@ -72,7 +72,7 @@ impl AcesTonemap {
 				aspect: vk::ImageAspectFlags::COLOR,
 			},
 		);
-		let (ret, output) = pass.output(
+		let output = pass.output(
 			hdr,
 			ImageUsage {
 				format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
@@ -84,12 +84,12 @@ impl AcesTonemap {
 
 		pass.build(move |ctx| self.execute(ctx, hdr, output));
 
-		ret
+		output
 	}
 
-	fn execute(&self, mut pass: CorePass, hdr: ReadId<ImageView>, out: WriteId<ImageView>) {
-		let hdr = pass.read(hdr);
-		let out = pass.write(out);
+	fn execute(&self, mut pass: CorePass, hdr: Res<ImageView>, out: Res<ImageView>) {
+		let hdr = pass.get(hdr);
+		let out = pass.get(out);
 
 		let dev = pass.device.device();
 		let buf = pass.buf;
@@ -159,4 +159,3 @@ impl AcesTonemap {
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }
-
