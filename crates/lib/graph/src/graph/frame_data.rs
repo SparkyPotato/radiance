@@ -74,7 +74,7 @@ pub struct FrameData {
 impl FrameData {
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
-			pool: CommandPool::new(device, *device.queue_families().graphics())?,
+			pool: CommandPool::new(device, device.queue_families().graphics)?,
 			semaphore: TimelineSemaphore::new(device)?,
 		})
 	}

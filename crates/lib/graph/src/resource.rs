@@ -60,16 +60,14 @@ impl Buffer {
 
 		let usage = info.usage;
 		let buffer = unsafe {
-			match device.queue_families() {
-				Queues::Single(q) => device.device().create_buffer(&info.queue_family_indices(&[q]), None),
-				Queues::Separate {
-					graphics,
-					compute,
-					transfer,
-				} => device
-					.device()
-					.create_buffer(&info.queue_family_indices(&[graphics, compute, transfer]), None),
-			}
+			let Queues {
+				graphics,
+				compute,
+				transfer,
+			} = device.queue_families();
+			device
+				.device()
+				.create_buffer(&info.queue_family_indices(&[graphics, compute, transfer]), None)
 		}?;
 
 		let alloc = device

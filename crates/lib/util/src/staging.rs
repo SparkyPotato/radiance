@@ -58,7 +58,7 @@ impl Staging {
 			let props = device
 				.instance()
 				.get_physical_device_queue_family_properties(device.physical_device());
-			props[*device.queue_families().transfer() as usize].min_image_transfer_granularity
+			props[device.queue_families().transfer as usize].min_image_transfer_granularity
 		};
 
 		Ok(Self {
@@ -460,29 +460,21 @@ fn submit_queues(
 	device: &Device, semaphore: &mut TimelineSemaphore, queues: Queues<Option<vk::CommandBuffer>>,
 	wait: &mut Vec<vk::SemaphoreSubmitInfo, &Arena>,
 ) -> Result<()> {
-	match queues {
-		Queues::Separate {
-			graphics,
-			compute,
-			transfer,
-		} => {
-			if let Some(transfer) = transfer {
-				submit(device, semaphore, QueueType::Transfer, transfer, wait)?;
-			}
+	let Queues {
+		graphics,
+		compute,
+		transfer,
+	} = queues;
+	if let Some(transfer) = transfer {
+		submit(device, semaphore, QueueType::Transfer, transfer, wait)?;
+	}
 
-			if let Some(compute) = compute {
-				submit(device, semaphore, QueueType::Compute, compute, wait)?;
-			}
+	if let Some(compute) = compute {
+		submit(device, semaphore, QueueType::Compute, compute, wait)?;
+	}
 
-			if let Some(graphics) = graphics {
-				submit(device, semaphore, QueueType::Graphics, graphics, wait)?;
-			}
-		},
-		Queues::Single(queue) => {
-			if let Some(queue) = queue {
-				submit(device, semaphore, QueueType::Graphics, queue, wait)?;
-			}
-		},
+	if let Some(graphics) = graphics {
+		submit(device, semaphore, QueueType::Graphics, graphics, wait)?;
 	}
 
 	Ok(())

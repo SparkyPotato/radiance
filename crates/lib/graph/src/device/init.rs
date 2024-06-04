@@ -468,38 +468,29 @@ impl<'a> DeviceBuilder<'a> {
 				.push_next(&mut features);
 
 			match unsafe {
-				match queues {
-					Queues::Separate {
-						graphics,
-						compute,
-						transfer,
-					} => instance.create_device(
-						physical_device,
-						&info.queue_create_infos(&[
-							vk::DeviceQueueCreateInfo::builder()
-								.queue_family_index(graphics)
-								.queue_priorities(&[1.0])
-								.build(),
-							vk::DeviceQueueCreateInfo::builder()
-								.queue_family_index(compute)
-								.queue_priorities(&[1.0])
-								.build(),
-							vk::DeviceQueueCreateInfo::builder()
-								.queue_family_index(transfer)
-								.queue_priorities(&[1.0])
-								.build(),
-						]),
-						None,
-					),
-					Queues::Single(graphics) => instance.create_device(
-						physical_device,
-						&info.queue_create_infos(&[vk::DeviceQueueCreateInfo::builder()
+				let Queues {
+					graphics,
+					compute,
+					transfer,
+				} = queues;
+				instance.create_device(
+					physical_device,
+					&info.queue_create_infos(&[
+						vk::DeviceQueueCreateInfo::builder()
 							.queue_family_index(graphics)
 							.queue_priorities(&[1.0])
-							.build()]),
-						None,
-					),
-				}
+							.build(),
+						vk::DeviceQueueCreateInfo::builder()
+							.queue_family_index(compute)
+							.queue_priorities(&[1.0])
+							.build(),
+						vk::DeviceQueueCreateInfo::builder()
+							.queue_family_index(transfer)
+							.queue_priorities(&[1.0])
+							.build(),
+					]),
+					None,
+				)
 			} {
 				Ok(device) => {
 					info!("created device: {}", name);
@@ -600,12 +591,11 @@ impl<'a> DeviceBuilder<'a> {
 		}
 
 		match (graphics, compute, transfer) {
-			(Some(g), Some(c), Some(t)) => Some(Queues::Separate {
+			(Some(g), Some(c), Some(t)) => Some(Queues {
 				graphics: g,
 				compute: c,
 				transfer: t,
 			}),
-			(Some(g), ..) => Some(Queues::Single(g)),
 			_ => None,
 		}
 	}
