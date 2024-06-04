@@ -25,12 +25,12 @@ struct PlatformFile {
 
 impl PlatformFile {
 	fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
-		#[cfg(target_os = "unix")]
+		#[cfg(unix)]
 		{
 			use std::os::unix::fs::FileExt;
 			self.file.read_at(buf, offset)
 		}
-		#[cfg(target_os = "windows")]
+		#[cfg(windows)]
 		{
 			use std::os::windows::fs::FileExt;
 			self.file.seek_read(buf, offset)
@@ -38,12 +38,12 @@ impl PlatformFile {
 	}
 
 	fn write_at(&self, offset: u64, buf: &[u8]) -> io::Result<usize> {
-		#[cfg(target_os = "unix")]
+		#[cfg(unix)]
 		{
 			use std::os::unix::fs::FileExt;
 			self.file.write_at(buf, offset)
 		}
-		#[cfg(target_os = "windows")]
+		#[cfg(windows)]
 		{
 			use std::os::windows::fs::FileExt;
 			self.file.seek_write(buf, offset)

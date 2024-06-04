@@ -71,8 +71,8 @@ impl Default for Arena {
 }
 
 impl Arena {
-	/// Creates a new arena with a default block size of 1 MiB.
-	pub fn new() -> Self { Self::with_block_size(1024 * 1024) }
+	/// Creates a new arena with a default block size of 10 MiB.
+	pub fn new() -> Self { Self::with_block_size(10 * 1024 * 1024) }
 
 	pub fn memory_usage(&self) -> usize {
 		unsafe {
@@ -339,4 +339,3 @@ mod tests {
 		}
 	}
 }
-

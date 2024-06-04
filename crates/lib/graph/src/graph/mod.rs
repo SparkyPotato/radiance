@@ -11,24 +11,21 @@ use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 use tracing::{span, Level};
 
-pub use crate::graph::{
-	frame_data::TimelineSemaphore,
-	virtual_resource::{
-		BufferUsage,
-		BufferUsageType,
-		ExternalBuffer,
-		ExternalImage,
-		ExternalSync,
-		GpuBufferDesc,
-		ImageDesc,
-		ImageUsage,
-		ImageUsageType,
-		Shader,
-		UploadBufferDesc,
-		VirtualResource,
-		VirtualResourceDesc,
-		VirtualResourceType,
-	},
+pub use crate::graph::virtual_resource::{
+	BufferUsage,
+	BufferUsageType,
+	ExternalBuffer,
+	ExternalImage,
+	ExternalSync,
+	GpuBufferDesc,
+	ImageDesc,
+	ImageUsage,
+	ImageUsageType,
+	Shader,
+	UploadBufferDesc,
+	VirtualResource,
+	VirtualResourceDesc,
+	VirtualResourceType,
 };
 use crate::{
 	arena::{Arena, IteratorAlloc},
@@ -49,50 +46,6 @@ mod frame_data;
 mod virtual_resource;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
-
-/// A snapshot of the GPU execution state of the render graph.
-#[derive(Copy, Clone, Default)]
-pub struct ExecutionSnapshot {
-	semaphores: [vk::Semaphore; FRAMES_IN_FLIGHT],
-	values: [u64; FRAMES_IN_FLIGHT],
-}
-
-impl ExecutionSnapshot {
-	pub fn is_complete(&self, graph: &RenderGraph) -> bool {
-		graph
-			.frame_data
-			.iter()
-			.zip(self.values)
-			.all(|(frame, value)| frame.semaphore.value() > value)
-	}
-
-	pub fn wait(&self, device: &Device) -> Result<()> {
-		unsafe {
-			device.device().wait_semaphores(
-				&vk::SemaphoreWaitInfo::builder()
-					.semaphores(&self.semaphores)
-					.values(&self.values),
-				u64::MAX,
-			)?;
-
-			Ok(())
-		}
-	}
-
-	pub fn as_submit_info(&self) -> [vk::SemaphoreSubmitInfo; FRAMES_IN_FLIGHT] {
-		let mut out = [vk::SemaphoreSubmitInfo::default(); FRAMES_IN_FLIGHT];
-
-		for (i, (&sem, &value)) in self.semaphores.iter().zip(self.values.iter()).enumerate() {
-			out[i] = vk::SemaphoreSubmitInfo::builder()
-				.semaphore(sem)
-				.value(value)
-				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-				.build();
-		}
-
-		out
-	}
-}
 
 /// The render graph.
 pub struct RenderGraph {
@@ -138,25 +91,6 @@ impl RenderGraph {
 			passes: Vec::new_in(arena),
 			virtual_resources: Vec::new_in(arena),
 			ctx,
-		}
-	}
-
-	pub fn snapshot(&self) -> ExecutionSnapshot {
-		ExecutionSnapshot {
-			semaphores: {
-				let mut x = [vk::Semaphore::null(); FRAMES_IN_FLIGHT];
-				for (x, frame) in x.iter_mut().zip(self.frame_data.iter()) {
-					*x = frame.semaphore.semaphore();
-				}
-				x
-			},
-			values: {
-				let mut x = [0; FRAMES_IN_FLIGHT];
-				for (x, frame) in x.iter_mut().zip(self.frame_data.iter()) {
-					*x = frame.semaphore.value();
-				}
-				x
-			},
 		}
 	}
 
@@ -320,7 +254,7 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 	pub fn ctx(&mut self) -> &mut C { &mut self.frame.ctx }
 
 	/// Read GPU data that another pass outputs.
-	pub fn input<T: VirtualResource>(&mut self, id: ReadId<T>, usage: T::Usage<'_>) {
+	pub fn input<T: VirtualResource>(&mut self, id: Res<T>, usage: T::Usage<'_>) {
 		let id = id.id.wrapping_sub(self.frame.graph.resource_base_id);
 
 		unsafe {
@@ -333,7 +267,7 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 	/// Output GPU data for other passes.
 	pub fn output<D: VirtualResourceDesc>(
 		&mut self, desc: D, usage: <D::Resource as VirtualResource>::Usage<'_>,
-	) -> (ReadId<D::Resource>, WriteId<D::Resource>) {
+	) -> Res<D::Resource> {
 		let real_id = self.frame.virtual_resources.len();
 		let id = real_id.wrapping_add(self.frame.graph.resource_base_id);
 
@@ -349,16 +283,10 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 			ty,
 		});
 
-		(
-			ReadId {
-				id,
-				_marker: PhantomData,
-			},
-			WriteId {
-				id,
-				_marker: PhantomData,
-			},
-		)
+		Res {
+			id,
+			_marker: PhantomData,
+		}
 	}
 
 	/// Read CPU data that another pass outputs.
@@ -469,17 +397,8 @@ impl<'frame, 'graph, C> PassContext<'frame, 'graph, C> {
 		}
 	}
 
-	/// Read a GPU resource output by another pass.
-	pub fn read<T: VirtualResource>(&mut self, id: ReadId<T>) -> T {
-		let id = id.id.wrapping_sub(self.base_id);
-		unsafe {
-			let res = self.resource_map.get(id as u32);
-			T::from_res(self.pass, res, self.caches, self.device)
-		}
-	}
-
-	/// Write a GPU resource as an output of this pass.
-	pub fn write<T: VirtualResource>(&mut self, id: WriteId<T>) -> T {
+	/// Get a GPU resource.
+	pub fn get<T: VirtualResource>(&mut self, id: Res<T>) -> T {
 		let id = id.id.wrapping_sub(self.base_id);
 		unsafe {
 			let res = self.resource_map.get(id as u32);
@@ -530,28 +449,13 @@ impl<T> From<GetId<T>> for RefId<T> {
 	fn from(id: GetId<T>) -> Self { id.to_ref() }
 }
 
-/// An ID to write GPU resources.
-pub struct WriteId<T: VirtualResource> {
-	id: usize,
-	_marker: PhantomData<T>,
-}
-
-impl<T: VirtualResource> WriteId<T> {
-	pub fn to_read(&self) -> ReadId<T> {
-		ReadId {
-			id: self.id,
-			_marker: PhantomData,
-		}
-	}
-}
-
 /// An ID to read GPU resources.
-pub struct ReadId<T: VirtualResource> {
+pub struct Res<T: VirtualResource> {
 	id: usize,
 	_marker: PhantomData<T>,
 }
 
-impl<T: VirtualResource> ReadId<T> {
+impl<T: VirtualResource> Res<T> {
 	pub fn into_raw(self) -> usize { self.id }
 
 	pub unsafe fn from_raw(id: usize) -> Self {
@@ -562,8 +466,8 @@ impl<T: VirtualResource> ReadId<T> {
 	}
 }
 
-impl<T: VirtualResource> Copy for ReadId<T> {}
-impl<T: VirtualResource> Clone for ReadId<T> {
+impl<T: VirtualResource> Copy for Res<T> {}
+impl<T: VirtualResource> Clone for Res<T> {
 	fn clone(&self) -> Self { *self }
 }
 

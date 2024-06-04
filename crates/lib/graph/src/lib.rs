@@ -1,3 +1,5 @@
+#![allow(incomplete_features)]
+#![feature(adt_const_params)]
 #![feature(allocator_api)]
 #![feature(btreemap_alloc)]
 #![feature(ptr_metadata)]

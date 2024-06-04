@@ -4,85 +4,28 @@ use tracing::{span, Level};
 use crate::{
 	arena::{Arena, IteratorAlloc},
 	cmd::CommandPool,
-	device::Device,
+	device::{Device, GraphicsSyncPoint},
 	graph::compile::{DependencyInfo, EventInfo, QueueSync, Sync},
 	Result,
 };
 
-/// A timeline semaphore that keeps track of the current value.
-pub struct TimelineSemaphore {
-	inner: vk::Semaphore,
-	value: u64,
-}
-
-impl TimelineSemaphore {
-	pub fn new(device: &Device) -> Result<Self> {
-		let semaphore = unsafe {
-			device.device().create_semaphore(
-				&vk::SemaphoreCreateInfo::builder().push_next(
-					&mut vk::SemaphoreTypeCreateInfo::builder()
-						.semaphore_type(vk::SemaphoreType::TIMELINE)
-						.initial_value(0),
-				),
-				None,
-			)
-		}?;
-
-		Ok(Self {
-			inner: semaphore,
-			value: 0,
-		})
-	}
-
-	pub fn wait(&self, device: &Device) -> Result<()> {
-		unsafe {
-			device
-				.device()
-				.wait_semaphores(
-					&vk::SemaphoreWaitInfo::builder()
-						.semaphores(&[self.inner])
-						.values(&[self.value]),
-					u64::MAX,
-				)
-				.map_err(Into::into)
-		}
-	}
-
-	#[allow(clippy::should_implement_trait)]
-	pub fn next(&mut self) -> (vk::Semaphore, u64) {
-		self.value += 1;
-		(self.inner, self.value)
-	}
-
-	pub fn value(&self) -> u64 { self.value }
-
-	pub fn semaphore(&self) -> vk::Semaphore { self.inner }
-
-	pub fn destroy(self, device: &Device) {
-		unsafe {
-			self.wait(device).expect("Failed to wait for semaphore");
-			device.device().destroy_semaphore(self.inner, None);
-		}
-	}
-}
-
 pub struct FrameData {
-	pub semaphore: TimelineSemaphore,
 	pool: CommandPool,
+	sync: GraphicsSyncPoint,
 }
 
 impl FrameData {
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
-			pool: CommandPool::new(device, *device.queue_families().graphics())?,
-			semaphore: TimelineSemaphore::new(device)?,
+			pool: CommandPool::new(device, device.queue_families().graphics)?,
+			sync: GraphicsSyncPoint::none(),
 		})
 	}
 
 	pub fn reset(&mut self, device: &Device) -> Result<()> {
 		unsafe {
 			// Let GPU finish this frame before doing anything else.
-			self.semaphore.wait(device)?;
+			device.wait(self.sync)?;
 			self.pool.reset(device)?;
 
 			Ok(())
@@ -91,7 +34,6 @@ impl FrameData {
 
 	pub unsafe fn destroy(self, device: &Device) {
 		unsafe {
-			self.semaphore.destroy(device);
 			self.pool.destroy(device);
 		}
 	}
@@ -102,25 +44,19 @@ pub struct Submitter<'a, I> {
 	buf: vk::CommandBuffer,
 	sync: I,
 	cached_wait: Vec<vk::SemaphoreSubmitInfo, &'a Arena>,
+	first: bool,
 }
 
 impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 	pub fn new(
 		arena: &'a Arena, sync: impl IntoIterator<IntoIter = I>, frames: &'a mut [FrameData], curr_frame: usize,
 	) -> Self {
-		let wait = &frames[curr_frame ^ 1].semaphore;
 		Self {
-			cached_wait: std::iter::once(
-				vk::SemaphoreSubmitInfo::builder()
-					.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-					.semaphore(wait.inner)
-					.value(wait.value)
-					.build(),
-			)
-			.collect_in(arena),
+			cached_wait: Vec::new_in(arena),
 			data: &mut frames[curr_frame],
 			buf: vk::CommandBuffer::null(),
 			sync: sync.into_iter(),
+			first: true,
 		}
 	}
 
@@ -200,16 +136,8 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 		Ok(self.buf)
 	}
 
-	pub fn finish(mut self, device: &Device, pre_submit: impl FnOnce(vk::CommandBuffer)) -> Result<()> {
-		let (sem, set) = self.data.semaphore.next();
-		let signal = vk::SemaphoreSubmitInfo::builder()
-			.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-			.semaphore(sem)
-			.value(set)
-			.build();
-
+	pub fn finish(mut self, device: &Device, pre_submit: impl FnOnce(vk::CommandBuffer)) -> Result<GraphicsSyncPoint> {
 		let mut sync = self.sync.next().unwrap();
-
 		debug_assert!(
 			sync.cross_queue.wait_semaphores.is_empty(),
 			"Cannot wait after the last pass"
@@ -220,15 +148,13 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 		emit_queue_sync(device, self.cached_wait.allocator(), self.buf, &sync.queue);
 
 		// Submit and signal all the semaphores we need to.
-		sync.cross_queue.signal_semaphores.push(signal);
 		pre_submit(self.buf);
-		self.submit_inner(device, &sync.cross_queue.signal_semaphores)?;
-
-		Ok(())
+		self.submit_inner(device, &sync.cross_queue.signal_semaphores, true)
+			.map(|s| s.unwrap())
 	}
 
 	fn submit(&mut self, device: &Device, signal: &[vk::SemaphoreSubmitInfo]) -> Result<()> {
-		self.submit_inner(device, signal)?;
+		self.submit_inner(device, signal, false)?;
 		self.cached_wait.clear();
 		self.buf = vk::CommandBuffer::null();
 		self.start_buf(device)?;
@@ -236,26 +162,33 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 		Ok(())
 	}
 
-	fn submit_inner(&mut self, device: &Device, signal: &[vk::SemaphoreSubmitInfo]) -> Result<()> {
+	fn submit_inner(
+		&mut self, device: &Device, signal: &[vk::SemaphoreSubmitInfo], sync: bool,
+	) -> Result<Option<GraphicsSyncPoint>> {
 		unsafe {
-			if self.buf != vk::CommandBuffer::null() {
-				let span = span!(Level::TRACE, "submit");
-				let _e = span.enter();
+			let span = span!(Level::TRACE, "submit");
+			let _e = span.enter();
 
-				device.device().end_command_buffer(self.buf)?;
-				device.submit_graphics(
-					&[vk::SubmitInfo2::builder()
-						.wait_semaphore_infos(&self.cached_wait)
-						.command_buffer_infos(&[vk::CommandBufferSubmitInfo::builder()
-							.command_buffer(self.buf)
-							.build()])
-						.signal_semaphore_infos(signal)
-						.build()],
-					vk::Fence::null(),
-				)?;
+			device.device().end_command_buffer(self.buf)?;
+
+			let cmd = &[vk::CommandBufferSubmitInfo::builder().command_buffer(self.buf).build()];
+			let i = &[vk::SubmitInfo2::builder()
+				.wait_semaphore_infos(&self.cached_wait)
+				.command_buffer_infos(cmd)
+				.signal_semaphore_infos(signal)
+				.build()];
+			let b = device.submit_graphics(i);
+			let b = if self.first {
+				self.first = false;
+				b.wait_on_prev(vk::PipelineStageFlags2::ALL_COMMANDS)
+			} else {
+				b
+			};
+			if sync {
+				b.submit_signal(vk::PipelineStageFlags2::ALL_COMMANDS).map(Some)
+			} else {
+				b.submit().map(|_| None)
 			}
-
-			Ok(())
 		}
 	}
 

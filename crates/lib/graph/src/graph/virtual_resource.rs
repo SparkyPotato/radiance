@@ -6,7 +6,7 @@ pub use crate::sync::{BufferUsage as BufferUsageType, ImageUsage as ImageUsageTy
 use crate::{
 	arena::{Arena, IteratorAlloc},
 	device::Device,
-	graph::{compile::Resource, ArenaMap, Caches, ReadId},
+	graph::{compile::Resource, ArenaMap, Caches, Res},
 	resource::{GpuBufferHandle, ImageView, ImageViewDesc, ImageViewUsage, UploadBufferHandle},
 	sync::UsageType,
 };
@@ -513,7 +513,7 @@ impl VirtualResourceDesc for ExternalImage<'_> {
 	}
 }
 
-impl VirtualResourceDesc for ReadId<ImageView> {
+impl VirtualResourceDesc for Res<ImageView> {
 	type Resource = ImageView;
 
 	fn ty<'graph>(
@@ -528,7 +528,7 @@ impl VirtualResourceDesc for ReadId<ImageView> {
 	}
 }
 
-impl VirtualResourceDesc for ReadId<GpuBufferHandle> {
+impl VirtualResourceDesc for Res<GpuBufferHandle> {
 	type Resource = GpuBufferHandle;
 
 	fn ty<'graph>(

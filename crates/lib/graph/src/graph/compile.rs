@@ -693,15 +693,14 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 				.into_iter()
 				.map(|(i, b)| {
 					let (src_queue_family_index, previous_access, dst_queue_family_index, next_access) = match qfot {
-						_ if !device.needs_queue_ownership_transfer() => (0, b.sync.from, 0, b.sync.to),
 						Qfot::From if b.qfot.is_some() => (
 							b.qfot.unwrap(),
 							AccessInfo::default(),
-							*device.queue_families().graphics(),
+							device.queue_families().graphics,
 							b.sync.to,
 						),
 						Qfot::To if b.qfot.is_some() => (
-							*device.queue_families().graphics(),
+							device.queue_families().graphics,
 							b.sync.from,
 							b.qfot.unwrap(),
 							AccessInfo::default(),

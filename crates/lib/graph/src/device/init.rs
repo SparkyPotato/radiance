@@ -18,7 +18,11 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandl
 use tracing::{error, info, trace, warn};
 
 use crate::{
-	device::{descriptor::Descriptors, Device, QueueData, Queues},
+	device::{
+		descriptor::Descriptors,
+		queue::{Queue, Queues},
+		Device,
+	},
 	Error,
 	Result,
 };
@@ -327,7 +331,7 @@ impl<'a> DeviceBuilder<'a> {
 	fn create_device(
 		instance: &ash::Instance, surface: Option<(&khr::Surface, vk::SurfaceKHR)>, extensions: &[&'static CStr],
 		features: vk::PhysicalDeviceFeatures2Builder,
-	) -> Result<(ash::Device, vk::PhysicalDevice, Queues<QueueData>)> {
+	) -> Result<(ash::Device, vk::PhysicalDevice, Queues<Queue>)> {
 		let extensions = Self::get_device_extensions(surface.is_some(), extensions);
 		trace!("using device extensions: {:?}", extensions);
 		let extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
@@ -468,47 +472,28 @@ impl<'a> DeviceBuilder<'a> {
 				.push_next(&mut features);
 
 			match unsafe {
-				match queues {
-					Queues::Separate {
-						graphics,
-						compute,
-						transfer,
-					} => instance.create_device(
-						physical_device,
-						&info.queue_create_infos(&[
-							vk::DeviceQueueCreateInfo::builder()
-								.queue_family_index(graphics)
-								.queue_priorities(&[1.0])
-								.build(),
-							vk::DeviceQueueCreateInfo::builder()
-								.queue_family_index(compute)
-								.queue_priorities(&[1.0])
-								.build(),
-							vk::DeviceQueueCreateInfo::builder()
-								.queue_family_index(transfer)
-								.queue_priorities(&[1.0])
-								.build(),
-						]),
-						None,
-					),
-					Queues::Single(graphics) => instance.create_device(
-						physical_device,
-						&info.queue_create_infos(&[vk::DeviceQueueCreateInfo::builder()
-							.queue_family_index(graphics)
+				instance.create_device(
+					physical_device,
+					&info.queue_create_infos(&[
+						vk::DeviceQueueCreateInfo::builder()
+							.queue_family_index(queues.graphics)
 							.queue_priorities(&[1.0])
-							.build()]),
-						None,
-					),
-				}
+							.build(),
+						vk::DeviceQueueCreateInfo::builder()
+							.queue_family_index(queues.compute)
+							.queue_priorities(&[1.0])
+							.build(),
+						vk::DeviceQueueCreateInfo::builder()
+							.queue_family_index(queues.transfer)
+							.queue_priorities(&[1.0])
+							.build(),
+					]),
+					None,
+				)
 			} {
 				Ok(device) => {
 					info!("created device: {}", name);
-
-					let queues = queues.map_ref(|index| QueueData {
-						queue: Mutex::new(unsafe { device.get_device_queue(*index, 0) }),
-						family: *index,
-					});
-
+					let queues = queues.try_map_ref(|index| Queue::new(&device, *index))?;
 					return Ok((device, physical_device, queues));
 				},
 				Err(err) => {
@@ -600,12 +585,11 @@ impl<'a> DeviceBuilder<'a> {
 		}
 
 		match (graphics, compute, transfer) {
-			(Some(g), Some(c), Some(t)) => Some(Queues::Separate {
+			(Some(g), Some(c), Some(t)) => Some(Queues {
 				graphics: g,
 				compute: c,
 				transfer: t,
 			}),
-			(Some(g), ..) => Some(Queues::Single(g)),
 			_ => None,
 		}
 	}

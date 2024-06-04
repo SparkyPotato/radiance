@@ -4,8 +4,8 @@ use ash::vk;
 use radiance_graph::{
 	arena::Arena,
 	cmd::CommandPool,
-	device::{Device, QueueType, Queues},
-	graph::{ImageUsageType, SemaphoreInfo, TimelineSemaphore},
+	device::{Device, QueueType, Queues, TransferSyncPoint},
+	graph::{ImageUsageType, SemaphoreInfo},
 	resource::{Buffer, BufferDesc},
 	sync::{as_next_access, as_previous_access, get_access_info, ImageBarrierAccess, UsageType},
 	MemoryLocation,
@@ -14,24 +14,8 @@ use radiance_graph::{
 
 pub struct Staging {
 	inner: CircularBuffer,
-	semaphore: TimelineSemaphore,
 	pools: Queues<CommandPool>,
 	min_granularity: vk::Extent3D,
-}
-
-pub struct StageTicket {
-	semaphore: vk::Semaphore,
-	value: u64,
-}
-
-impl StageTicket {
-	pub fn as_info(&self) -> SemaphoreInfo {
-		SemaphoreInfo {
-			semaphore: self.semaphore,
-			value: self.value,
-			stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-		}
-	}
 }
 
 pub enum StageError<E> {
@@ -58,12 +42,11 @@ impl Staging {
 			let props = device
 				.instance()
 				.get_physical_device_queue_family_properties(device.physical_device());
-			props[*device.queue_families().transfer() as usize].min_image_transfer_granularity
+			props[device.queue_families().transfer as usize].min_image_transfer_granularity
 		};
 
 		Ok(Self {
 			inner: CircularBuffer::new(device)?,
-			semaphore: TimelineSemaphore::new(device)?,
 			pools: device
 				.queue_families()
 				.try_map_ref(|&queue| CommandPool::new(device, queue))?,
@@ -73,10 +56,7 @@ impl Staging {
 
 	pub fn destroy(self, device: &Device) {
 		unsafe {
-			self.semaphore.wait(device).unwrap();
-
 			self.inner.destroy(device);
-			self.semaphore.destroy(device);
 			self.pools.map(|x| x.destroy(device));
 		}
 	}
@@ -89,7 +69,7 @@ impl Staging {
 	pub fn stage<T, E>(
 		&mut self, device: &Device, mut wait: Vec<vk::SemaphoreSubmitInfo, &Arena>,
 		exec: impl FnOnce(&mut StagingCtx) -> std::result::Result<T, E>,
-	) -> std::result::Result<(T, StageTicket), StageError<E>> {
+	) -> std::result::Result<(T, TransferSyncPoint), StageError<E>> {
 		let ret = self.inner.for_submit(|inner| {
 			let mut ctx = StagingCtx {
 				device,
@@ -351,7 +331,7 @@ impl CircularBuffer {
 					size: Self::BUFFER_SIZE,
 					usage: vk::BufferUsageFlags::TRANSFER_SRC,
 				},
-				MemoryLocation::GpuToCpu, // This guarantees that we won't use up the 256 MB of BAR we have.
+				MemoryLocation::GpuToCpu,
 			)?],
 			head: BufferLoc { buffer: 0, offset: 0 },
 			tail: BufferLoc { buffer: 0, offset: 0 },
@@ -488,21 +468,12 @@ fn submit_queues(
 	Ok(())
 }
 
-fn submit(
-	device: &Device, semaphore: &mut TimelineSemaphore, ty: QueueType, buf: vk::CommandBuffer,
-	wait: &mut Vec<vk::SemaphoreSubmitInfo, &Arena>,
+fn submit<const TY: QueueType>(
+	device: &Device, buf: vk::CommandBuffer, wait: &mut Vec<vk::SemaphoreSubmitInfo, &Arena>,
 ) -> Result<()> {
 	unsafe {
 		device.device().end_command_buffer(buf)?;
 
-		let (sem, value) = semaphore.next();
-		wait.push(
-			vk::SemaphoreSubmitInfo::builder()
-				.semaphore(sem)
-				.value(value - 1)
-				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-				.build(),
-		);
 		device.submit(
 			ty,
 			&[vk::SubmitInfo2::builder()
