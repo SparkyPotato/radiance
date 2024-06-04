@@ -19,7 +19,8 @@ pub fn image(device: &Device, bytes: &[u8], format: ImageFormat) -> (Image, Imag
 	)
 	.unwrap();
 	unsafe {
-		buf.handle().data.as_mut().copy_from_slice(image.as_raw());
+		let raw = image.as_raw();
+		buf.handle().data.as_mut()[..raw.len()].copy_from_slice(raw);
 	}
 	let size = vk::Extent3D::builder()
 		.width(image.width())
@@ -42,6 +43,7 @@ pub fn image(device: &Device, bytes: &[u8], format: ImageFormat) -> (Image, Imag
 	let view = ImageView::create(
 		device,
 		ImageViewDesc {
+			size,
 			image: image.handle(),
 			view_type: vk::ImageViewType::TYPE_2D,
 			format: vk::Format::R8G8B8A8_SRGB,

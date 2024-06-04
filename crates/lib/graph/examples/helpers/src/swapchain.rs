@@ -20,6 +20,7 @@ pub struct Swapchain {
 	images: Vec<vk::Image>,
 	available: vk::Semaphore,
 	rendered: vk::Semaphore,
+	size: vk::Extent3D,
 }
 
 impl Swapchain {
@@ -36,6 +37,11 @@ impl Swapchain {
 			images: Vec::new(),
 			available: semaphore(device),
 			rendered: semaphore(device),
+			size: vk::Extent3D {
+				width: window.inner_size().width,
+				height: window.inner_size().height,
+				depth: 1,
+			},
 		};
 		this.make(window);
 		this
@@ -50,6 +56,10 @@ impl Swapchain {
 			(
 				ExternalImage {
 					handle: self.images[id as usize],
+					size: self.size,
+					levels: 1,
+					layers: 1,
+					samples: vk::SampleCountFlags::TYPE_1,
 					prev_usage: Some(ExternalSync {
 						semaphore: self.available,
 						usage: &[ImageUsageType::Present],
@@ -104,6 +114,11 @@ impl Swapchain {
 			snapshot: Some(graph.snapshot()),
 		};
 		self.make(window);
+		self.size = vk::Extent3D {
+			width: window.inner_size().width,
+			height: window.inner_size().height,
+			depth: 1,
+		};
 	}
 
 	fn make(&mut self, window: &Window) {

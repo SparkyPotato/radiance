@@ -29,9 +29,9 @@ impl App for Triangle {
 		}
 	}
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_>, input: RenderInput, _: Duration) {
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, _: Duration) {
 		let mut pass = frame.pass("triangle");
-		let (_, write) = pass.output(
+		let write = pass.output(
 			input.image,
 			ImageUsage {
 				format: input.format,
@@ -42,7 +42,7 @@ impl App for Triangle {
 		);
 
 		pass.build(move |mut ctx| unsafe {
-			let view = ctx.write(write);
+			let view = ctx.get(write);
 			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
 			ctx.device
 				.device()

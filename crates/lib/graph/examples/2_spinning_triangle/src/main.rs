@@ -36,11 +36,8 @@ impl App for SpinningTriangle {
 	const NAME: &'static str = "spinning triangle";
 
 	fn create(device: &Device) -> Self {
-		let vertex = pipeline::compile(include_str!("2_spinning_triangle/src/vertex.wgsl"), ShaderStage::Vertex);
-		let fragment = pipeline::compile(
-			include_str!("2_spinning_triangle/src/fragment.wgsl"),
-			ShaderStage::Fragment,
-		);
+		let vertex = pipeline::compile(include_str!("vertex.wgsl"), ShaderStage::Vertex);
+		let fragment = pipeline::compile(include_str!("fragment.wgsl"), ShaderStage::Fragment);
 		let (pipeline, layout) = pipeline::simple(
 			device,
 			&vertex,
@@ -67,9 +64,9 @@ impl App for SpinningTriangle {
 		}
 	}
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_>, input: RenderInput, dt: Duration) {
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, dt: Duration) {
 		let mut pass = frame.pass("triangle");
-		let (_, write) = pass.output(
+		let write = pass.output(
 			input.image,
 			ImageUsage {
 				format: input.format,
@@ -78,7 +75,7 @@ impl App for SpinningTriangle {
 				aspect: ImageAspectFlags::COLOR,
 			},
 		);
-		let (_, storage) = pass.output(
+		let storage = pass.output(
 			UploadBufferDesc {
 				size: std::mem::size_of::<Mat4<f32>>() as _,
 			},
@@ -88,13 +85,13 @@ impl App for SpinningTriangle {
 		);
 
 		pass.build(move |mut ctx| unsafe {
-			let view = ctx.write(write);
+			let view = ctx.get(write);
 			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
 			ctx.device
 				.device()
 				.cmd_bind_pipeline(ctx.buf, PipelineBindPoint::GRAPHICS, self.pipeline);
 
-			let mut storage = ctx.write(storage);
+			let mut storage = ctx.get(storage);
 			let rot = Mat4::rotation_z(self.deg.to_radians());
 			self.deg += ROTATION_RATE * dt.as_secs_f32();
 			storage.data.as_mut().copy_from_slice(bytes_of(&rot.into_row_array()));

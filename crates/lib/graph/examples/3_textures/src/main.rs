@@ -46,8 +46,8 @@ impl App for Textures {
 	const NAME: &'static str = "textures";
 
 	fn create(device: &Device) -> Self {
-		let vertex = pipeline::compile(include_str!("3_textures/src/vertex.wgsl"), ShaderStage::Vertex);
-		let fragment = pipeline::compile(include_str!("3_textures/src/fragment.wgsl"), ShaderStage::Fragment);
+		let vertex = pipeline::compile(include_str!("vertex.wgsl"), ShaderStage::Vertex);
+		let fragment = pipeline::compile(include_str!("fragment.wgsl"), ShaderStage::Fragment);
 		let (pipeline, layout) = pipeline::simple(
 			device,
 			&vertex,
@@ -60,11 +60,7 @@ impl App for Textures {
 				.build()],
 		);
 
-		let (image, view) = load::image(
-			device,
-			include_bytes!("3_textures/src/red.webp"),
-			load::ImageFormat::WebP,
-		);
+		let (image, view) = load::image(device, include_bytes!("red.webp"), load::ImageFormat::WebP);
 
 		let sampler = unsafe {
 			device
@@ -100,9 +96,9 @@ impl App for Textures {
 		}
 	}
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_>, input: RenderInput, _: Duration) {
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, _: Duration) {
 		let mut pass = frame.pass("triangle");
-		let (_, write) = pass.output(
+		let write = pass.output(
 			input.image,
 			ImageUsage {
 				format: input.format,
@@ -112,9 +108,9 @@ impl App for Textures {
 			},
 		);
 
-		let (_, index) = pass.output(
+		let index = pass.output(
 			UploadBufferDesc {
-				size: std::mem::size_of::<u16>() * 6,
+				size: std::mem::size_of::<u16>() as u64 * 6,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::IndexBuffer],
@@ -122,10 +118,11 @@ impl App for Textures {
 		);
 
 		pass.build(move |mut ctx| unsafe {
-			let mut index = ctx.write(index);
-			index.data.as_mut().copy_from_slice(bytes_of(&[0u16, 1, 3, 1, 2, 3]));
+			let mut index = ctx.get(index);
+			let b = bytes_of(&[0u16, 1, 3, 1, 2, 3]);
+			index.data.as_mut()[..b.len()].copy_from_slice(b);
 
-			let view = ctx.write(write);
+			let view = ctx.get(write);
 			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
 			ctx.device
 				.device()
