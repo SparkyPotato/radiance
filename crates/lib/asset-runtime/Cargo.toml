@@ -15,6 +15,7 @@ radiance-util = { path = "../util" }
 ash = { workspace = true }
 bytemuck = { workspace = true }
 crossbeam-channel = { workspace = true }
+parry3d = { workspace = true }
 rustc-hash = { workspace = true }
 static_assertions = { workspace = true }
 tracing = { workspace = true }

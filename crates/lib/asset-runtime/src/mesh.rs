@@ -1,8 +1,13 @@
-use std::usize;
+use std::{ops::Range, usize};
 
 use ash::vk;
 use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
+use parry3d::{
+	math::{Point, Vector},
+	query::RayCast,
+	shape::TriMesh,
+};
 use radiance_asset::{mesh::Vertex, util::SliceWriter, Asset, AssetSource};
 use radiance_graph::{
 	device::QueueType,
@@ -11,7 +16,7 @@ use radiance_graph::{
 use radiance_util::{deletion::IntoResource, staging::StageError};
 use static_assertions::const_assert_eq;
 use uuid::Uuid;
-use vek::Vec3;
+use vek::{Ray, Vec2, Vec3, Vec4};
 
 use crate::{
 	material::Material,
@@ -49,11 +54,79 @@ pub struct GpuSubMesh {
 const_assert_eq!(std::mem::size_of::<GpuSubMesh>(), 4);
 const_assert_eq!(std::mem::align_of::<GpuSubMesh>(), 4);
 
+pub struct SubMesh {
+	material: RRef<Material>,
+	tris: Range<u32>,
+}
+
 pub struct Mesh {
-	pub buffer: GpuBuffer,
-	pub submeshes: Vec<RRef<Material>>,
-	pub acceleration_structure: AS,
-	pub meshlet_count: u32,
+	pub(super) buffer: GpuBuffer,
+	pub(super) submeshes: Vec<SubMesh>,
+	pub(super) acceleration_structure: AS,
+	pub(super) meshlet_count: u32,
+	pub(super) vertices: Vec<Vertex>,
+	pub(super) mesh: TriMesh,
+}
+
+#[derive(Copy, Clone)]
+pub struct Intersection<'a> {
+	pub t: f32,
+	pub position: Vec3<f32>,
+	pub normal: Vec3<f32>,
+	pub tangent: Vec4<f32>,
+	pub uv: Vec2<f32>,
+	pub material: &'a Material,
+}
+
+impl Mesh {
+	pub fn intersect(&self, ray: Ray<f32>, tmax: f32) -> Option<Intersection> {
+		let pray = parry3d::query::Ray {
+			origin: Point::new(ray.origin.x, ray.origin.y, ray.origin.z),
+			dir: Vector::new(ray.direction.x, ray.direction.y, ray.direction.z),
+		};
+		self.mesh.cast_local_ray_and_get_normal(&pray, tmax, true).map(|int| {
+			let t = int.time_of_impact;
+			let mut trii = int.feature.unwrap_face();
+			if trii >= self.mesh.num_triangles() as u32 {
+				trii -= self.mesh.num_triangles() as u32;
+			}
+
+			let tri = self.mesh.triangle(trii);
+			let position = pray.origin + pray.dir * t;
+			let v0 = tri.a - tri.a;
+			let v1 = tri.c - tri.a;
+			let v2 = position - tri.a;
+			let d00 = v0.dot(&v0);
+			let d01 = v0.dot(&v1);
+			let d11 = v1.dot(&v1);
+			let d20 = v2.dot(&v0);
+			let d21 = v2.dot(&v1);
+			let denom = d00 * d11 - d01 * d01;
+			let v = (d11 * d20 - d01 * d21) / denom;
+			let w = (d00 * d21 - d01 * d20) / denom;
+			let u = 1.0 - v - w;
+
+			let i = self.mesh.indices()[trii as usize];
+			let v0 = self.vertices[i[0] as usize];
+			let v1 = self.vertices[i[1] as usize];
+			let v2 = self.vertices[i[2] as usize];
+
+			let normal = v0.normal * u + v1.normal * v + v2.normal * w;
+			let tangent = v0.tangent * u + v1.tangent * v + v2.tangent * w;
+			let uv = v0.uv * u + v1.uv * v + v2.uv * w;
+
+			let material = &*self.submeshes.iter().find(|s| s.tris.contains(&trii)).unwrap().material;
+
+			Intersection {
+				t,
+				position: Vec3::new(position.x, position.y, position.z),
+				normal,
+				tangent,
+				uv,
+				material,
+			}
+		})
+	}
 }
 
 impl RuntimeAsset for Mesh {
@@ -92,16 +165,49 @@ impl AssetRuntime {
 		)
 		.map_err(StageError::Vulkan)?;
 
+		let vertices: Vec<_> = m
+			.vertices
+			.iter()
+			.map(|v| Point::new(v.position.x, v.position.y, v.position.z))
+			.collect();
+
 		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
+		let mut indices = Vec::new();
 		let submeshes = m
 			.submeshes
 			.iter()
 			.map(|x| {
-				let mat = self.load_material(loader, x.material)?;
-				writer.write(GpuSubMesh { material: mat.index }).unwrap();
-				Ok(mat)
+				let material = self.load_material(loader, x.material)?;
+				writer
+					.write(GpuSubMesh {
+						material: material.index,
+					})
+					.unwrap();
+
+				let start = indices.len() as u32;
+				indices.extend(x.meshlets.clone().flat_map(|me| {
+					let me = &m.meshlets[me as usize];
+					let tc = me.tri_count as usize;
+					(0..tc).map(|t| {
+						let i0 = me.index_offset as usize + t * 3;
+						let i1 = i0 + 1;
+						let i2 = i1 + 1;
+						[
+							m.indices[i0] as u32 + me.vertex_offset,
+							m.indices[i1] as u32 + me.vertex_offset,
+							m.indices[i2] as u32 + me.vertex_offset,
+						]
+					})
+				}));
+				let end = indices.len() as u32;
+
+				Ok(SubMesh {
+					material,
+					tris: start..end,
+				})
 			})
 			.collect::<Result<_, LErr<S>>>()?;
+		let mesh = TriMesh::new(vertices, indices);
 
 		let raw_mesh = GpuBuffer::create(
 			loader.device,
@@ -238,6 +344,8 @@ impl AssetRuntime {
 				submeshes,
 				meshlet_count,
 				acceleration_structure,
+				vertices: m.vertices,
+				mesh,
 			},
 			loader.deleter.clone(),
 		))

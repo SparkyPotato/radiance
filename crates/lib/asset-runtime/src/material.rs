@@ -34,12 +34,12 @@ const_assert_eq!(std::mem::size_of::<GpuMaterial>(), 56);
 const_assert_eq!(std::mem::align_of::<GpuMaterial>(), 4);
 
 pub struct Material {
-	pub index: u32,
-	pub base_color: Option<RRef<Image>>,
-	pub metallic_roughness: Option<RRef<Image>>,
-	pub normal: Option<RRef<Image>>,
-	pub occlusion: Option<RRef<Image>>,
-	pub emissive: Option<RRef<Image>>,
+	pub(super) index: u32,
+	base_color: Option<RRef<Image>>,
+	metallic_roughness: Option<RRef<Image>>,
+	normal: Option<RRef<Image>>,
+	occlusion: Option<RRef<Image>>,
+	emissive: Option<RRef<Image>>,
 }
 
 impl RuntimeAsset for Material {

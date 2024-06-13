@@ -1,66 +1,49 @@
-use ash::{
-	extensions::khr,
-	vk,
-	vk::{
-		ColorSpaceKHR,
-		CompositeAlphaFlagsKHR,
-		Extent2D,
-		Fence,
-		Format,
-		Image,
-		ImageUsageFlags,
-		PresentInfoKHR,
-		PresentModeKHR,
-		Semaphore,
-		SemaphoreCreateInfo,
-		SharingMode,
-		SurfaceKHR,
-		SwapchainCreateInfoKHR,
-		SwapchainKHR,
-	},
-};
+use ash::{extensions::khr, vk};
 use radiance_graph::{
 	device::Device,
-	graph::{ExecutionSnapshot, ExternalImage, ExternalSync, ImageUsageType, RenderGraph},
+	graph::{ExecutionSnapshot, ExternalImage, ExternalSync, ImageUsageType, RenderGraph, FRAMES_IN_FLIGHT},
 	Result,
 };
 
 struct OldSwapchain {
-	swapchain: SwapchainKHR,
+	swapchain: vk::SwapchainKHR,
 	snapshot: ExecutionSnapshot,
 }
 
 pub struct Window {
 	pub window: winit::window::Window,
-	surface: SurfaceKHR,
+	surface: vk::SurfaceKHR,
 	swapchain_ext: khr::Swapchain,
 	old_swapchain: OldSwapchain,
-	swapchain: SwapchainKHR,
-	images: Vec<Image>,
-	available: Semaphore,
-	rendered: Semaphore,
-	format: Format,
+	swapchain: vk::SwapchainKHR,
+	images: Vec<vk::Image>,
+	semas: [(vk::Semaphore, vk::Semaphore); FRAMES_IN_FLIGHT],
+	curr_frame: usize,
+	format: vk::Format,
 	size: vk::Extent3D,
 }
 
 impl Window {
 	pub fn new(
-		device: &Device, graph: &RenderGraph, window: winit::window::Window, surface: SurfaceKHR,
+		device: &Device, graph: &RenderGraph, window: winit::window::Window, surface: vk::SurfaceKHR,
 	) -> Result<Self> {
 		let swapchain_ext = khr::Swapchain::new(device.instance(), device.device());
 		let mut this = Self {
 			window,
 			surface,
 			swapchain_ext,
-			swapchain: SwapchainKHR::null(),
+			swapchain: vk::SwapchainKHR::null(),
 			old_swapchain: OldSwapchain {
-				swapchain: SwapchainKHR::null(),
+				swapchain: vk::SwapchainKHR::null(),
 				snapshot: ExecutionSnapshot::default(),
 			},
 			images: Vec::new(),
-			available: semaphore(device),
-			rendered: semaphore(device),
-			format: Format::UNDEFINED,
+			semas: [
+				(semaphore(device)?, semaphore(device)?),
+				(semaphore(device)?, semaphore(device)?),
+			],
+			curr_frame: 0,
+			format: vk::Format::UNDEFINED,
 			size: vk::Extent3D::default(),
 		};
 		this.make(device, graph)?;
@@ -71,10 +54,11 @@ impl Window {
 
 	pub fn acquire(&self) -> Result<(ExternalImage, u32)> {
 		unsafe {
+			let (available, rendered) = self.semas[self.curr_frame];
 			let (id, _) =
 				self.swapchain_ext
-					.acquire_next_image(self.swapchain, u64::MAX, self.available, Fence::null())?;
-			Ok((
+					.acquire_next_image(self.swapchain, u64::MAX, available, vk::Fence::null())?;
+			let ret = (
 				ExternalImage {
 					handle: self.images[id as usize],
 					size: self.size,
@@ -82,18 +66,20 @@ impl Window {
 					layers: 1,
 					samples: vk::SampleCountFlags::TYPE_1,
 					prev_usage: Some(ExternalSync {
-						semaphore: self.available,
+						semaphore: available,
 						usage: &[ImageUsageType::Present],
 						..Default::default()
 					}),
 					next_usage: Some(ExternalSync {
-						semaphore: self.rendered,
+						semaphore: rendered,
 						usage: &[ImageUsageType::Present],
 						..Default::default()
 					}),
 				},
 				id,
-			))
+			);
+
+			Ok(ret)
 		}
 	}
 
@@ -101,20 +87,22 @@ impl Window {
 		unsafe {
 			self.cleanup_old(device)?;
 
+			let (_, rendered) = self.semas[self.curr_frame];
 			self.swapchain_ext.queue_present(
 				*device.graphics_queue(),
-				&PresentInfoKHR::builder()
-					.wait_semaphores(&[self.rendered])
+				&vk::PresentInfoKHR::builder()
+					.wait_semaphores(&[rendered])
 					.swapchains(&[self.swapchain])
 					.image_indices(&[id])
 					.build(),
 			)?;
+			self.curr_frame ^= 1;
 
 			Ok(())
 		}
 	}
 
-	pub fn format(&self) -> Format { self.format }
+	pub fn format(&self) -> vk::Format { self.format }
 
 	pub fn resize(&mut self, device: &Device, graph: &RenderGraph) -> Result<()> { self.make(device, graph) }
 
@@ -123,18 +111,16 @@ impl Window {
 			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			self.swapchain_ext.destroy_swapchain(self.swapchain, None);
 			device.surface_ext().unwrap().destroy_surface(self.surface, None);
-			device.device().destroy_semaphore(self.available, None);
-			device.device().destroy_semaphore(self.rendered, None);
 		}
 	}
 
 	fn cleanup_old(&mut self, device: &Device) -> Result<()> {
-		if self.old_swapchain.swapchain != SwapchainKHR::null() {
+		if self.old_swapchain.swapchain != vk::SwapchainKHR::null() {
 			self.old_swapchain.snapshot.wait(device)?;
 			unsafe {
 				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			}
-			self.old_swapchain.swapchain = SwapchainKHR::null();
+			self.old_swapchain.swapchain = vk::SwapchainKHR::null();
 		}
 
 		Ok(())
@@ -155,13 +141,14 @@ impl Window {
 			let (format, color_space) = formats
 				.iter()
 				.find(|format| {
-					format.format == Format::B8G8R8A8_SRGB && format.color_space == ColorSpaceKHR::SRGB_NONLINEAR
+					format.format == vk::Format::B8G8R8A8_SRGB
+						&& format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
 				})
 				.map(|format| (format.format, format.color_space))
 				.unwrap_or((formats[0].format, formats[0].color_space));
 
 			self.cleanup_old(device)?;
-			if self.swapchain != SwapchainKHR::null() {
+			if self.swapchain != vk::SwapchainKHR::null() {
 				self.old_swapchain = OldSwapchain {
 					swapchain: self.swapchain,
 					snapshot: graph.snapshot(),
@@ -171,21 +158,21 @@ impl Window {
 			self.swapchain = self
 				.swapchain_ext
 				.create_swapchain(
-					&SwapchainCreateInfoKHR::builder()
+					&vk::SwapchainCreateInfoKHR::builder()
 						.surface(self.surface)
 						.min_image_count(if (capabilities.min_image_count..=capabilities.max_image_count).contains(&2) { 2 } else { capabilities.min_image_count })
 						.image_format(format)
 						.image_color_space(color_space)
-						.image_extent(Extent2D {
+						.image_extent(vk::Extent2D {
 							width: size.width,
 							height: size.height,
 						})
 						.image_array_layers(1)
-						.image_usage(ImageUsageFlags::COLOR_ATTACHMENT) // Check
-						.image_sharing_mode(SharingMode::EXCLUSIVE)
+						.image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT) // Check
+						.image_sharing_mode(vk::SharingMode::EXCLUSIVE)
 						.pre_transform(capabilities.current_transform)
-						.composite_alpha(CompositeAlphaFlagsKHR::OPAQUE)
-						.present_mode(PresentModeKHR::FIFO)
+						.composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+						.present_mode(vk::PresentModeKHR::FIFO)
 						.old_swapchain(self.old_swapchain.swapchain)
 						.clipped(true),
 					None,
@@ -204,11 +191,12 @@ impl Window {
 	}
 }
 
-pub fn semaphore(device: &Device) -> Semaphore {
+pub fn semaphore(device: &Device) -> Result<vk::Semaphore> {
 	unsafe {
 		device
 			.device()
-			.create_semaphore(&SemaphoreCreateInfo::builder().build(), None)
-			.unwrap()
+			.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None)
+			.map_err(Into::into)
 	}
 }
+
