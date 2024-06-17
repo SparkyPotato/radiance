@@ -20,7 +20,7 @@ use radiance_graph::{
 };
 use radiance_shader_compiler::c_str;
 use radiance_util::pipeline::{no_blend, reverse_depth, simple_blend};
-use vek::{Mat4, Ray, Vec2, Vec4};
+use vek::{Mat4, Vec2};
 
 #[derive(Copy, Clone, Default, PartialEq)]
 pub struct Camera {
@@ -263,14 +263,6 @@ impl VisBuffer {
 			.cull_camera
 			.map(|c| CameraData::new(aspect, c))
 			.unwrap_or(draw_camera);
-
-		let origin = Vec4::new(0.0, 0.0, 0.0, 1.0);
-		let dir = Vec4::new(0.0, 0.0, 1.0, 0.0);
-		let mat = draw_camera.view.inverted();
-		let ray = Ray {
-			origin: (mat * origin).xyz(),
-			direction: (mat * dir).xyz().normalized(),
-		};
 
 		let c = pass.output(
 			UploadBufferDesc {

@@ -7,6 +7,7 @@ use radiance_passes::mesh::visbuffer::Camera;
 pub enum RenderMode {
 	Realtime,
 	GroundTruth,
+	CpuPath,
 }
 
 pub struct Debug {
@@ -37,14 +38,16 @@ impl Debug {
 	pub fn render(&mut self, ctx: &Context, device: &CoreDevice) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut x = self.render_mode as usize;
-			ComboBox::from_label("render mode").show_index(ui, &mut x, 2, |x| match x {
+			ComboBox::from_label("render mode").show_index(ui, &mut x, 3, |x| match x {
 				0 => "Realtime",
 				1 => "Ground Truth",
+				2 => "CPU Path",
 				_ => unreachable!(),
 			});
 			self.render_mode = match x {
 				0 => RenderMode::Realtime,
 				1 => RenderMode::GroundTruth,
+				2 => RenderMode::CpuPath,
 				_ => unreachable!(),
 			};
 

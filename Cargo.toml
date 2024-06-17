@@ -45,7 +45,7 @@ serde_json = { version = "1.0.114" }
 static_assertions = "1.1.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracy = { package = "tracy_full", version = "1.7.1", features = ["enable", "tracing"] }
+tracy = { package = "tracy_full", version = "1.7.1", features = ["tracing"] }
 uuid = { version = "1.7.0", features = ["v4", "fast-rng", "serde"] }
 vek = { version = "0.16.1", features = ["bytemuck", "serde"] }
 walkdir = "2.5.0"

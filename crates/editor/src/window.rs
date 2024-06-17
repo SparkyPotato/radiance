@@ -111,6 +111,10 @@ impl Window {
 			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			self.swapchain_ext.destroy_swapchain(self.swapchain, None);
 			device.surface_ext().unwrap().destroy_surface(self.surface, None);
+			device.device().destroy_semaphore(self.semas[0].0, None);
+			device.device().destroy_semaphore(self.semas[0].1, None);
+			device.device().destroy_semaphore(self.semas[1].0, None);
+			device.device().destroy_semaphore(self.semas[1].1, None);
 		}
 	}
 
@@ -199,4 +203,3 @@ pub fn semaphore(device: &Device) -> Result<vk::Semaphore> {
 			.map_err(Into::into)
 	}
 }
-

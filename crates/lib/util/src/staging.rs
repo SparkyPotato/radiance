@@ -133,6 +133,8 @@ impl Staging {
 		if self.inner.submits.is_empty() {
 			unsafe {
 				self.pools.map_mut(|x| x.reset(device)).try_map(|x| x)?;
+				self.inner.head = BufferLoc::default();
+				self.inner.tail = BufferLoc::default();
 			}
 		}
 
@@ -333,15 +335,18 @@ struct CircularBuffer {
 	submits: VecDeque<SubmitInfo>,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Default, Debug)]
 struct BufferLoc<B> {
 	buffer: B,
 	offset: usize,
 }
 
+// TODO: Keeps growing for some reason.
+// Also might be a time when the tail grows back into the head, making the buffer full, but later
+// allocations think it's empty.
 impl CircularBuffer {
-	/// 4 MB.
-	const BUFFER_SIZE: u64 = 1024 * 1024 * 4;
+	/// 12 MB.
+	const BUFFER_SIZE: u64 = 1024 * 1024 * 12;
 
 	fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
@@ -351,10 +356,10 @@ impl CircularBuffer {
 					size: Self::BUFFER_SIZE,
 					usage: vk::BufferUsageFlags::TRANSFER_SRC,
 				},
-				MemoryLocation::GpuToCpu, // This guarantees that we won't use up the 256 MB of BAR we have.
+				MemoryLocation::CpuToGpu,
 			)?],
-			head: BufferLoc { buffer: 0, offset: 0 },
-			tail: BufferLoc { buffer: 0, offset: 0 },
+			head: BufferLoc::default(),
+			tail: BufferLoc::default(),
 			submits: VecDeque::new(),
 		})
 	}
@@ -378,32 +383,35 @@ impl CircularBuffer {
 		Ok(ret)
 	}
 
+	fn check(&mut self) -> &mut [u8] {
+		unsafe {
+			if self.tail.buffer == self.head.buffer && self.tail.offset < self.head.offset {
+				&mut self.buffers[self.tail.buffer].data().as_mut()[self.tail.offset..self.head.offset]
+			} else {
+				&mut self.buffers[self.tail.buffer].data().as_mut()[self.tail.offset..]
+			}
+		}
+	}
+
 	fn copy(&mut self, device: &Device, data: &[u8]) -> Result<BufferLoc<vk::Buffer>> {
 		let size = data.len();
 
-		// Ensure we have enough space after the tail pointer.
-		if self.buffers[self.tail.buffer].size() as usize - self.tail.offset < size {
-			// We don't have enough space, wrap around.
+		// Try all buffers until we find some space.
+		while self.tail.buffer != self.head.buffer && self.check().len() < size {
 			self.tail.buffer = (self.tail.buffer + 1) % self.buffers.len();
 			self.tail.offset = 0;
-			if self.tail.buffer == self.head.buffer
-				|| self.buffers[self.tail.buffer].size() as usize - self.tail.offset < size
-			{
-				// We've wrapped back to the head, so we need to allocate a new buffer.
-				self.insert_buffer(device, size as u64)?;
-			}
+		}
+		// We're back at the head, try another time.
+		if self.check().len() < size {
+			self.insert_buffer(device, size as u64)?;
 		}
 
-		let buffer = &mut self.buffers[self.tail.buffer];
-		unsafe {
-			let mut slice = &mut buffer.data().as_mut()[self.tail.offset..];
-			slice.write_all(data).unwrap();
-		}
+		self.check().write_all(data).unwrap();
 
 		self.tail.offset += size;
 
 		Ok(BufferLoc {
-			buffer: buffer.inner(),
+			buffer: self.buffers[self.tail.buffer].inner(),
 			offset: self.tail.offset - size,
 		})
 	}
@@ -417,12 +425,15 @@ impl CircularBuffer {
 					size: Self::BUFFER_SIZE.max(size),
 					usage: vk::BufferUsageFlags::TRANSFER_SRC,
 				},
-				MemoryLocation::GpuToCpu,
+				MemoryLocation::CpuToGpu,
 			)?,
 		);
+		self.tail.offset = 0;
 
 		// Increment the head because `insert` just shifted it.
-		self.head.buffer += 1;
+		if self.head.buffer >= self.tail.buffer {
+			self.head.buffer += 1
+		}
 		// Update the submit ranges.
 		for info in self.submits.iter_mut() {
 			if info.range.start.buffer >= self.tail.buffer {

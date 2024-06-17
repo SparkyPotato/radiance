@@ -38,7 +38,7 @@ impl UiState {
 	}
 
 	pub fn render<'pass>(
-		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
+		&'pass mut self, device: &'pass CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
 		arena_size: usize,
 	) {
 		TopBottomPanel::top("menu").show(ctx, |ui| {
@@ -84,4 +84,3 @@ impl UiState {
 
 	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
 }
-

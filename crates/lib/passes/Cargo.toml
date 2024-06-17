@@ -14,8 +14,10 @@ radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"]
 radiance-util = { path = "../util" }
 
 ash = { workspace = true }
+crossbeam-channel = { workspace = true }
 bytemuck = { workspace = true }
+rayon = { workspace = true }
 tracing = { workspace = true }
 vek = { workspace = true }
-rand = { workspace = true }
+rand = { workspace = true, features = ["small_rng"] }
 
