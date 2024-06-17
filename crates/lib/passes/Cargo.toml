@@ -16,6 +16,7 @@ radiance-util = { path = "../util" }
 ash = { workspace = true }
 crossbeam-channel = { workspace = true }
 bytemuck = { workspace = true }
+half = { workspace = true }
 rayon = { workspace = true }
 tracing = { workspace = true }
 vek = { workspace = true }

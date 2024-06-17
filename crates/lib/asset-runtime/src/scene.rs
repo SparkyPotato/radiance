@@ -19,6 +19,7 @@ use radiance_graph::{
 };
 use radiance_util::{buffer::AllocBuffer, deletion::IntoResource, staging::StageError};
 use static_assertions::const_assert_eq;
+use tracing::{span, Level};
 use uuid::Uuid;
 use vek::{Aabb, Mat4, Ray, Vec3, Vec4};
 
@@ -102,6 +103,9 @@ impl Scene {
 	pub fn acceleration_structure(&self) -> ASId { self.acceleration_structure.id.unwrap() }
 
 	pub fn intersect(&self, ray: Ray<f32>, tmax: f32) -> Option<Intersection> {
+		let s = span!(Level::TRACE, "scene intersect");
+		let _e = s.enter();
+
 		struct Visitor<'a> {
 			ray: Ray<f32>,
 			tmax: f32,

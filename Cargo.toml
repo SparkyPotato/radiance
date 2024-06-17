@@ -28,6 +28,7 @@ egui_grid = "0.4.0"
 egui-winit = "0.24.0"
 gltf = { version = "1.4.0" }
 gpu-allocator = { version = "0.25.0", features = ["vulkan", "visualizer"] }
+half = { version = "2.4.1", features = ["bytemuck", "num-traits"] }
 hassle-rs = { version = "0.11.0" }
 hashbrown = { version = "0.14.3", features = ["nightly"] }
 meshopt = { git = "https://github.com/gwihlidal/meshopt-rs" }

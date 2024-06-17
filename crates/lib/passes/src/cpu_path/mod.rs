@@ -6,6 +6,7 @@ use std::{
 
 use ash::vk;
 use crossbeam_channel::{Receiver, Sender};
+use half::f16;
 use radiance_asset_runtime::{rref::RRef, scene::Scene};
 use radiance_core::{CoreDevice, CoreFrame};
 use radiance_graph::{
@@ -17,7 +18,15 @@ use radiance_util::staging::ImageStage;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use rayon::prelude::*;
 use tracing::{span, Level};
-use vek::{Mat4, Ray, Rgba, Vec2, Vec3, Vec4};
+use vek::{
+	num_traits::{One, Zero},
+	Mat4,
+	Ray,
+	Rgba,
+	Vec2,
+	Vec3,
+	Vec4,
+};
 
 use crate::{cpu_path::framebuffer::Framebuffer, mesh::visbuffer::Camera};
 
@@ -88,9 +97,10 @@ impl CpuPath {
 		self.cmds.send(Command::Render).unwrap();
 
 		let mut pass = frame.pass("CPU Path");
+		let size = self.curr_framebuffer.size();
 		let size = vk::Extent3D {
-			width: info.size.x,
-			height: info.size.y,
+			width: size.x,
+			height: size.y,
 			depth: 1,
 		};
 		let out = pass.output(
@@ -151,7 +161,6 @@ impl Drop for CpuPath {
 
 fn director(rx: Receiver<Command>, mut framebuffer: Arc<Framebuffer>) {
 	let mut camera = Camera::default();
-	let mut proj = Mat4::default();
 	let mut view = Mat4::default();
 	let mut scene = None;
 	let mut renders_left = 10;
@@ -159,7 +168,7 @@ fn director(rx: Receiver<Command>, mut framebuffer: Arc<Framebuffer>) {
 	loop {
 		if renders_left == 0 {
 			match rx.recv().unwrap() {
-				Command::Render => renders_left = 100,
+				Command::Render => renders_left = 5,
 				Command::SceneChange(s) => scene = Some(s),
 				Command::FramebufferChange(f) => framebuffer = f,
 				Command::CameraChange(c) => {
@@ -171,7 +180,7 @@ fn director(rx: Receiver<Command>, mut framebuffer: Arc<Framebuffer>) {
 		}
 		while let Ok(t) = rx.try_recv() {
 			match t {
-				Command::Render => renders_left = 100,
+				Command::Render => renders_left = 5,
 				Command::SceneChange(s) => scene = Some(s),
 				Command::FramebufferChange(f) => framebuffer = f,
 				Command::CameraChange(c) => {
@@ -184,30 +193,27 @@ fn director(rx: Receiver<Command>, mut framebuffer: Arc<Framebuffer>) {
 
 		if let Some(ref scene) = scene {
 			let s = framebuffer.size().map(|x| x as f32);
-			proj = Mat4::perspective_fov_lh_zo(camera.fov, s.x, s.y, camera.near, 10.0).inverted();
+			let proj = Mat4::perspective_fov_lh_zo(camera.fov, s.x, s.y, camera.near, 10.0).inverted();
 			framebuffer.get_tiles().for_each_init(
 				|| SmallRng::from_entropy(),
 				|rng, tile| {
-					let _s = span!(Level::TRACE, "trace tile", offset = format_args!("{:?}", tile.offset));
+					let _s = span!(Level::TRACE, "trace tile");
 					let _e = _s.enter();
 
-					let o = tile.offset;
 					for p in tile {
-						// let pixel = p.pixel.map(|x| x as f32) + Vec2::new(rng.gen(), rng.gen());
-						// let clip = pixel / framebuffer.size().map(|x| x as f32) * 2.0 - 1.0;
-						// let target = (proj * Vec4::new(clip.x, -clip.y, 1.0, 1.0)).xyz().normalized();
-						// let ray = Ray {
-						// 	origin: (view * Vec3::zero().with_w(1.0)).xyz(),
-						// 	direction: (view * target.with_w(0.0)).xyz(),
-						// };
-						//
-						// *p.data = if scene.intersect(ray, f32::INFINITY).is_some() {
-						// 	Rgba::new(1.0, 1.0, 1.0, 1.0)
-						// } else {
-						// 	Rgba::new(0.0, 0.0, 0.0, 1.0)
-						// };
+						let pixel = p.pixel.map(|x| x as f32) + Vec2::new(rng.gen(), rng.gen());
+						let clip = pixel / framebuffer.size().map(|x| x as f32) * 2.0 - 1.0;
+						let target = (proj * Vec4::new(clip.x, -clip.y, 1.0, 1.0)).xyz().normalized();
+						let ray = Ray {
+							origin: (view * Vec3::zero().with_w(1.0)).xyz(),
+							direction: (view * target.with_w(0.0)).xyz(),
+						};
 
-						*p.data = Rgba::new((o.x as f32 / s.x) as f16, (o.y as f32 / s.y) as f16, 0.0, 1.0);
+						*p.data = if scene.intersect(ray, f32::INFINITY).is_some() {
+							Rgba::one()
+						} else {
+							Rgba::new(f16::zero(), f16::zero(), f16::zero(), f16::one())
+						};
 					}
 				},
 			);

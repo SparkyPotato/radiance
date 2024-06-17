@@ -15,6 +15,7 @@ use radiance_graph::{
 };
 use radiance_util::{deletion::IntoResource, staging::StageError};
 use static_assertions::const_assert_eq;
+use tracing::{span, Level};
 use uuid::Uuid;
 use vek::{Ray, Vec2, Vec3, Vec4};
 
@@ -80,6 +81,9 @@ pub struct Intersection<'a> {
 
 impl Mesh {
 	pub fn intersect(&self, ray: Ray<f32>, tmax: f32) -> Option<Intersection> {
+		let s = span!(Level::TRACE, "mesh intersect");
+		let _e = s.enter();
+
 		let pray = parry3d::query::Ray {
 			origin: Point::new(ray.origin.x, ray.origin.y, ray.origin.z),
 			dir: Vector::new(ray.direction.x, ray.direction.y, ray.direction.z),

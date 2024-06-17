@@ -1,5 +1,3 @@
-#![feature(f16)]
-
 use radiance_shader_compiler::runtime::{shader, ShaderBlob};
 
 pub mod cpu_path;
