@@ -1,44 +1,33 @@
-use std::{collections::BTreeMap, hash::BuildHasherDefault, hint::unreachable_unchecked, ops::BitOr, ptr::NonNull};
+use std::{alloc::Allocator, hash::BuildHasherDefault, hint::unreachable_unchecked, ops::BitOr, ptr::NonNull};
 
 use ash::vk;
 use tracing::{span, Level};
 
 use crate::{
 	arena::{Arena, IteratorAlloc},
-	device::Device,
+	device::{Device, QueueWaitOwned, Queues, SyncStage},
 	graph::{
 		cache::ResourceList,
 		virtual_resource::{
 			compatible_formats,
+			BufferData,
 			BufferUsageOwned,
-			GpuBufferType,
-			GpuData,
-			ImageType,
+			ImageData,
 			ImageUsageOwned,
 			ResourceLifetime,
-			Usage,
+			SignalOwned,
 			VirtualResourceData,
 			VirtualResourceType,
+			WaitOwned,
 		},
 		ArenaMap,
-		ExternalSync,
 		Frame,
-		GpuBufferHandle,
+		ImageDesc,
 		PassData,
 		RenderGraph,
-		UploadBufferHandle,
 	},
-	resource,
-	resource::{BufferDesc, ImageDesc},
-	sync::{
-		as_next_access,
-		as_previous_access,
-		is_write_access,
-		AccessInfo,
-		GlobalBarrierAccess,
-		ImageBarrierAccess,
-		UsageType,
-	},
+	resource::Subresource,
+	sync::{as_next_access, as_previous_access, is_write_access, AccessInfo, GlobalBarrierAccess, ImageBarrierAccess},
 	Result,
 };
 
@@ -52,18 +41,19 @@ pub(super) struct CompiledFrame<'pass, 'graph, C> {
 	pub ctx: C,
 }
 
+#[derive(Debug)]
 pub struct CrossQueueSync<'graph> {
 	/// Semaphores to signal. Signals occur before waits.
-	pub signal_semaphores: Vec<vk::SemaphoreSubmitInfo, &'graph Arena>,
+	pub signal: Vec<SyncStage<vk::Semaphore>, &'graph Arena>,
 	/// The synchronization that happens before the signal.
 	pub signal_barriers: DependencyInfo<'graph>,
 	/// Semaphores to wait on. Waits occur after signals.
-	pub wait_semaphores: Vec<vk::SemaphoreSubmitInfo, &'graph Arena>,
+	pub wait: QueueWaitOwned<&'graph Arena>,
 	/// The synchronization that happens after the wait.
 	pub wait_barriers: DependencyInfo<'graph>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DependencyInfo<'graph> {
 	/// Global barriers.
 	pub barriers: Vec<vk::MemoryBarrier2, &'graph Arena>,
@@ -71,12 +61,14 @@ pub struct DependencyInfo<'graph> {
 	pub image_barriers: Vec<vk::ImageMemoryBarrier2, &'graph Arena>,
 }
 
+#[derive(Debug)]
 pub struct EventInfo<'graph> {
 	pub event: vk::Event,
 	pub info: DependencyInfo<'graph>,
 }
 
 /// Synchronization on the main queue.
+#[derive(Debug)]
 pub struct QueueSync<'graph> {
 	/// Pipeline barriers to execute.
 	pub barriers: DependencyInfo<'graph>,
@@ -87,6 +79,7 @@ pub struct QueueSync<'graph> {
 }
 
 /// Synchronization between passes.
+#[derive(Debug)]
 pub struct Sync<'graph> {
 	/// Synchronization on the main queue. This is unordered relative to the cross-queue synchronization.
 	pub queue: QueueSync<'graph>,
@@ -103,33 +96,11 @@ pub enum DataState {
 	Init { drop: fn(NonNull<()>) },
 }
 
-/// A GPU resource that keeps track of all the passes it is used in, in order.
-pub struct GpuResource<'graph, H, U> {
-	pub handle: H,
-	pub usages: BTreeMap<u32, U, &'graph Arena>,
-}
-
-/// A GPU Resource that is also externally synchronized.
-pub struct SyncedResource<'graph, H, U: Usage> {
-	pub resource: GpuResource<'graph, H, U>,
-	pub prev_usage: Option<ExternalSync<Vec<U::Inner, &'graph Arena>>>,
-	pub next_usage: Option<ExternalSync<Vec<U::Inner, &'graph Arena>>>,
-}
-
-pub struct Image {
-	pub inner: vk::Image,
-	pub size: vk::Extent3D,
-}
-
-pub type BufferResource<'graph> = SyncedResource<'graph, GpuBufferHandle, BufferUsageOwned<'graph>>;
-pub type ImageResource<'graph> = SyncedResource<'graph, Image, ImageUsageOwned<'graph>>;
-
 /// Concrete render graph resources.
 pub enum Resource<'graph> {
 	Data(NonNull<()>, DataState),
-	UploadBuffer(UploadBufferHandle),
-	GpuBuffer(BufferResource<'graph>),
-	Image(ImageResource<'graph>),
+	Buffer(BufferData<'graph>),
+	Image(ImageData<'graph>),
 }
 
 impl<'graph> Resource<'graph> {
@@ -140,21 +111,28 @@ impl<'graph> Resource<'graph> {
 		}
 	}
 
-	pub unsafe fn upload_buffer(&self) -> UploadBufferHandle {
+	pub unsafe fn buffer(&self) -> &BufferData<'graph> {
 		match self {
-			Resource::UploadBuffer(h) => *h,
+			Resource::Buffer(res) => res,
 			_ => unreachable_unchecked(),
 		}
 	}
 
-	pub unsafe fn gpu_buffer(&self) -> &BufferResource<'graph> {
+	pub unsafe fn buffer_mut(&mut self) -> &mut BufferData<'graph> {
 		match self {
-			Resource::GpuBuffer(res) => res,
+			Resource::Buffer(res) => res,
 			_ => unreachable_unchecked(),
 		}
 	}
 
-	pub unsafe fn image(&self) -> &ImageResource<'graph> {
+	pub unsafe fn image(&self) -> &ImageData<'graph> {
+		match self {
+			Resource::Image(res) => res,
+			_ => unreachable_unchecked(),
+		}
+	}
+
+	pub unsafe fn image_mut(&mut self) -> &mut ImageData<'graph> {
 		match self {
 			Resource::Image(res) => res,
 			_ => unreachable_unchecked(),
@@ -192,14 +170,14 @@ impl<'graph> ResourceMap<'graph> {
 
 	fn arena(&self) -> &'graph Arena { self.resources.allocator() }
 
-	fn buffers(&self) -> impl Iterator<Item = &BufferResource<'graph>> {
+	fn buffers(&self) -> impl Iterator<Item = &BufferData<'graph>> {
 		self.buffers.iter().map(move |&id| unsafe {
 			let res = self.resources.get_unchecked(id as usize);
-			res.gpu_buffer()
+			res.buffer()
 		})
 	}
 
-	fn images(&self) -> impl Iterator<Item = &ImageResource<'graph>> {
+	fn images(&self) -> impl Iterator<Item = &ImageData<'graph>> {
 		self.images.iter().map(move |&id| unsafe {
 			let res = self.resources.get_unchecked(id as usize);
 			res.image()
@@ -213,10 +191,10 @@ impl<'graph> ResourceMap<'graph> {
 					if let DataState::Init { drop } = state {
 						drop(ptr);
 					}
-					unsafe { self.resource_map.allocator().deallocate(ptr.cast()) }
+					unsafe { Arena::deallocate(self.resource_map.allocator(), ptr.cast()) }
 				},
 				// Handled by cache reset.
-				Resource::Image { .. } | Resource::GpuBuffer { .. } | Resource::UploadBuffer(_) => {},
+				Resource::Image { .. } | Resource::Buffer { .. } => {},
 			}
 		}
 		self.resource_map.len()
@@ -228,26 +206,6 @@ impl<'graph> ResourceMap<'graph> {
 	}
 }
 
-/// A possible candidate for merging two virtual resources.
-#[derive(Eq, PartialEq, Hash)]
-enum MergeCandidate {
-	GpuBuffer,
-	Image(super::ImageDesc),
-}
-
-type GpuBufferResourceDesc<'graph> = GpuResource<'graph, BufferDesc, BufferUsageOwned<'graph>>;
-type ImageResourceDesc<'graph> = GpuResource<'graph, ImageDesc, ImageUsageOwned<'graph>>;
-
-/// A description for a concrete resource.
-enum ResourceDescType<'graph> {
-	Data(NonNull<()>),
-	UploadBuffer(BufferDesc),
-	GpuBuffer(GpuBufferResourceDesc<'graph>),
-	Image(ImageResourceDesc<'graph>),
-	ExternalBuffer(BufferResource<'graph>),
-	ExternalImage(ImageResource<'graph>),
-}
-
 fn usage_flags<T, U>(iter: impl IntoIterator<Item = T>) -> U
 where
 	T: Into<U>,
@@ -255,368 +213,153 @@ where
 {
 	iter.into_iter()
 		.map(|x| x.into())
-		.reduce(|a: U, b| a | b)
-		.unwrap_or_default()
-}
-
-impl<'graph> VirtualResourceType<'graph> {
-	fn into_res(self, pass: u32) -> ResourceDescType<'graph> {
-		match self {
-			VirtualResourceType::Data(ptr) => ResourceDescType::Data(ptr),
-			VirtualResourceType::UploadBuffer(desc) => ResourceDescType::UploadBuffer(BufferDesc {
-				size: desc.desc,
-				usage: usage_flags::<_, vk::BufferUsageFlags>(
-					desc.read_usages
-						.iter()
-						.map(|(_, x)| -> vk::BufferUsageFlags { usage_flags(x.usages.iter().copied()) }),
-				) | usage_flags(desc.write_usage.usages.iter().copied()),
-			}),
-			VirtualResourceType::GpuBuffer(GpuData {
-				desc: GpuBufferType::Internal(size),
-				write_usage,
-				read_usages,
-			}) => ResourceDescType::GpuBuffer(GpuResource {
-				handle: BufferDesc {
-					size,
-					usage: usage_flags::<_, vk::BufferUsageFlags>(
-						read_usages
-							.iter()
-							.map(|(_, x)| -> vk::BufferUsageFlags { usage_flags(x.usages.iter().copied()) }),
-					) | usage_flags(write_usage.usages.iter().copied()),
-				},
-				usages: {
-					let arena = *read_usages.allocator();
-					read_usages
-						.into_iter()
-						.chain(std::iter::once((pass, write_usage)))
-						.collect_in(arena)
-				},
-			}),
-			VirtualResourceType::GpuBuffer(GpuData {
-				desc: GpuBufferType::External(buf),
-				write_usage,
-				read_usages,
-			}) => ResourceDescType::ExternalBuffer(BufferResource {
-				resource: GpuResource {
-					handle: buf.handle,
-					usages: {
-						let arena = *read_usages.allocator();
-						read_usages
-							.into_iter()
-							.chain(std::iter::once((pass, write_usage)))
-							.collect_in(arena)
-					},
-				},
-				prev_usage: buf.prev_usage,
-				next_usage: buf.next_usage,
-			}),
-			VirtualResourceType::Image(GpuData {
-				desc: ImageType::Internal(desc),
-				read_usages,
-				write_usage,
-			}) => {
-				let mut usages = BTreeMap::new_in(*read_usages.allocator());
-
-				let mut usage: vk::ImageUsageFlags = usage_flags(write_usage.usages.iter().copied());
-				let mut flags = write_usage.create_flags();
-				let format = write_usage.format;
-				usages.insert(pass, write_usage);
-
-				for (pass, read) in read_usages {
-					if read.format != format {
-						flags |= vk::ImageCreateFlags::MUTABLE_FORMAT;
-					}
-
-					let r: vk::ImageUsageFlags = usage_flags(read.usages.iter().copied());
-					usage |= r;
-					flags |= read.create_flags();
-					usages.insert(pass, read);
-				}
-
-				ResourceDescType::Image(GpuResource {
-					handle: ImageDesc {
-						flags,
-						format,
-						size: desc.size,
-						levels: desc.levels,
-						layers: desc.layers,
-						samples: desc.samples,
-						usage,
-					},
-					usages,
-				})
-			},
-			VirtualResourceType::Image(GpuData {
-				desc: ImageType::External(img),
-				write_usage,
-				read_usages,
-			}) => {
-				let mut usages = BTreeMap::new_in(*read_usages.allocator());
-
-				usages.insert(pass, write_usage);
-
-				for (pass, read) in read_usages {
-					usages.insert(pass, read);
-				}
-
-				ResourceDescType::ExternalImage(ImageResource {
-					resource: GpuResource {
-						handle: Image {
-							inner: img.handle,
-							size: img.size,
-						},
-						usages,
-					},
-					prev_usage: img.prev_usage,
-					next_usage: img.next_usage,
-				})
-			},
-		}
-	}
-}
-
-impl<'graph> ResourceDescType<'graph> {
-	unsafe fn gpu_buffer(&mut self) -> &mut GpuBufferResourceDesc<'graph> {
-		match self {
-			ResourceDescType::GpuBuffer(res) => res,
-			_ => unreachable_unchecked(),
-		}
-	}
-
-	unsafe fn image(&mut self) -> &mut ImageResourceDesc<'graph> {
-		match self {
-			ResourceDescType::Image(res) => res,
-			_ => unreachable_unchecked(),
-		}
-	}
-}
-
-struct ResourceDesc<'graph> {
-	lifetime: ResourceLifetime,
-	ty: ResourceDescType<'graph>,
-}
-
-impl<'graph> From<VirtualResourceData<'graph>> for ResourceDesc<'graph> {
-	fn from(value: VirtualResourceData<'graph>) -> Self {
-		Self {
-			ty: value.ty.into_res(value.lifetime.start),
-			lifetime: value.lifetime,
-		}
-	}
-}
-
-impl<'a> ResourceDesc<'a> {
-	/// Returns `true` if the resource was merged.
-	unsafe fn try_merge(&mut self, other: &mut VirtualResourceData<'a>) -> bool {
-		if !self.lifetime.independent(other.lifetime) {
-			return false;
-		}
-
-		let ret = match other.ty {
-			VirtualResourceType::Data(_)
-			| VirtualResourceType::UploadBuffer(_)
-			| VirtualResourceType::GpuBuffer(GpuData {
-				desc: GpuBufferType::External(_),
-				..
-			})
-			| VirtualResourceType::Image(GpuData {
-				desc: ImageType::External(_),
-				..
-			}) => unreachable_unchecked(),
-			VirtualResourceType::GpuBuffer(GpuData {
-				desc: GpuBufferType::Internal(size),
-				ref mut write_usage,
-				ref mut read_usages,
-			}) => {
-				let alloc = *write_usage.usages.allocator();
-
-				let this = self.ty.gpu_buffer();
-				this.handle.size = this.handle.size.max(size);
-				let u: vk::BufferUsageFlags = usage_flags(write_usage.usages.iter().copied());
-				this.handle.usage |= u;
-				this.usages.insert(
-					other.lifetime.start,
-					std::mem::replace(
-						write_usage,
-						BufferUsageOwned {
-							usages: Vec::new_in(alloc),
-						},
-					),
-				);
-
-				for (pass, read) in std::mem::replace(read_usages, ArenaMap::with_hasher_in(Default::default(), alloc))
-				{
-					let r: vk::BufferUsageFlags = usage_flags(write_usage.usages.iter().copied());
-					this.handle.usage |= r;
-					this.usages.insert(pass, read);
-				}
-
-				true
-			},
-			VirtualResourceType::Image(GpuData {
-				desc: ImageType::Internal(_),
-				ref mut write_usage,
-				ref mut read_usages,
-			}) => {
-				let alloc = *write_usage.usages.allocator();
-
-				let this = self.ty.image();
-				if !compatible_formats(this.handle.format, write_usage.format) {
-					return false;
-				}
-
-				let u: vk::ImageUsageFlags = usage_flags(write_usage.usages.iter().copied());
-				this.handle.usage |= u;
-				this.handle.flags |= write_usage.create_flags();
-				this.usages.insert(
-					other.lifetime.start,
-					std::mem::replace(
-						write_usage,
-						ImageUsageOwned {
-							format: vk::Format::UNDEFINED,
-							usages: Vec::new_in(alloc),
-							view_type: vk::ImageViewType::TYPE_1D,
-							aspect: vk::ImageAspectFlags::empty(),
-						},
-					),
-				);
-
-				for (pass, read) in std::mem::replace(read_usages, ArenaMap::with_hasher_in(Default::default(), alloc))
-				{
-					let r: vk::ImageUsageFlags = usage_flags(write_usage.usages.iter().copied());
-					this.handle.usage |= r;
-					this.handle.flags |= read.create_flags();
-					this.usages.insert(pass, read);
-				}
-
-				true
-			},
-		};
-
-		if ret {
-			self.lifetime = self.lifetime.union(other.lifetime);
-		}
-		ret
-	}
+		.fold(Default::default(), |a, b| a | b)
 }
 
 struct ResourceAliaser<'graph> {
-	aliasable: ArenaMap<'graph, MergeCandidate, Vec<u32, &'graph Arena>>,
+	buffers: Vec<u32, &'graph Arena>,
+	images: ArenaMap<'graph, ImageDesc, Vec<u32, &'graph Arena>>,
 	resource_map: Vec<u32, &'graph Arena>,
-	resources: Vec<ResourceDesc<'graph>, &'graph Arena>,
+	resources: Vec<Resource<'graph>, &'graph Arena>,
+	lifetimes: Vec<ResourceLifetime, &'graph Arena>,
 }
 
 impl<'graph> ResourceAliaser<'graph> {
 	fn new(arena: &'graph Arena) -> Self {
 		Self {
-			aliasable: ArenaMap::with_hasher_in(BuildHasherDefault::default(), arena),
-			resources: Vec::new_in(arena),
+			buffers: Vec::new_in(arena),
+			images: ArenaMap::with_hasher_in(BuildHasherDefault::default(), arena),
 			resource_map: Vec::new_in(arena),
+			resources: Vec::new_in(arena),
+			lifetimes: Vec::new_in(arena),
 		}
 	}
 
-	fn push(&mut self, desc: ResourceDesc<'graph>) {
+	fn push(&mut self, desc: Resource<'graph>, lifetime: ResourceLifetime) {
 		self.resource_map.push(self.resources.len() as u32);
 		self.resources.push(desc);
+		self.lifetimes.push(lifetime);
 	}
 
-	unsafe fn merge(&mut self, merge: MergeCandidate, mut resource: VirtualResourceData<'graph>) {
-		let merges = self
-			.aliasable
-			.entry(merge)
-			.or_insert(Vec::new_in(self.resources.allocator()));
+	fn try_merge_buffer(&mut self, data: BufferData<'graph>, lifetime: ResourceLifetime) {
+		// If the data to be merged is an external resource, don't try to merge it at all.
+		if data.handle.buffer != vk::Buffer::null() {
+			for &i in self.buffers.iter() {
+				let res = &mut self.resources[i as usize];
+				let res_lifetime = &mut self.lifetimes[i as usize];
+				let buffer = unsafe { res.buffer_mut() };
+				// If the lifetimes aren't overlapping, merge.
+				if !res_lifetime.independent(lifetime) {
+					continue;
+				}
 
-		for &i in merges.iter() {
-			let res = &mut self.resources[i as usize];
-			if res.try_merge(&mut resource) {
-				self.resource_map.push(i);
+				buffer.desc.size = buffer.desc.size.max(data.desc.size);
+				buffer.usages.extend(data.usages);
+				*res_lifetime = res_lifetime.union(lifetime);
+
 				return;
 			}
 		}
+		self.buffers.push(self.resources.len() as _);
+		self.push(Resource::Buffer(data), lifetime);
+	}
 
-		merges.push(self.resources.len() as u32);
-		self.push(resource.into());
+	fn try_merge_image(&mut self, data: ImageData<'graph>, lifetime: ResourceLifetime) {
+		if data.handle != vk::Image::null() {
+			for &i in self.images.get(&data.desc).into_iter().flatten() {
+				let res = &mut self.resources[i as usize];
+				let res_lifetime = &mut self.lifetimes[i as usize];
+				let image = unsafe { res.image_mut() };
+				// If the formats aren't compatible, don't merge.
+				if !res_lifetime.independent(lifetime)
+					|| compatible_formats(
+						image.usages.first_key_value().unwrap().1.format,
+						data.usages.first_key_value().unwrap().1.format,
+					) {
+					continue;
+				}
+
+				image.usages.extend(data.usages);
+				*res_lifetime = res_lifetime.union(lifetime);
+
+				return;
+			}
+		}
+		self.images
+			.entry(data.desc)
+			.or_insert_with(|| Vec::new_in(self.resources.allocator()))
+			.push(self.resources.len() as _);
+		self.push(Resource::Image(data), lifetime);
 	}
 
 	fn add(&mut self, resource: VirtualResourceData<'graph>) {
 		match resource.ty {
-			VirtualResourceType::Data(_)
-			| VirtualResourceType::UploadBuffer(_)
-			| VirtualResourceType::GpuBuffer(GpuData {
-				desc: GpuBufferType::External(_),
-				..
-			})
-			| VirtualResourceType::Image(GpuData {
-				desc: ImageType::External(_),
-				..
-			}) => self.push(resource.into()),
-			VirtualResourceType::GpuBuffer(GpuData {
-				desc: GpuBufferType::Internal(_),
-				..
-			}) => unsafe { self.merge(MergeCandidate::GpuBuffer, resource) },
-			VirtualResourceType::Image(GpuData {
-				desc: ImageType::Internal(desc),
-				..
-			}) => unsafe { self.merge(MergeCandidate::Image(desc), resource) },
+			VirtualResourceType::Data(p) => self.push(Resource::Data(p, DataState::Uninit), resource.lifetime),
+			VirtualResourceType::Buffer(data) => self.try_merge_buffer(data, resource.lifetime),
+			VirtualResourceType::Image(data) => self.try_merge_image(data, resource.lifetime),
 		}
 	}
 
-	fn finish(self, device: &Device, graph: &mut RenderGraph) -> ResourceMap<'graph> {
+	fn finish(mut self, device: &Device, graph: &mut RenderGraph) -> ResourceMap<'graph> {
 		let alloc = *self.resources.allocator();
 		let mut buffers = Vec::new_in(alloc);
 		let mut images = Vec::new_in(alloc);
 
-		let resources = self.resources.into_iter().enumerate().map(|(i, desc)| match desc.ty {
-			ResourceDescType::Data(data) => Resource::Data(data, DataState::Uninit),
-			ResourceDescType::UploadBuffer(desc) => Resource::UploadBuffer(
-				graph.caches.upload_buffers[graph.curr_frame]
-					.get(device, desc)
-					.expect("failed to allocate upload buffer"),
-			),
-			ResourceDescType::GpuBuffer(desc) => {
-				buffers.push(i as _);
-				Resource::GpuBuffer(BufferResource {
-					resource: GpuResource {
-						handle: graph
-							.caches
-							.gpu_buffers
-							.get(device, desc.handle)
-							.expect("failed to allocate gpu buffer"),
-						usages: desc.usages,
-					},
-					prev_usage: None,
-					next_usage: None,
-				})
-			},
-			ResourceDescType::ExternalBuffer(buffer) => {
-				buffers.push(i as _);
-				Resource::GpuBuffer(buffer)
-			},
-			ResourceDescType::Image(desc) => {
-				images.push(i as _);
-				Resource::Image(SyncedResource {
-					resource: GpuResource {
-						handle: Image {
-							inner: graph
-								.caches
-								.images
-								.get(device, desc.handle)
-								.expect("failed to allocate image"),
-							size: desc.handle.size,
-						},
-						usages: desc.usages,
-					},
-					prev_usage: None,
-					next_usage: None,
-				})
-			},
-			ResourceDescType::ExternalImage(image) => {
-				images.push(i as _);
-				Resource::Image(image)
-			},
-		});
+		for (i, res) in self.resources.iter_mut().enumerate() {
+			match res {
+				Resource::Data(..) => {},
+				Resource::Buffer(data) => {
+					buffers.push(i as _);
+					if data.handle.buffer == vk::Buffer::null() {
+						data.handle = if data.desc.upload {
+							&mut graph.caches.upload_buffers[graph.curr_frame]
+						} else {
+							&mut graph.caches.buffers
+						}
+						.get(
+							device,
+							crate::resource::BufferDescUnnamed {
+								size: data.desc.size,
+								usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
+								on_cpu: false,
+							},
+						)
+						.expect("failed to allocated graph buffer");
+					}
+				},
 
-		unsafe { ResourceMap::new(self.resource_map, resources.collect_in(alloc), buffers, images) }
+				Resource::Image(data) => {
+					images.push(i as _);
+					if data.handle == vk::Image::null() {
+						let format = data.usages.first_key_value().unwrap().1.format;
+						let flags = data
+							.usages
+							.values()
+							.any(|u| u.format != format)
+							.then_some(vk::ImageCreateFlags::MUTABLE_FORMAT)
+							.unwrap_or_default();
+						data.handle = graph
+							.caches
+							.images
+							.get(
+								device,
+								crate::resource::ImageDescUnnamed {
+									flags,
+									format,
+									size: data.desc.size,
+									levels: data.desc.levels,
+									layers: data.desc.layers,
+									samples: data.desc.samples,
+									usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
+								},
+							)
+							.expect("failed to allocate graph image");
+					}
+				},
+			}
+		}
+
+		unsafe { ResourceMap::new(self.resource_map, self.resources, buffers, images) }
 	}
 }
 
@@ -629,7 +372,7 @@ struct SyncPair<T> {
 #[derive(Clone)]
 struct InProgressImageBarrier {
 	sync: SyncPair<AccessInfo>,
-	aspect: vk::ImageAspectFlags,
+	subresource: Subresource,
 	qfot: Option<u32>,
 }
 
@@ -647,9 +390,9 @@ struct SemaphoreInfo {
 
 #[derive(Clone)]
 struct InProgressCrossQueueSync<'graph> {
-	signal_semaphores: ArenaMap<'graph, vk::Semaphore, SemaphoreInfo>,
+	signal: Vec<SyncStage<vk::Semaphore>, &'graph Arena>,
 	signal_barriers: InProgressDependencyInfo<'graph>,
-	wait_semaphores: ArenaMap<'graph, vk::Semaphore, SemaphoreInfo>,
+	wait: QueueWaitOwned<&'graph Arena>,
 	wait_barriers: InProgressDependencyInfo<'graph>,
 }
 
@@ -716,11 +459,11 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 						next_access,
 						image: i,
 						range: vk::ImageSubresourceRange {
-							aspect_mask: b.aspect,
-							base_array_layer: 0,
-							layer_count: vk::REMAINING_ARRAY_LAYERS,
-							base_mip_level: 0,
-							level_count: vk::REMAINING_MIP_LEVELS,
+							aspect_mask: b.subresource.aspect,
+							base_array_layer: b.subresource.first_layer,
+							layer_count: b.subresource.layer_count,
+							base_mip_level: b.subresource.first_mip,
+							level_count: b.subresource.mip_count,
 						},
 						src_queue_family_index,
 						dst_queue_family_index,
@@ -734,31 +477,10 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 
 impl<'graph> InProgressCrossQueueSync<'graph> {
 	fn finish(self, device: &Device) -> CrossQueueSync<'graph> {
-		let arena = *self.signal_semaphores.allocator();
 		CrossQueueSync {
-			signal_semaphores: self
-				.signal_semaphores
-				.into_iter()
-				.map(|(semaphore, info)| {
-					vk::SemaphoreSubmitInfo::builder()
-						.semaphore(semaphore)
-						.value(info.value)
-						.stage_mask(info.stage_mask)
-						.build()
-				})
-				.collect_in(arena),
+			signal: self.signal,
 			signal_barriers: self.signal_barriers.finish(device, Qfot::To),
-			wait_semaphores: self
-				.wait_semaphores
-				.into_iter()
-				.map(|(semaphore, info)| {
-					vk::SemaphoreSubmitInfo::builder()
-						.semaphore(semaphore)
-						.value(info.value)
-						.stage_mask(info.stage_mask)
-						.build()
-				})
-				.collect_in(arena),
+			wait: self.wait,
 			wait_barriers: self.wait_barriers.finish(device, Qfot::From),
 		}
 	}
@@ -788,36 +510,29 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 }
 
 struct SyncBuilder<'graph> {
+	queues: Queues<u32>,
 	sync: Vec<InProgressSync<'graph>, &'graph Arena>,
 	events: ArenaMap<'graph, SyncPair<u32>, InProgressDependencyInfo<'graph>>,
 }
 
 impl<'graph> SyncBuilder<'graph> {
-	fn new<'temp, 'pass, C>(arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph, C>]) -> Self {
+	fn new<'temp, 'pass, C>(
+		device: &Device, arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph, C>],
+	) -> Self {
 		Self {
+			queues: device.queue_families(),
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
 				cross_queue: InProgressCrossQueueSync {
-					signal_semaphores: ArenaMap::with_hasher_in(Default::default(), arena),
+					signal: Vec::new_in(arena),
 					signal_barriers: InProgressDependencyInfo::default(arena),
-					wait_semaphores: ArenaMap::with_hasher_in(Default::default(), arena),
+					wait: QueueWaitOwned::default(arena),
 					wait_barriers: InProgressDependencyInfo::default(arena),
 				},
 			})
 			.take(passes.len() + 1)
 			.collect_in(arena),
 			events: ArenaMap::with_hasher_in(Default::default(), arena),
-		}
-	}
-
-	/// Create a barrier for an image's initial layout transition.
-	///
-	/// This outputs the barrier before the first pass to aid with barrier merging and reducing the number of barriers
-	/// required.
-	fn init_barrier(&mut self, image: vk::Image, aspect: vk::ImageAspectFlags, access: AccessInfo) {
-		if access.image_layout != vk::ImageLayout::UNDEFINED {
-			let dep_info = &mut self.sync[0].queue;
-			Self::insert_info(dep_info, image, aspect, AccessInfo::default(), access, None);
 		}
 	}
 
@@ -828,115 +543,78 @@ impl<'graph> SyncBuilder<'graph> {
 	///
 	/// This will internally use either a pipeline barrier or an event, depending on what is optimal.
 	fn barrier(
-		&mut self, image: vk::Image, aspect: vk::ImageAspectFlags, prev_pass: u32, prev_access: AccessInfo,
-		next_pass: u32, next_access: AccessInfo,
+		&mut self, image: vk::Image, subresource: Subresource, prev_pass: u32, prev_access: AccessInfo, next_pass: u32,
+		next_access: AccessInfo,
 	) {
 		let dep_info = self.get_dep_info(prev_pass, next_pass);
-		Self::insert_info(dep_info, image, aspect, prev_access, next_access, None);
+		Self::insert_info(dep_info, image, subresource, prev_access, next_access, None);
 	}
 
 	/// Wait for some external sync.
 	///
 	/// If a global barrier is required, pass `Image::null()` and `ImageAspectFlags::empty()`. If no layout transition
 	/// is required, an image barrier will be converted to a global barrier.
-	fn wait_external_sync(
-		&mut self, image: vk::Image, aspect: vk::ImageAspectFlags, pass: u32, prev_sync: ExternalSync<AccessInfo>,
+	fn queue_wait(
+		&mut self, image: vk::Image, subresource: Subresource, pass: u32, wait: WaitOwned<AccessInfo, &'graph Arena>,
 		next_access: AccessInfo,
 	) {
+		let has_queue_wait = !wait.wait.is_empty();
 		let sync = Self::before_pass(pass);
 		let cross_queue = &mut self.sync[sync as usize].cross_queue;
 
 		// If there is a semaphore, we don't need a pipeline barrier for buffers - only images.
-		let need_barrier = prev_sync.semaphore != vk::Semaphore::null() && image != vk::Image::null()
-			|| prev_sync.semaphore == vk::Semaphore::null();
+		let need_barrier =
+			(has_queue_wait && image != vk::Image::null() || !has_queue_wait) && wait.usage != AccessInfo::default();
 
-		if need_barrier
-			&& (prev_sync.usage.stage_mask != vk::PipelineStageFlags2::NONE
-				|| prev_sync.usage.access_mask != vk::AccessFlags2::NONE
-				|| prev_sync.usage.image_layout != vk::ImageLayout::UNDEFINED
-				|| next_access.image_layout != vk::ImageLayout::UNDEFINED)
-		{
+		if need_barrier || next_access.image_layout != vk::ImageLayout::UNDEFINED {
+			let queue = wait
+				.wait
+				.graphics
+				.map(|_| self.queues.graphics)
+				.or_else(|| wait.wait.compute.map(|_| self.queues.compute))
+				.or_else(|| wait.wait.transfer.map(|_| self.queues.transfer));
 			Self::insert_info(
 				&mut cross_queue.wait_barriers,
 				image,
-				aspect,
-				prev_sync.usage,
+				subresource,
+				wait.usage,
 				next_access,
-				prev_sync.queue,
+				queue,
 			);
 		}
 
-		if prev_sync.semaphore != vk::Semaphore::null() {
-			self.wait_semaphore(
-				pass,
-				super::SemaphoreInfo {
-					semaphore: prev_sync.semaphore,
-					value: prev_sync.value,
-					stage: next_access.stage_mask,
-				},
-			);
-		}
+		cross_queue.wait.merge(wait.wait);
 	}
 
 	/// Signal some external sync.
 	///
 	/// If a global barrier is required, pass `Image::null()` and `ImageAspectFlags::empty()`. If no layout transition
 	/// is required, an image barrier will be converted to a global barrier.
-	fn signal_external_sync(
-		&mut self, image: vk::Image, aspect: vk::ImageAspectFlags, pass: u32, prev_access: AccessInfo,
-		next_sync: ExternalSync<AccessInfo>,
+	fn queue_signal(
+		&mut self, image: vk::Image, subresource: Subresource, pass: u32, prev_access: AccessInfo,
+		signal: SignalOwned<AccessInfo, &'graph Arena>,
 	) {
+		let has_queue_signal = !signal.signal.is_empty();
 		let sync = Self::after_pass(pass);
 		let cross_queue = &mut self.sync[sync as usize].cross_queue;
 
 		// If there is a semaphore, we don't need a pipeline barrier for buffers - only images.
-		let need_barrier = next_sync.semaphore != vk::Semaphore::null() && image != vk::Image::null()
-			|| next_sync.semaphore == vk::Semaphore::null();
+		let need_barrier = (has_queue_signal && image != vk::Image::null() || !has_queue_signal)
+			&& prev_access != AccessInfo::default();
 
-		if need_barrier
-			&& (next_sync.usage.stage_mask != vk::PipelineStageFlags2::NONE
-				|| next_sync.usage.access_mask != vk::AccessFlags2::NONE
-				|| prev_access.image_layout != vk::ImageLayout::UNDEFINED
-				|| next_sync.usage.image_layout != vk::ImageLayout::UNDEFINED)
-		{
+		if need_barrier && prev_access.image_layout != vk::ImageLayout::UNDEFINED {
 			Self::insert_info(
 				&mut cross_queue.signal_barriers,
 				image,
-				aspect,
+				subresource,
 				prev_access,
-				next_sync.usage,
-				next_sync.queue,
+				signal.usage,
+				// TODO: no qfot?
+				None,
 			);
 		}
 
-		if next_sync.semaphore != vk::Semaphore::null() {
-			self.signal_semaphore(
-				pass,
-				super::SemaphoreInfo {
-					semaphore: next_sync.semaphore,
-					value: next_sync.value,
-					stage: prev_access.stage_mask,
-				},
-			);
-		}
-	}
-
-	fn wait_semaphore(&mut self, pass: u32, info: super::SemaphoreInfo) {
-		let sync = Self::before_pass(pass);
-		let cross_queue = &mut self.sync[sync as usize].cross_queue;
-
-		let out = cross_queue.wait_semaphores.entry(info.semaphore).or_default();
-		out.value = out.value.max(info.value);
-		out.stage_mask |= info.stage;
-	}
-
-	fn signal_semaphore(&mut self, pass: u32, info: super::SemaphoreInfo) {
-		let sync = Self::after_pass(pass);
-		let cross_queue = &mut self.sync[sync as usize].cross_queue;
-
-		let out = cross_queue.signal_semaphores.entry(info.semaphore).or_default();
-		out.value = out.value.max(info.value);
-		out.stage_mask |= info.stage;
+		cross_queue.signal.extend(signal.signal);
 	}
 
 	fn get_dep_info(&mut self, prev_pass: u32, next_pass: u32) -> &mut InProgressDependencyInfo<'graph> {
@@ -957,7 +635,7 @@ impl<'graph> SyncBuilder<'graph> {
 
 	#[inline]
 	fn insert_info(
-		dep_info: &mut InProgressDependencyInfo<'graph>, image: vk::Image, aspect: vk::ImageAspectFlags,
+		dep_info: &mut InProgressDependencyInfo<'graph>, image: vk::Image, subresource: Subresource,
 		prev_access: AccessInfo, mut next_access: AccessInfo, qfot: Option<u32>,
 	) {
 		if next_access.stage_mask == vk::PipelineStageFlags2::empty() {
@@ -984,7 +662,7 @@ impl<'graph> SyncBuilder<'graph> {
 						from: prev_access,
 						to: next_access,
 					},
-					aspect,
+					subresource,
 					qfot,
 				},
 			);
@@ -997,7 +675,7 @@ impl<'graph> SyncBuilder<'graph> {
 	fn after_pass(pass: u32) -> u32 { pass + 1 }
 
 	fn finish(
-		self, device: &Device, event_list: &mut ResourceList<resource::Event>,
+		self, device: &Device, event_list: &mut ResourceList<crate::resource::Event>,
 	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
 		let arena = *self.sync.allocator();
 		let mut sync: Vec<Sync, _> = self.sync.into_iter().map(|x| x.finish(device)).collect_in(arena);
@@ -1017,17 +695,7 @@ impl<'graph> SyncBuilder<'graph> {
 	}
 }
 
-impl<I: Copy + Into<UsageType>, A: std::alloc::Allocator> ExternalSync<Vec<I, A>> {
-	fn as_prev(&self, discard: bool) -> ExternalSync<AccessInfo> {
-		self.map(|usages| as_previous_access(usages.iter().map(|&x| x.into()), discard))
-	}
-
-	fn as_next(&self, prev_access: AccessInfo) -> ExternalSync<AccessInfo> {
-		self.map(|usages| as_next_access(usages.iter().map(|&x| x.into()), prev_access))
-	}
-}
-
-impl BufferUsageOwned<'_> {
+impl<A: Allocator> BufferUsageOwned<A> {
 	fn as_prev(&self) -> AccessInfo { as_previous_access(self.usages.iter().map(|&x| x.into()), false) }
 
 	fn as_next(&self, prev_access: AccessInfo) -> AccessInfo {
@@ -1037,7 +705,7 @@ impl BufferUsageOwned<'_> {
 	fn is_write(&self) -> bool { self.usages.iter().any(|&x| is_write_access(x.into())) }
 }
 
-impl ImageUsageOwned<'_> {
+impl<A: Allocator> ImageUsageOwned<A> {
 	fn as_prev(&self) -> AccessInfo { as_previous_access(self.usages.iter().map(|&x| x.into()), false) }
 
 	fn as_next(&self, prev_access: AccessInfo) -> AccessInfo {
@@ -1070,37 +738,22 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 	}
 
 	fn sync(
-		&mut self, device: &Device, event_list: &mut ResourceList<resource::Event>,
+		&mut self, device: &Device, event_list: &mut ResourceList<crate::resource::Event>,
 	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
-		let mut sync = SyncBuilder::new(self.resource_map.arena(), self.passes);
+		let mut sync = SyncBuilder::new(device, self.resource_map.arena(), self.passes);
 
 		for buffer in self.resource_map.buffers() {
-			let mut usages = buffer.resource.usages.iter().peekable();
+			let mut usages = buffer.usages.iter().peekable();
 			let (mut prev_pass, mut prev_access) = {
 				let (&pass, usage) = usages.next().unwrap();
 
-				if let Some(prev_usage) = &buffer.prev_usage {
-					let prev_sync = prev_usage.as_prev(false);
-					let next_access = usage.as_next(prev_sync.usage);
-					sync.wait_external_sync(
-						vk::Image::null(),
-						vk::ImageAspectFlags::empty(),
-						pass,
-						prev_sync,
-						next_access,
-					);
-				}
-				let prev_access = usage.as_prev();
-				if let Some(next_usage) = &buffer.next_usage {
-					let next_sync = next_usage.as_next(prev_access);
-					sync.signal_external_sync(
-						vk::Image::null(),
-						vk::ImageAspectFlags::empty(),
-						pass,
-						prev_access,
-						next_sync,
-					);
-				}
+				// TODO: remove clone
+				let prev = buffer.wait.clone().map(|u| u.as_prev());
+				let next = usage.as_next(prev.usage);
+				sync.queue_wait(vk::Image::null(), Subresource::default(), pass, prev, next);
+				let prev = usage.as_prev();
+				let next = buffer.signal.clone().map(|u| u.as_next(prev));
+				sync.queue_signal(vk::Image::null(), Subresource::default(), pass, prev, next);
 
 				debug_assert!(
 					sync.sync[SyncBuilder::after_pass(pass) as usize]
@@ -1111,7 +764,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 					"Cannot have signalling `ExternalSync` that is also used as an input to other passes."
 				);
 
-				(pass, prev_access)
+				(pass, prev)
 			};
 
 			while let Some((&pass, usage)) = usages.next() {
@@ -1123,7 +776,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 					// We're a write, so we can't merge future passes into us.
 					sync.barrier(
 						vk::Image::null(),
-						vk::ImageAspectFlags::empty(),
+						Subresource::default(),
 						prev_pass,
 						prev_access,
 						next_pass,
@@ -1148,7 +801,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 
 					sync.barrier(
 						vk::Image::null(),
-						vk::ImageAspectFlags::empty(),
+						Subresource::default(),
 						prev_pass,
 						prev_access,
 						next_pass,
@@ -1161,29 +814,16 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 		}
 
 		for image in self.resource_map.images() {
-			let mut usages = image.resource.usages.iter().peekable();
+			let mut usages = image.usages.iter().peekable();
 			let (mut prev_pass, mut prev_access) = {
 				let (&pass, usage) = usages.next().unwrap();
 
-				if let Some(prev_usage) = &image.prev_usage {
-					let (_, is_only_write) = usage.is_write();
-					let prev_sync = prev_usage.as_prev(is_only_write);
-					let next_access = usage.as_next(prev_sync.usage);
-					sync.wait_external_sync(image.resource.handle.inner, usage.aspect, pass, prev_sync, next_access);
-				} else {
-					// There's no external sync, but we still have to layout transition.
-					sync.init_barrier(
-						image.resource.handle.inner,
-						usage.aspect,
-						usage.as_next(AccessInfo::default()),
-					);
-				}
-
-				let prev_access = usage.as_prev();
-				if let Some(next_usage) = &image.next_usage {
-					let next_sync = next_usage.as_next(prev_access);
-					sync.signal_external_sync(image.resource.handle.inner, usage.aspect, pass, prev_access, next_sync);
-				};
+				let prev = image.wait.clone().map(|u| u.as_prev());
+				let next = usage.as_next(prev.usage);
+				sync.queue_wait(image.handle, usage.subresource, pass, prev, next);
+				let prev = usage.as_prev();
+				let next = image.signal.clone().map(|u| u.as_next(prev));
+				sync.queue_signal(image.handle, usage.subresource, pass, prev, next);
 
 				debug_assert!(
 					sync.sync[SyncBuilder::after_pass(pass) as usize]
@@ -1194,7 +834,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 					"Cannot have signalling `ExternalSync` that is also used as an input to other passes."
 				);
 
-				(pass, prev_access)
+				(pass, prev)
 			};
 
 			while let Some((&pass, usage)) = usages.next() {
@@ -1210,8 +850,8 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 						prev_access.image_layout = vk::ImageLayout::UNDEFINED;
 					}
 					sync.barrier(
-						image.resource.handle.inner,
-						usage.aspect,
+						image.handle,
+						usage.subresource,
 						prev_pass,
 						prev_access,
 						next_pass,
@@ -1222,7 +862,7 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 				} else {
 					// We're a read, let's look ahead and merge any other reads into us.
 					let mut last_read_pass = next_pass;
-					let mut aspect = usage.aspect;
+					let mut subresource = usage.subresource;
 					while let Some((&pass, usage)) = usages.peek() {
 						let as_next = usage.as_next(prev_access);
 						if usage.is_write().0 || as_next.image_layout != prev_access.image_layout {
@@ -1233,14 +873,26 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 						last_read_pass = pass;
 						next_access |= as_next;
 						next_prev_access |= usage.as_prev();
-						aspect |= usage.aspect;
+						subresource.aspect |= usage.subresource.aspect;
+
+						let curr_last_layer = subresource.first_layer + subresource.layer_count;
+						let next_last_layer = usage.subresource.first_layer + usage.subresource.layer_count;
+						let last_layer = curr_last_layer.max(next_last_layer);
+						subresource.first_layer = subresource.first_layer.min(usage.subresource.first_layer);
+						subresource.layer_count = last_layer - subresource.first_layer;
+
+						let curr_last_mip = subresource.first_mip + subresource.mip_count;
+						let next_last_mip = usage.subresource.first_mip + usage.subresource.mip_count;
+						let last_mip = curr_last_mip.max(next_last_mip);
+						subresource.first_mip = subresource.first_mip.min(usage.subresource.first_mip);
+						subresource.mip_count = last_mip - subresource.first_mip;
 
 						usages.next();
 					}
 
 					sync.barrier(
-						image.resource.handle.inner,
-						aspect,
+						image.handle,
+						subresource,
 						prev_pass,
 						prev_access,
 						next_pass,
@@ -1249,16 +901,6 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 					prev_pass = last_read_pass;
 					prev_access = next_prev_access;
 				}
-			}
-		}
-
-		for (i, pass) in self.passes.iter().enumerate() {
-			for wait in pass.wait.iter() {
-				sync.wait_semaphore(i as _, *wait);
-			}
-
-			for signal in pass.signal.iter() {
-				sync.signal_semaphore(i as _, *signal);
 			}
 		}
 

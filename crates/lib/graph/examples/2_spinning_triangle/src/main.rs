@@ -3,25 +3,17 @@ use std::time::Duration;
 use bytemuck::{bytes_of, NoUninit};
 use helpers::{cmd, pipeline, run, vek::mat::repr_simd::row_major::Mat4, App, RenderInput, ShaderStage};
 use radiance_graph::{
-	ash::vk::{
-		Format,
-		ImageAspectFlags,
-		ImageViewType,
-		Pipeline,
-		PipelineBindPoint,
-		PipelineLayout,
-		PushConstantRange,
-		ShaderStageFlags,
-	},
+	ash::vk,
 	device::{descriptor::BufferId, Device},
-	graph::{BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, Shader, UploadBufferDesc},
+	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, Shader},
+	resource::Subresource,
 };
 
 const ROTATION_RATE: f32 = 30.0;
 
 struct SpinningTriangle {
-	pipeline: Pipeline,
-	layout: PipelineLayout,
+	pipeline: vk::Pipeline,
+	layout: vk::PipelineLayout,
 	deg: f32,
 }
 
@@ -42,11 +34,11 @@ impl App for SpinningTriangle {
 			device,
 			&vertex,
 			&fragment,
-			Format::B8G8R8A8_SRGB,
-			&[PushConstantRange::builder()
+			vk::Format::B8G8R8A8_SRGB,
+			&[vk::PushConstantRange::builder()
 				.size(std::mem::size_of::<PushConstants>() as _)
 				.offset(0)
-				.stage_flags(ShaderStageFlags::VERTEX)
+				.stage_flags(vk::ShaderStageFlags::VERTEX)
 				.build()],
 		);
 
@@ -66,18 +58,24 @@ impl App for SpinningTriangle {
 
 	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, dt: Duration) {
 		let mut pass = frame.pass("triangle");
-		let write = pass.output(
+
+		let write = input.swapchain.import_image(
 			input.image,
 			ImageUsage {
 				format: input.format,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: ImageViewType::TYPE_2D,
-				aspect: ImageAspectFlags::COLOR,
+				view_type: vk::ImageViewType::TYPE_2D,
+				subresource: Subresource {
+					aspect: vk::ImageAspectFlags::COLOR,
+					..Default::default()
+				},
 			},
+			&mut pass,
 		);
 		let storage = pass.output(
-			UploadBufferDesc {
+			BufferDesc {
 				size: std::mem::size_of::<Mat4<f32>>() as _,
+				upload: true,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::Vertex)],
@@ -89,7 +87,7 @@ impl App for SpinningTriangle {
 			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
 			ctx.device
 				.device()
-				.cmd_bind_pipeline(ctx.buf, PipelineBindPoint::GRAPHICS, self.pipeline);
+				.cmd_bind_pipeline(ctx.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 
 			let mut storage = ctx.get(storage);
 			let rot = Mat4::rotation_z(self.deg.to_radians());
@@ -99,7 +97,7 @@ impl App for SpinningTriangle {
 			ctx.device.device().cmd_push_constants(
 				ctx.buf,
 				self.layout,
-				ShaderStageFlags::VERTEX,
+				vk::ShaderStageFlags::VERTEX,
 				0,
 				bytes_of(&PushConstants {
 					id: storage.id.unwrap(),
@@ -108,7 +106,7 @@ impl App for SpinningTriangle {
 			);
 			ctx.device.device().cmd_bind_descriptor_sets(
 				ctx.buf,
-				PipelineBindPoint::GRAPHICS,
+				vk::PipelineBindPoint::GRAPHICS,
 				self.layout,
 				0,
 				&[ctx.device.descriptors().set()],

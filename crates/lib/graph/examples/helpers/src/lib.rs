@@ -20,7 +20,7 @@ use winit::{
 	window::WindowBuilder,
 };
 
-use crate::swapchain::Swapchain;
+use crate::swapchain::{Swapchain, SwapchainImage};
 
 pub mod cmd;
 pub mod load;
@@ -30,7 +30,8 @@ pub mod pipeline;
 mod swapchain;
 
 pub struct RenderInput<'a> {
-	pub image: ExternalImage<'a>,
+	pub image: SwapchainImage,
+	pub swapchain: &'a Swapchain,
 	pub format: vk::Format,
 	pub size: Vec2<u32>,
 }
@@ -68,13 +69,14 @@ pub fn run<T: App>() -> ! {
 			arena.reset();
 			let mut frame = graph.frame(&arena, ());
 
-			let (image, id) = swapchain.acquire();
+			let image = swapchain.acquire();
 
 			let size = window.inner_size();
 			app.render(
 				&mut frame,
 				RenderInput {
 					image,
+					swapchain: &swapchain,
 					format: vk::Format::B8G8R8A8_SRGB,
 					size: Vec2::new(size.width, size.height),
 				},
@@ -83,11 +85,11 @@ pub fn run<T: App>() -> ! {
 			prev = Instant::now();
 			frame.run(&device).unwrap();
 
-			swapchain.present(&device, id, &graph);
+			swapchain.present(&device, image);
 		},
 		Event::WindowEvent { event, .. } => match event {
 			WindowEvent::CloseRequested => *flow = ControlFlow::Exit,
-			WindowEvent::Resized(_) => swapchain.resize(&device, &window, &graph),
+			WindowEvent::Resized(_) => swapchain.resize(&device, &window),
 			_ => {},
 		},
 		Event::LoopDestroyed => unsafe {

@@ -2,6 +2,7 @@
 
 use std::{
 	alloc::{handle_alloc_error, AllocError, Allocator, Global, Layout},
+	borrow::Borrow,
 	cell::UnsafeCell,
 	collections::BTreeMap,
 	ptr::{addr_of_mut, NonNull},
@@ -13,12 +14,10 @@ pub trait FromIteratorAlloc<T, A: Allocator>: Sized {
 	fn from_iter_alloc<I: IntoIterator<Item = T>>(iter: I, alloc: A) -> Self;
 }
 
-/// Utility trait for collecting into a container with an allocator.
 pub trait IteratorAlloc: Iterator {
 	fn collect_in<A: Allocator, C: FromIteratorAlloc<Self::Item, A>>(self, alloc: A) -> C;
 }
 
-/// Utility trait for collecting into a container with an allocator.
 impl<I: Iterator> IteratorAlloc for I {
 	fn collect_in<A: Allocator, C: FromIteratorAlloc<Self::Item, A>>(self, alloc: A) -> C {
 		C::from_iter_alloc(self, alloc)
@@ -41,6 +40,24 @@ impl<K: Ord, V, A: Allocator + Clone> FromIteratorAlloc<(K, V), A> for BTreeMap<
 		map.extend(iter);
 		map
 	}
+}
+
+pub trait ToOwnedAlloc<A> {
+	type Owned;
+
+	fn to_owned_alloc(&self, alloc: A) -> Self::Owned;
+}
+
+impl<T: Clone, A: Allocator> ToOwnedAlloc<A> for [T] {
+	type Owned = Vec<T, A>;
+
+	fn to_owned_alloc(&self, alloc: A) -> Self::Owned { self.to_vec_in(alloc) }
+}
+
+impl<A: Allocator, T: Clone> ToOwnedAlloc<A> for &'_ [T] {
+	type Owned = Vec<T, A>;
+
+	fn to_owned_alloc(&self, alloc: A) -> Self::Owned { (**self).to_owned_alloc(alloc) }
 }
 
 #[repr(C, align(8))]
@@ -339,4 +356,3 @@ mod tests {
 		}
 	}
 }
-

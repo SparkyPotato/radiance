@@ -3,34 +3,21 @@ use std::time::Duration;
 use bytemuck::{bytes_of, NoUninit};
 use helpers::{cmd, load, pipeline, run, App, RenderInput, ShaderStage};
 use radiance_graph::{
-	ash::vk::{
-		Filter,
-		Format,
-		ImageAspectFlags,
-		ImageViewType,
-		IndexType,
-		Pipeline,
-		PipelineBindPoint,
-		PipelineLayout,
-		PushConstantRange,
-		Sampler,
-		SamplerCreateInfo,
-		ShaderStageFlags,
-	},
+	ash::vk,
 	device::{
 		descriptor::{ImageId, SamplerId},
 		Device,
 	},
-	graph::{BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, UploadBufferDesc},
-	resource::{Image, ImageView, Resource},
+	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType},
+	resource::{Image, ImageView, Resource, Subresource},
 };
 
 struct Textures {
-	pipeline: Pipeline,
-	layout: PipelineLayout,
+	pipeline: vk::Pipeline,
+	layout: vk::PipelineLayout,
 	image: Image,
 	view: ImageView,
-	sampler: Sampler,
+	sampler: vk::Sampler,
 	sampler_id: SamplerId,
 }
 
@@ -52,11 +39,11 @@ impl App for Textures {
 			device,
 			&vertex,
 			&fragment,
-			Format::B8G8R8A8_SRGB,
-			&[PushConstantRange::builder()
+			vk::Format::B8G8R8A8_SRGB,
+			&[vk::PushConstantRange::builder()
 				.size(std::mem::size_of::<PushConstants>() as _)
 				.offset(0)
-				.stage_flags(ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT)
+				.stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
 				.build()],
 		);
 
@@ -66,9 +53,9 @@ impl App for Textures {
 			device
 				.device()
 				.create_sampler(
-					&SamplerCreateInfo::builder()
-						.mag_filter(Filter::LINEAR)
-						.min_filter(Filter::LINEAR),
+					&vk::SamplerCreateInfo::builder()
+						.mag_filter(vk::Filter::LINEAR)
+						.min_filter(vk::Filter::LINEAR),
 					None,
 				)
 				.unwrap()
@@ -98,19 +85,25 @@ impl App for Textures {
 
 	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, _: Duration) {
 		let mut pass = frame.pass("triangle");
-		let write = pass.output(
+
+		let write = input.swapchain.import_image(
 			input.image,
 			ImageUsage {
 				format: input.format,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: ImageViewType::TYPE_2D,
-				aspect: ImageAspectFlags::COLOR,
+				view_type: vk::ImageViewType::TYPE_2D,
+				subresource: Subresource {
+					aspect: vk::ImageAspectFlags::COLOR,
+					..Default::default()
+				},
 			},
+			&mut pass,
 		);
 
 		let index = pass.output(
-			UploadBufferDesc {
+			BufferDesc {
 				size: std::mem::size_of::<u16>() as u64 * 6,
+				upload: true,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::IndexBuffer],
@@ -126,12 +119,12 @@ impl App for Textures {
 			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
 			ctx.device
 				.device()
-				.cmd_bind_pipeline(ctx.buf, PipelineBindPoint::GRAPHICS, self.pipeline);
+				.cmd_bind_pipeline(ctx.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
 
 			ctx.device.device().cmd_push_constants(
 				ctx.buf,
 				self.layout,
-				ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT,
+				vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
 				0,
 				bytes_of(&PushConstants {
 					image_id: self.view.id.unwrap(),
@@ -141,7 +134,7 @@ impl App for Textures {
 			);
 			ctx.device.device().cmd_bind_descriptor_sets(
 				ctx.buf,
-				PipelineBindPoint::GRAPHICS,
+				vk::PipelineBindPoint::GRAPHICS,
 				self.layout,
 				0,
 				&[ctx.device.descriptors().set()],
@@ -149,7 +142,7 @@ impl App for Textures {
 			);
 			ctx.device
 				.device()
-				.cmd_bind_index_buffer(ctx.buf, index.buffer, 0, IndexType::UINT16);
+				.cmd_bind_index_buffer(ctx.buf, index.buffer, 0, vk::IndexType::UINT16);
 			ctx.device.device().cmd_draw_indexed(ctx.buf, 6, 1, 0, 0, 0);
 
 			ctx.device.device().cmd_end_rendering(ctx.buf);

@@ -495,11 +495,7 @@ impl<'a> DeviceBuilder<'a> {
 				Ok(device) => {
 					info!("created device: {}", name);
 
-					let queues = queues.map_ref(|index| QueueData {
-						queue: Mutex::new(unsafe { device.get_device_queue(*index, 0) }),
-						family: *index,
-					});
-
+					let queues = queues.try_map(|family| QueueData::new(&device, family))?;
 					return Ok((device, physical_device, queues));
 				},
 				Err(err) => {

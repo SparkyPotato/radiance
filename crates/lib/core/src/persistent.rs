@@ -32,16 +32,16 @@ impl PersistentBuffer {
 		let read = pass.output(
 			ExternalBuffer {
 				handle: self.buffers[self.current].handle(),
-				prev_usage: None,
-				next_usage: None,
+				wait: None,
+				signal: None,
 			},
 			read_usage,
 		);
 		let write = pass.output(
 			ExternalBuffer {
 				handle: self.buffers[next].handle(),
-				prev_usage: None,
-				next_usage: None,
+				wait: None,
+				signal: None,
 			},
 			write_usage,
 		);
@@ -88,8 +88,8 @@ impl PersistentImage {
 				levels: self.desc.levels,
 				layers: self.desc.layers,
 				samples: self.desc.samples,
-				prev_usage: None,
-				next_usage: None,
+				wait: None,
+				signal: None,
 			},
 			read_usage,
 		);
@@ -100,8 +100,8 @@ impl PersistentImage {
 				levels: self.desc.levels,
 				layers: self.desc.layers,
 				samples: self.desc.samples,
-				prev_usage: None,
-				next_usage: None,
+				wait: None,
+				signal: None,
 			},
 			write_usage,
 		);

@@ -80,7 +80,8 @@ impl GroundTruth {
 					.push_constant_ranges(&[vk::PushConstantRange::builder()
 						.stage_flags(
 							vk::ShaderStageFlags::RAYGEN_KHR
-								| vk::ShaderStageFlags::MISS_KHR | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+								| vk::ShaderStageFlags::MISS_KHR
+								| vk::ShaderStageFlags::CLOSEST_HIT_KHR,
 						)
 						.size(std::mem::size_of::<PushConstants>() as u32)
 						.build()]),
@@ -299,8 +300,8 @@ impl GroundTruth {
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
-				prev_usage: None,
-				next_usage: None,
+				wait: None,
+				signal: None,
 			},
 			ImageUsage {
 				format: vk::Format::R16G16B16A16_SFLOAT,

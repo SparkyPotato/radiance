@@ -65,12 +65,12 @@ impl Window {
 					levels: 1,
 					layers: 1,
 					samples: vk::SampleCountFlags::TYPE_1,
-					prev_usage: Some(ExternalSync {
+					wait: Some(ExternalSync {
 						semaphore: available,
 						usage: &[ImageUsageType::Present],
 						..Default::default()
 					}),
-					next_usage: Some(ExternalSync {
+					signal: Some(ExternalSync {
 						semaphore: rendered,
 						usage: &[ImageUsageType::Present],
 						..Default::default()

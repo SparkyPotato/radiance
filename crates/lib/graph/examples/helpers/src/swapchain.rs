@@ -1,7 +1,8 @@
 use radiance_graph::{
 	ash::{extensions::khr, vk},
-	device::Device,
-	graph::{ExecutionSnapshot, ExternalImage, ExternalSync, ImageUsageType, RenderGraph},
+	device::{Device, Graphics, QueueWait, SyncPoint, SyncStage},
+	graph::{ExternalImage, ImageUsage, ImageUsageType, PassBuilder, Res, Signal, Wait},
+	resource::ImageView,
 };
 use winit::window::Window;
 
@@ -9,7 +10,7 @@ use crate::misc::semaphore;
 
 struct OldSwapchain {
 	swapchain: vk::SwapchainKHR,
-	snapshot: Option<ExecutionSnapshot>,
+	sync: Option<SyncPoint<Graphics>>,
 }
 
 pub struct Swapchain {
@@ -23,6 +24,9 @@ pub struct Swapchain {
 	size: vk::Extent3D,
 }
 
+#[derive(Copy, Clone)]
+pub struct SwapchainImage(u32);
+
 impl Swapchain {
 	pub fn new(device: &Device, surface: vk::SurfaceKHR, window: &Window) -> Self {
 		let swapchain_ext = khr::Swapchain::new(device.instance(), device.device());
@@ -32,7 +36,7 @@ impl Swapchain {
 			swapchain: vk::SwapchainKHR::null(),
 			old_swapchain: OldSwapchain {
 				swapchain: vk::SwapchainKHR::null(),
-				snapshot: None,
+				sync: None,
 			},
 			images: Vec::new(),
 			available: semaphore(device),
@@ -47,63 +51,83 @@ impl Swapchain {
 		this
 	}
 
-	pub fn acquire(&self) -> (ExternalImage, u32) {
+	pub fn acquire(&self) -> SwapchainImage {
 		unsafe {
 			let (id, _) = self
 				.swapchain_ext
 				.acquire_next_image(self.swapchain, u64::MAX, self.available, vk::Fence::null())
 				.unwrap();
-			(
-				ExternalImage {
-					handle: self.images[id as usize],
-					size: self.size,
-					levels: 1,
-					layers: 1,
-					samples: vk::SampleCountFlags::TYPE_1,
-					prev_usage: Some(ExternalSync {
-						semaphore: self.available,
-						usage: &[ImageUsageType::Present],
-						..Default::default()
-					}),
-					next_usage: Some(ExternalSync {
-						semaphore: self.rendered,
-						usage: &[ImageUsageType::Present],
-						..Default::default()
-					}),
-				},
-				id,
-			)
+			SwapchainImage(id)
 		}
 	}
 
-	pub fn present(&mut self, device: &Device, id: u32, graph: &RenderGraph) {
+	pub fn import_image<C>(
+		&self, image: SwapchainImage, usage: ImageUsage, pass: &mut PassBuilder<C>,
+	) -> Res<ImageView> {
+		// TODO: this is too goofy.
+		pass.output(
+			ExternalImage {
+				handle: self.images[image.0 as usize],
+				size: self.size,
+				levels: 1,
+				layers: 1,
+				samples: vk::SampleCountFlags::TYPE_1,
+				wait: Wait {
+					usage: ImageUsage {
+						usages: &[ImageUsageType::Present],
+						..Default::default()
+					},
+					wait: QueueWait {
+						binary_semaphores: &[SyncStage {
+							point: self.available,
+							stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+						}],
+						..Default::default()
+					},
+				},
+				signal: Signal {
+					usage: ImageUsage {
+						usages: &[ImageUsageType::Present],
+						..Default::default()
+					},
+					signal: &[SyncStage {
+						point: self.rendered,
+						stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+					}],
+				},
+			},
+			usage,
+		)
+	}
+
+	pub fn present(&mut self, device: &Device, image: SwapchainImage) {
 		unsafe {
-			if let Some(snapshot) = self.old_swapchain.snapshot.take() {
-				if snapshot.is_complete(graph) {
+			if let Some(sync) = self.old_swapchain.sync {
+				if sync.is_complete(device).unwrap_or_else(|_| false) {
 					self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 					self.old_swapchain = OldSwapchain {
 						swapchain: vk::SwapchainKHR::null(),
-						snapshot: None,
+						sync: None,
 					};
 				}
 			}
 
 			self.swapchain_ext
 				.queue_present(
-					*device.graphics_queue(),
+					*device.queue::<Graphics>(),
 					&vk::PresentInfoKHR::builder()
 						.wait_semaphores(&[self.rendered])
 						.swapchains(&[self.swapchain])
-						.image_indices(&[id])
+						.image_indices(&[image.0])
 						.build(),
 				)
 				.unwrap();
 		}
 	}
 
-	pub fn resize(&mut self, device: &Device, window: &Window, graph: &RenderGraph) {
-		if let Some(snapshot) = self.old_swapchain.snapshot.take() {
-			snapshot.wait(device).unwrap();
+	pub fn resize(&mut self, device: &Device, window: &Window) {
+		if let Some(sync) = self.old_swapchain.sync.take() {
+			sync.wait(device).unwrap();
 			unsafe {
 				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			}
@@ -111,7 +135,7 @@ impl Swapchain {
 
 		self.old_swapchain = OldSwapchain {
 			swapchain: self.swapchain,
-			snapshot: Some(graph.snapshot()),
+			sync: Some(device.current_sync_point()),
 		};
 		self.make(window);
 		self.size = vk::Extent3D {

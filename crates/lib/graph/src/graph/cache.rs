@@ -2,7 +2,12 @@ use std::collections::hash_map::Entry;
 
 use rustc_hash::FxHashMap;
 
-use crate::{device::Device, graph::FRAMES_IN_FLIGHT, resource::Resource, Result};
+use crate::{
+	device::Device,
+	graph::FRAMES_IN_FLIGHT,
+	resource::{Resource, ToNamed},
+	Result,
+};
 
 const DESTROY_LAG: u8 = FRAMES_IN_FLIGHT as _;
 
@@ -28,7 +33,7 @@ impl<T: Resource> ResourceList<T> {
 		}
 	}
 
-	pub fn get_or_create(&mut self, device: &Device, desc: T::Desc) -> Result<T::Handle> {
+	pub fn get_or_create(&mut self, device: &Device, desc: T::Desc<'_>) -> Result<T::Handle> {
 		let ret = match self.resources.get_mut(self.cursor) {
 			Some(resource) => {
 				resource.unused = 0;
@@ -83,7 +88,7 @@ impl<T: Resource> ResourceList<T> {
 }
 
 pub struct ResourceCache<T: Resource> {
-	resources: FxHashMap<T::Desc, ResourceList<T>>,
+	resources: FxHashMap<T::UnnamedDesc, ResourceList<T>>,
 }
 
 impl<T: Resource> ResourceCache<T> {
@@ -105,9 +110,9 @@ impl<T: Resource> ResourceCache<T> {
 	}
 
 	/// Get an unused resource with the given descriptor. Is valid until [`Self::reset`] is called.
-	pub fn get(&mut self, device: &Device, desc: T::Desc) -> Result<T::Handle> {
+	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<T::Handle> {
 		let list = self.resources.entry(desc).or_insert_with(ResourceList::new);
-		list.get_or_create(device, desc)
+		list.get_or_create(device, desc.to_named("Graph Resource"))
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
@@ -118,7 +123,7 @@ impl<T: Resource> ResourceCache<T> {
 }
 
 pub struct UniqueCache<T: Resource> {
-	resources: FxHashMap<T::Desc, TrackedResource<T>>,
+	resources: FxHashMap<T::UnnamedDesc, TrackedResource<T>>,
 }
 
 impl<T: Resource> UniqueCache<T> {
@@ -130,10 +135,10 @@ impl<T: Resource> UniqueCache<T> {
 	}
 
 	/// Get the resource with the given descriptor. Is valid until [`Self::reset`] is called.
-	pub fn get(&mut self, device: &Device, desc: T::Desc) -> Result<T::Handle> {
+	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<T::Handle> {
 		match self.resources.entry(desc) {
 			Entry::Vacant(v) => {
-				let resource = T::create(device, *v.key())?;
+				let resource = T::create(device, v.key().to_named("Graph Resource"))?;
 				let handle = resource.handle();
 				v.insert(TrackedResource {
 					inner: resource,
@@ -185,19 +190,25 @@ mod tests {
 		struct Resource;
 		#[derive(Copy, Clone, PartialEq, Eq, Hash)]
 		struct ResourceDesc;
+		impl ToNamed for ResourceDesc {
+			type Named<'a> = Self;
+
+			fn to_named(self, _: &str) -> Self::Named<'_> { self }
+		}
 
 		impl super::Resource for Resource {
-			type Desc = ResourceDesc;
+			type Desc<'a> = ResourceDesc;
 			type Handle = Self;
+			type UnnamedDesc = ResourceDesc;
 
 			fn handle(&self) -> Self::Handle { *self }
 
-			fn create(_: &Device, _: Self::Desc) -> Result<Self> { Ok(Resource) }
+			fn create(_: &Device, _: Self::Desc<'_>) -> Result<Self> { Ok(Resource) }
 
 			unsafe fn destroy(self, _: &Device) {}
 		}
 
-		let device = Device::new().unwrap();
+		let (device, _) = Device::builder().build().unwrap();
 		let mut list = ResourceList::<Resource>::new();
 
 		list.get_or_create(&device, ResourceDesc).unwrap();

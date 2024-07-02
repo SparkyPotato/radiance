@@ -4,17 +4,19 @@ pub use image::ImageFormat;
 use radiance_graph::{
 	ash::vk,
 	cmd::CommandPool,
-	device::Device,
-	resource::{BufferDesc, Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, UploadBuffer},
+	device::{Device, Graphics, QueueWait},
+	resource::{Buffer, BufferDesc, Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, Subresource},
 };
 
 pub fn image(device: &Device, bytes: &[u8], format: ImageFormat) -> (Image, ImageView) {
 	let image = image::load(Cursor::new(bytes), format).unwrap().to_rgba8();
-	let buf = UploadBuffer::create(
+	let buf = Buffer::create(
 		device,
 		BufferDesc {
+			name: "Upload Buffer",
 			size: image.len() as _,
 			usage: vk::BufferUsageFlags::TRANSFER_SRC,
+			on_cpu: true,
 		},
 	)
 	.unwrap();
@@ -30,6 +32,7 @@ pub fn image(device: &Device, bytes: &[u8], format: ImageFormat) -> (Image, Imag
 	let image = Image::create(
 		device,
 		ImageDesc {
+			name: "Image",
 			flags: vk::ImageCreateFlags::empty(),
 			format: vk::Format::R8G8B8A8_SRGB,
 			size,
@@ -43,12 +46,16 @@ pub fn image(device: &Device, bytes: &[u8], format: ImageFormat) -> (Image, Imag
 	let view = ImageView::create(
 		device,
 		ImageViewDesc {
+			name: "Image",
 			size,
 			image: image.handle(),
 			view_type: vk::ImageViewType::TYPE_2D,
 			format: vk::Format::R8G8B8A8_SRGB,
 			usage: ImageViewUsage::Sampled,
-			aspect: vk::ImageAspectFlags::COLOR,
+			subresource: Subresource {
+				aspect: vk::ImageAspectFlags::COLOR,
+				..Subresource::default()
+			},
 		},
 	)
 	.unwrap();
@@ -56,7 +63,7 @@ pub fn image(device: &Device, bytes: &[u8], format: ImageFormat) -> (Image, Imag
 	// Very inefficient - we're creating a command pool and submitting a command buffer for every image.
 	// You should write your own, optimized resource loading code.
 	unsafe {
-		let mut pool = CommandPool::new(device, *device.queue_families().graphics()).unwrap();
+		let mut pool = CommandPool::new(device, device.queue_families().graphics).unwrap();
 		let cmd_buf = pool.next(device).unwrap();
 
 		device
@@ -124,12 +131,7 @@ pub fn image(device: &Device, bytes: &[u8], format: ImageFormat) -> (Image, Imag
 			.unwrap();
 
 		device
-			.submit_graphics(
-				&[vk::SubmitInfo2::builder()
-					.command_buffer_infos(&[vk::CommandBufferSubmitInfo::builder().command_buffer(cmd_buf).build()])
-					.build()],
-				fence,
-			)
+			.submit::<Graphics>(QueueWait::default(), &[cmd_buf], &[], fence)
 			.unwrap();
 		device.device().wait_for_fences(&[fence], true, u64::MAX).unwrap();
 

@@ -1,12 +1,13 @@
 //! TODO: Resource names.
 
 use std::{
+	ffi::CString,
 	hash::Hash,
 	ops::{BitOr, Deref},
 	ptr::NonNull,
 };
 
-use ash::vk;
+use ash::vk::{self, Handle};
 use gpu_allocator::{
 	vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
 	MemoryLocation,
@@ -22,13 +23,20 @@ use crate::{
 	Result,
 };
 
+pub trait ToNamed {
+	type Named<'a>;
+
+	fn to_named(self, name: &str) -> Self::Named<'_>;
+}
+
 pub trait Resource: Default + Sized {
-	type Desc: Eq + Hash + Copy;
+	type Desc<'a>: Copy;
+	type UnnamedDesc: Eq + Hash + Copy + for<'a> ToNamed<Named<'a> = Self::Desc<'a>>;
 	type Handle: Copy;
 
 	fn handle(&self) -> Self::Handle;
 
-	fn create(device: &Device, desc: Self::Desc) -> Result<Self>;
+	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self>;
 
 	/// # Safety
 	/// The resource must not be used after being destroyed, and appropriate synchronization must be performed.
@@ -36,10 +44,51 @@ pub trait Resource: Default + Sized {
 }
 
 /// A description for a buffer.
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct BufferDesc {
+#[derive(Copy, Clone)]
+pub struct BufferDesc<'a> {
+	pub name: &'a str,
 	pub size: u64,
 	pub usage: vk::BufferUsageFlags,
+	pub on_cpu: bool,
+}
+
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct BufferDescUnnamed {
+	pub size: u64,
+	pub usage: vk::BufferUsageFlags,
+	pub on_cpu: bool,
+}
+
+impl ToNamed for BufferDescUnnamed {
+	type Named<'a> = BufferDesc<'a>;
+
+	fn to_named(self, name: &str) -> Self::Named<'_> {
+		Self::Named {
+			name,
+			size: self.size,
+			usage: self.usage,
+			on_cpu: self.on_cpu,
+		}
+	}
+}
+
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct BufferHandle {
+	pub buffer: vk::Buffer,
+	pub addr: u64,
+	pub id: Option<BufferId>,
+	pub data: NonNull<[u8]>,
+}
+
+impl Default for BufferHandle {
+	fn default() -> Self {
+		Self {
+			buffer: vk::Buffer::null(),
+			addr: 0,
+			id: None,
+			data: unsafe { NonNull::new_unchecked(std::slice::from_raw_parts_mut(std::ptr::dangling_mut(), 0)) },
+		}
+	}
 }
 
 /// A buffer.
@@ -52,59 +101,6 @@ pub struct Buffer {
 }
 
 impl Buffer {
-	pub fn create(device: &Device, desc: BufferDesc, location: MemoryLocation) -> Result<Self> {
-		let info = vk::BufferCreateInfo::builder()
-			.size(desc.size)
-			.usage(desc.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
-			.sharing_mode(vk::SharingMode::CONCURRENT);
-
-		let usage = info.usage;
-		let buffer = unsafe {
-			let Queues {
-				graphics,
-				compute,
-				transfer,
-			} = device.queue_families();
-			device
-				.device()
-				.create_buffer(&info.queue_family_indices(&[graphics, compute, transfer]), None)
-		}?;
-
-		let alloc = device
-			.allocator()
-			.allocate(&AllocationCreateDesc {
-				name: "Graph Buffer",
-				requirements: unsafe { device.device().get_buffer_memory_requirements(buffer) },
-				location,
-				linear: true,
-				allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-			})
-			.map_err(|e| Error::Message(e.to_string()))?;
-
-		unsafe {
-			device
-				.device()
-				.bind_buffer_memory(buffer, alloc.memory(), alloc.offset())?;
-		}
-
-		let id = usage
-			.contains(vk::BufferUsageFlags::STORAGE_BUFFER)
-			.then(|| device.descriptors().get_buffer(device, buffer));
-
-		let addr = unsafe {
-			device
-				.device()
-				.get_buffer_device_address(&vk::BufferDeviceAddressInfo::builder().buffer(buffer))
-		};
-
-		Ok(Self {
-			inner: buffer,
-			alloc,
-			id,
-			addr,
-		})
-	}
-
 	pub fn size(&self) -> u64 { self.alloc.size() }
 
 	pub fn data(&self) -> NonNull<[u8]> {
@@ -134,100 +130,89 @@ impl Buffer {
 	}
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct UploadBufferHandle {
-	pub buffer: vk::Buffer,
-	pub addr: u64,
-	pub id: Option<BufferId>,
-	pub data: NonNull<[u8]>,
-}
-
-/// A buffer for uploading data from the CPU to the GPU.
-#[derive(Default)]
-pub struct UploadBuffer {
-	inner: Buffer,
-}
-
-impl Deref for UploadBuffer {
-	type Target = Buffer;
-
-	fn deref(&self) -> &Self::Target { &self.inner }
-}
-
-impl Resource for UploadBuffer {
-	type Desc = BufferDesc;
-	type Handle = UploadBufferHandle;
+impl Resource for Buffer {
+	type Desc<'a> = BufferDesc<'a>;
+	type Handle = BufferHandle;
+	type UnnamedDesc = BufferDescUnnamed;
 
 	fn handle(&self) -> Self::Handle {
-		UploadBufferHandle {
-			buffer: self.inner.inner,
-			addr: self.inner.addr,
-			data: self.inner.data(),
-			id: self.inner.id,
+		BufferHandle {
+			buffer: self.inner,
+			addr: self.addr,
+			data: self.data(),
+			id: self.id,
 		}
 	}
 
-	fn create(device: &Device, desc: Self::Desc) -> Result<Self>
+	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self>
 	where
 		Self: Sized,
 	{
-		Buffer::create(device, desc, MemoryLocation::CpuToGpu).map(|inner| Self { inner })
-	}
+		unsafe {
+			let info = vk::BufferCreateInfo::builder()
+				.size(desc.size)
+				.usage(desc.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
+				.sharing_mode(vk::SharingMode::CONCURRENT);
 
-	unsafe fn destroy(self, device: &Device) { self.inner.destroy(device) }
-}
+			let usage = info.usage;
+			let Queues {
+				graphics,
+				compute,
+				transfer,
+			} = device.queue_families();
+			let buffer = device
+				.device()
+				.create_buffer(&info.queue_family_indices(&[graphics, compute, transfer]), None)?;
 
-impl UploadBuffer {
-	pub fn into_inner(self) -> Buffer { self.inner }
-}
+			let _ = device.debug_utils_ext().map(|d| {
+				let name = CString::new(desc.name).unwrap();
+				d.set_debug_utils_object_name(
+					device.device().handle(),
+					&vk::DebugUtilsObjectNameInfoEXT::builder()
+						.object_type(vk::ObjectType::BUFFER)
+						.object_handle(buffer.as_raw())
+						.object_name(&name),
+				)
+			});
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct GpuBufferHandle {
-	pub buffer: vk::Buffer,
-	pub addr: u64,
-	pub id: Option<BufferId>,
-	pub data: NonNull<[u8]>,
-}
+			let alloc = device
+				.allocator()
+				.allocate(&AllocationCreateDesc {
+					name: desc.name,
+					requirements: device.device().get_buffer_memory_requirements(buffer),
+					location: MemoryLocation::CpuToGpu,
+					linear: true,
+					allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+				})
+				.map_err(|e| Error::Message(e.to_string()))?;
 
-/// A buffer on the GPU.
-#[derive(Default)]
-pub struct GpuBuffer {
-	inner: Buffer,
-}
+			device
+				.device()
+				.bind_buffer_memory(buffer, alloc.memory(), alloc.offset())?;
 
-impl Deref for GpuBuffer {
-	type Target = Buffer;
+			let id = usage
+				.contains(vk::BufferUsageFlags::STORAGE_BUFFER)
+				.then(|| device.descriptors().get_buffer(device, buffer));
+			let addr = device
+				.device()
+				.get_buffer_device_address(&vk::BufferDeviceAddressInfo::builder().buffer(buffer));
 
-	fn deref(&self) -> &Self::Target { &self.inner }
-}
-
-impl Resource for GpuBuffer {
-	type Desc = BufferDesc;
-	type Handle = GpuBufferHandle;
-
-	fn handle(&self) -> Self::Handle {
-		GpuBufferHandle {
-			buffer: self.inner.inner(),
-			addr: self.inner.addr(),
-			id: self.inner.id(),
-			data: self.inner.data(),
+			Ok(Self {
+				inner: buffer,
+				alloc,
+				id,
+				addr,
+			})
 		}
 	}
 
-	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
-		Buffer::create(device, desc, MemoryLocation::CpuToGpu).map(|inner| Self { inner })
-	}
-
-	unsafe fn destroy(self, device: &Device) { self.inner.destroy(device) }
-}
-
-impl GpuBuffer {
-	pub fn into_inner(self) -> Buffer { self.inner }
+	unsafe fn destroy(self, device: &Device) { self.destroy(device) }
 }
 
 /// A description for an image.
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
-pub struct ImageDesc {
+#[derive(Copy, Clone, Default)]
+pub struct ImageDesc<'a> {
+	pub name: &'a str,
 	pub flags: vk::ImageCreateFlags,
 	pub format: vk::Format,
 	pub size: vk::Extent3D,
@@ -235,6 +220,34 @@ pub struct ImageDesc {
 	pub layers: u32,
 	pub samples: vk::SampleCountFlags,
 	pub usage: vk::ImageUsageFlags,
+}
+
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
+pub struct ImageDescUnnamed {
+	pub flags: vk::ImageCreateFlags,
+	pub format: vk::Format,
+	pub size: vk::Extent3D,
+	pub levels: u32,
+	pub layers: u32,
+	pub samples: vk::SampleCountFlags,
+	pub usage: vk::ImageUsageFlags,
+}
+
+impl ToNamed for ImageDescUnnamed {
+	type Named<'a> = ImageDesc<'a>;
+
+	fn to_named(self, name: &str) -> Self::Named<'_> {
+		Self::Named {
+			name,
+			flags: self.flags,
+			format: self.format,
+			size: self.size,
+			levels: self.levels,
+			layers: self.layers,
+			samples: self.samples,
+			usage: self.usage,
+		}
+	}
 }
 
 /// A GPU-side image.
@@ -245,14 +258,15 @@ pub struct Image {
 }
 
 impl Resource for Image {
-	type Desc = ImageDesc;
+	type Desc<'a> = ImageDesc<'a>;
 	type Handle = vk::Image;
+	type UnnamedDesc = ImageDescUnnamed;
 
 	fn handle(&self) -> Self::Handle { self.inner }
 
-	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
-		let image = unsafe {
-			device.device().create_image(
+	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
+		unsafe {
+			let image = device.device().create_image(
 				&vk::ImageCreateInfo::builder()
 					.flags(desc.flags)
 					.image_type(if desc.size.depth > 1 {
@@ -271,43 +285,46 @@ impl Resource for Image {
 					.sharing_mode(vk::SharingMode::EXCLUSIVE)
 					.initial_layout(vk::ImageLayout::UNDEFINED),
 				None,
-			)?
-		};
+			)?;
+			let _ = device.debug_utils_ext().map(|d| {
+				let name = CString::new(desc.name).unwrap();
+				d.set_debug_utils_object_name(
+					device.device().handle(),
+					&vk::DebugUtilsObjectNameInfoEXT::builder()
+						.object_type(vk::ObjectType::IMAGE)
+						.object_handle(image.as_raw())
+						.object_name(&name),
+				)
+			});
 
-		let (requirements, allocation_scheme) = unsafe {
 			let mut dedicated = vk::MemoryDedicatedRequirements::default();
 			let mut out = vk::MemoryRequirements2::builder().push_next(&mut dedicated);
 			device
 				.device()
 				.get_image_memory_requirements2(&vk::ImageMemoryRequirementsInfo2::builder().image(image), &mut out);
 
-			(
-				out.memory_requirements,
-				match dedicated.prefers_dedicated_allocation != 0 || dedicated.requires_dedicated_allocation != 0 {
-					true => AllocationScheme::DedicatedImage(image),
-					false => AllocationScheme::GpuAllocatorManaged,
-				},
-			)
-		};
+			let alloc = device
+				.allocator()
+				.allocate(&AllocationCreateDesc {
+					name: desc.name,
+					requirements: out.memory_requirements,
+					location: MemoryLocation::GpuOnly,
+					linear: false,
+					allocation_scheme: match dedicated.prefers_dedicated_allocation != 0
+						|| dedicated.requires_dedicated_allocation != 0
+					{
+						true => AllocationScheme::DedicatedImage(image),
+						false => AllocationScheme::GpuAllocatorManaged,
+					},
+				})
+				.map_err(|e| Error::Message(e.to_string()))?;
 
-		let alloc = device
-			.allocator()
-			.allocate(&AllocationCreateDesc {
-				name: "Graph Image",
-				requirements,
-				location: MemoryLocation::GpuOnly,
-				linear: false,
-				allocation_scheme,
-			})
-			.map_err(|e| Error::Message(e.to_string()))?;
-
-		unsafe {
 			device
 				.device()
 				.bind_image_memory(image, alloc.memory(), alloc.offset())?;
-		}
 
-		Ok(Self { inner: image, alloc })
+			Ok(Self { inner: image, alloc })
+		}
 	}
 
 	unsafe fn destroy(self, device: &Device) {
@@ -342,15 +359,63 @@ impl BitOr for ImageViewUsage {
 	}
 }
 
-/// A description for an image view.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct ImageViewDesc {
+pub struct Subresource {
+	pub aspect: vk::ImageAspectFlags,
+	pub first_layer: u32,
+	pub layer_count: u32,
+	pub first_mip: u32,
+	pub mip_count: u32,
+}
+
+impl Default for Subresource {
+	fn default() -> Self {
+		Self {
+			aspect: vk::ImageAspectFlags::COLOR,
+			first_layer: 0,
+			layer_count: vk::REMAINING_ARRAY_LAYERS,
+			first_mip: 0,
+			mip_count: vk::REMAINING_MIP_LEVELS,
+		}
+	}
+}
+
+/// A description for an image view.
+#[derive(Copy, Clone)]
+pub struct ImageViewDesc<'a> {
+	pub name: &'a str,
 	pub image: vk::Image,
 	pub view_type: vk::ImageViewType,
 	pub format: vk::Format,
 	pub usage: ImageViewUsage,
-	pub aspect: vk::ImageAspectFlags,
 	pub size: vk::Extent3D,
+	pub subresource: Subresource,
+}
+
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct ImageViewDescUnnamed {
+	pub image: vk::Image,
+	pub view_type: vk::ImageViewType,
+	pub format: vk::Format,
+	pub usage: ImageViewUsage,
+	pub size: vk::Extent3D,
+	pub subresource: Subresource,
+}
+
+impl ToNamed for ImageViewDescUnnamed {
+	type Named<'a> = ImageViewDesc<'a>;
+
+	fn to_named(self, name: &str) -> Self::Named<'_> {
+		Self::Named {
+			name,
+			image: self.image,
+			view_type: self.view_type,
+			format: self.format,
+			usage: self.usage,
+			size: self.size,
+			subresource: self.subresource,
+		}
+	}
 }
 
 /// A GPU-side image view.
@@ -364,12 +429,13 @@ pub struct ImageView {
 }
 
 impl Resource for ImageView {
-	type Desc = ImageViewDesc;
+	type Desc<'a> = ImageViewDesc<'a>;
 	type Handle = Self;
+	type UnnamedDesc = ImageViewDescUnnamed;
 
 	fn handle(&self) -> Self::Handle { *self }
 
-	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
+	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
 			let view = device.device().create_image_view(
 				&vk::ImageViewCreateInfo::builder()
@@ -383,14 +449,26 @@ impl Resource for ImageView {
 						a: vk::ComponentSwizzle::IDENTITY,
 					})
 					.subresource_range(vk::ImageSubresourceRange {
-						aspect_mask: desc.aspect,
-						base_mip_level: 0,
-						level_count: vk::REMAINING_MIP_LEVELS,
-						base_array_layer: 0,
-						layer_count: vk::REMAINING_ARRAY_LAYERS,
+						aspect_mask: desc.subresource.aspect,
+						base_mip_level: desc.subresource.first_mip,
+						level_count: desc.subresource.mip_count,
+						base_array_layer: desc.subresource.first_layer,
+						layer_count: desc.subresource.layer_count,
 					}),
 				None,
 			)?;
+
+			let _ = device.debug_utils_ext().map(|d| {
+				let name = CString::new(desc.name).unwrap();
+				d.set_debug_utils_object_name(
+					device.device().handle(),
+					&vk::DebugUtilsObjectNameInfoEXT::builder()
+						.object_type(vk::ObjectType::IMAGE_VIEW)
+						.object_handle(view.as_raw())
+						.object_name(&name),
+				)
+			});
+
 			let (id, storage_id) = match desc.usage {
 				ImageViewUsage::None => (None, None),
 				ImageViewUsage::Sampled => (Some(device.descriptors().get_image(device, view)), None),
@@ -424,45 +502,79 @@ impl Resource for ImageView {
 	}
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct ASDesc {
+#[derive(Copy, Clone)]
+pub struct ASDesc<'a> {
+	pub name: &'a str,
 	pub flags: vk::AccelerationStructureCreateFlagsKHR,
 	pub ty: vk::AccelerationStructureTypeKHR,
 	pub size: u64,
 }
 
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct ASDescUnnamed {
+	pub flags: vk::AccelerationStructureCreateFlagsKHR,
+	pub ty: vk::AccelerationStructureTypeKHR,
+	pub size: u64,
+}
+
+impl ToNamed for ASDescUnnamed {
+	type Named<'a> = ASDesc<'a>;
+
+	fn to_named(self, name: &str) -> Self::Named<'_> {
+		Self::Named {
+			name,
+			flags: self.flags,
+			ty: self.ty,
+			size: self.size,
+		}
+	}
+}
+
 #[derive(Default)]
 pub struct AS {
 	pub inner: vk::AccelerationStructureKHR,
-	pub buffer: GpuBuffer,
+	pub buffer: Buffer,
 	pub id: Option<ASId>,
 }
 
 impl Resource for AS {
-	type Desc = ASDesc;
+	type Desc<'a> = ASDesc<'a>;
 	type Handle = vk::AccelerationStructureKHR;
+	type UnnamedDesc = ASDescUnnamed;
 
 	fn handle(&self) -> Self::Handle { self.inner }
 
-	fn create(device: &Device, desc: Self::Desc) -> Result<Self> {
+	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
-			let buffer = GpuBuffer::create(
+			let buffer = Buffer::create(
 				device,
 				BufferDesc {
+					name: desc.name,
 					size: desc.size,
 					usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
 						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+					on_cpu: false,
 				},
 			)?;
 			let inner = device.as_ext().create_acceleration_structure(
 				&vk::AccelerationStructureCreateInfoKHR::builder()
 					.create_flags(desc.flags)
-					.buffer(buffer.inner.inner)
+					.buffer(buffer.inner)
 					.offset(0)
 					.size(desc.size)
 					.ty(desc.ty),
 				None,
 			)?;
+			let _ = device.debug_utils_ext().map(|d| {
+				let name = CString::new(desc.name).unwrap();
+				d.set_debug_utils_object_name(
+					device.device().handle(),
+					&vk::DebugUtilsObjectNameInfoEXT::builder()
+						.object_type(vk::ObjectType::ACCELERATION_STRUCTURE_KHR)
+						.object_handle(inner.as_raw())
+						.object_name(&name),
+				)
+			});
 			let id = (desc.ty == vk::AccelerationStructureTypeKHR::TOP_LEVEL)
 				.then(|| device.descriptors().get_as(device, inner));
 
@@ -479,18 +591,25 @@ impl Resource for AS {
 	}
 }
 
+impl ToNamed for () {
+	type Named<'a> = ();
+
+	fn to_named(self, _: &str) -> Self::Named<'_> { () }
+}
+
 #[derive(Default)]
 pub(crate) struct Event {
 	inner: vk::Event,
 }
 
 impl Resource for Event {
-	type Desc = ();
+	type Desc<'a> = ();
 	type Handle = vk::Event;
+	type UnnamedDesc = ();
 
 	fn handle(&self) -> Self::Handle { self.inner }
 
-	fn create(device: &Device, _: Self::Desc) -> Result<Self> {
+	fn create(device: &Device, _: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
 			let inner = device.device().create_event(
 				&vk::EventCreateInfo::builder().flags(vk::EventCreateFlags::DEVICE_ONLY),

@@ -11,24 +11,21 @@ use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 use tracing::{span, Level};
 
-pub use crate::graph::{
-	frame_data::TimelineSemaphore,
-	virtual_resource::{
-		BufferUsage,
-		BufferUsageType,
-		ExternalBuffer,
-		ExternalImage,
-		ExternalSync,
-		GpuBufferDesc,
-		ImageDesc,
-		ImageUsage,
-		ImageUsageType,
-		Shader,
-		UploadBufferDesc,
-		VirtualResource,
-		VirtualResourceDesc,
-		VirtualResourceType,
-	},
+pub use crate::graph::virtual_resource::{
+	BufferDesc,
+	BufferUsage,
+	BufferUsageType,
+	ExternalBuffer,
+	ExternalImage,
+	ImageDesc,
+	ImageUsage,
+	ImageUsageType,
+	Shader,
+	Signal,
+	VirtualResource,
+	VirtualResourceDesc,
+	VirtualResourceType,
+	Wait,
 };
 use crate::{
 	arena::{Arena, IteratorAlloc},
@@ -39,7 +36,7 @@ use crate::{
 		frame_data::{FrameData, Submitter},
 		virtual_resource::{ResourceLifetime, VirtualResourceData},
 	},
-	resource::{Event, GpuBuffer, GpuBufferHandle, Image, ImageView, UploadBuffer, UploadBufferHandle},
+	resource::{Buffer, Event, Image, ImageView},
 	Result,
 };
 
@@ -49,50 +46,6 @@ mod frame_data;
 mod virtual_resource;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
-
-/// A snapshot of the GPU execution state of the render graph.
-#[derive(Copy, Clone, Default)]
-pub struct ExecutionSnapshot {
-	semaphores: [vk::Semaphore; FRAMES_IN_FLIGHT],
-	values: [u64; FRAMES_IN_FLIGHT],
-}
-
-impl ExecutionSnapshot {
-	pub fn is_complete(&self, graph: &RenderGraph) -> bool {
-		graph
-			.frame_data
-			.iter()
-			.zip(self.values)
-			.all(|(frame, value)| frame.semaphore.value() > value)
-	}
-
-	pub fn wait(&self, device: &Device) -> Result<()> {
-		unsafe {
-			device.device().wait_semaphores(
-				&vk::SemaphoreWaitInfo::builder()
-					.semaphores(&self.semaphores)
-					.values(&self.values),
-				u64::MAX,
-			)?;
-
-			Ok(())
-		}
-	}
-
-	pub fn as_submit_info(&self) -> [vk::SemaphoreSubmitInfo; FRAMES_IN_FLIGHT] {
-		let mut out = [vk::SemaphoreSubmitInfo::default(); FRAMES_IN_FLIGHT];
-
-		for (i, (&sem, &value)) in self.semaphores.iter().zip(self.values.iter()).enumerate() {
-			out[i] = vk::SemaphoreSubmitInfo::builder()
-				.semaphore(sem)
-				.value(value)
-				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-				.build();
-		}
-
-		out
-	}
-}
 
 /// The render graph.
 pub struct RenderGraph {
@@ -104,8 +57,8 @@ pub struct RenderGraph {
 
 #[doc(hidden)]
 pub struct Caches {
-	upload_buffers: [ResourceCache<UploadBuffer>; FRAMES_IN_FLIGHT],
-	gpu_buffers: ResourceCache<GpuBuffer>,
+	upload_buffers: [ResourceCache<Buffer>; FRAMES_IN_FLIGHT],
+	buffers: ResourceCache<Buffer>,
 	images: ResourceCache<Image>,
 	image_views: UniqueCache<ImageView>,
 	events: ResourceList<Event>,
@@ -117,7 +70,7 @@ impl RenderGraph {
 
 		let caches = Caches {
 			upload_buffers: [ResourceCache::new(), ResourceCache::new()],
-			gpu_buffers: ResourceCache::new(),
+			buffers: ResourceCache::new(),
 			images: ResourceCache::new(),
 			image_views: UniqueCache::new(),
 			events: ResourceList::new(),
@@ -141,25 +94,6 @@ impl RenderGraph {
 		}
 	}
 
-	pub fn snapshot(&self) -> ExecutionSnapshot {
-		ExecutionSnapshot {
-			semaphores: {
-				let mut x = [vk::Semaphore::null(); FRAMES_IN_FLIGHT];
-				for (x, frame) in x.iter_mut().zip(self.frame_data.iter()) {
-					*x = frame.semaphore.semaphore();
-				}
-				x
-			},
-			values: {
-				let mut x = [0; FRAMES_IN_FLIGHT];
-				for (x, frame) in x.iter_mut().zip(self.frame_data.iter()) {
-					*x = frame.semaphore.value();
-				}
-				x
-			},
-		}
-	}
-
 	pub fn destroy(self, device: &Device) {
 		unsafe {
 			for frame_data in self.frame_data {
@@ -168,7 +102,7 @@ impl RenderGraph {
 			for cache in self.caches.upload_buffers {
 				cache.destroy(device);
 			}
-			self.caches.gpu_buffers.destroy(device);
+			self.caches.buffers.destroy(device);
 			self.caches.image_views.destroy(device);
 			self.caches.images.destroy(device);
 		}
@@ -202,8 +136,6 @@ impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
 		let name = name.as_bytes().iter().copied().chain([0]);
 		PassBuilder {
 			name: name.collect_in(arena),
-			wait: Vec::new_in(arena),
-			signal: Vec::new_in(arena),
 			frame: self,
 		}
 	}
@@ -215,7 +147,7 @@ impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
 		data.reset(device)?;
 		unsafe {
 			self.graph.caches.upload_buffers[self.graph.curr_frame].reset(device);
-			self.graph.caches.gpu_buffers.reset(device);
+			self.graph.caches.buffers.reset(device);
 			self.graph.caches.image_views.reset(device);
 			self.graph.caches.images.reset(device);
 			self.graph.caches.events.reset(device);
@@ -290,28 +222,9 @@ impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
 	}
 }
 
-#[derive(Copy, Clone)]
-pub struct SemaphoreInfo {
-	pub semaphore: vk::Semaphore,
-	pub value: u64,
-	pub stage: vk::PipelineStageFlags2KHR,
-}
-
-impl SemaphoreInfo {
-	pub fn as_submit_info(self) -> vk::SemaphoreSubmitInfo {
-		vk::SemaphoreSubmitInfo::builder()
-			.semaphore(self.semaphore)
-			.value(self.value)
-			.stage_mask(self.stage)
-			.build()
-	}
-}
-
 /// A builder for a pass.
 pub struct PassBuilder<'frame, 'pass, 'graph, C> {
 	name: Vec<u8, &'graph Arena>,
-	wait: Vec<SemaphoreInfo, &'graph Arena>,
-	signal: Vec<SemaphoreInfo, &'graph Arena>,
 	frame: &'frame mut Frame<'pass, 'graph, C>,
 }
 
@@ -338,10 +251,11 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 		let id = real_id.wrapping_add(self.frame.graph.resource_base_id);
 
 		let ty = desc.ty(
+			self.frame.passes.len() as _,
 			usage,
-			self.frame.arena,
 			&mut self.frame.virtual_resources,
 			self.frame.graph.resource_base_id,
+			self.frame.arena,
 		);
 
 		self.frame.virtual_resources.push(VirtualResourceData {
@@ -383,18 +297,10 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 		)
 	}
 
-	/// Wait on an external semaphore before executing this pass.
-	pub fn wait_on(&mut self, info: SemaphoreInfo) { self.wait.push(info); }
-
-	/// Signal an external semaphore after executing this pass.
-	pub fn signal(&mut self, info: SemaphoreInfo) { self.signal.push(info); }
-
 	/// Build the pass with the given callback.
 	pub fn build(self, callback: impl FnOnce(PassContext<'_, 'graph, C>) + 'pass) {
 		let pass = PassData {
 			name: self.name,
-			wait: self.wait,
-			signal: self.signal,
 			callback: Box::new_in(callback, self.frame.arena),
 		};
 		self.frame.passes.push(pass);
@@ -540,8 +446,6 @@ impl<T: VirtualResource> Clone for Res<T> {
 struct PassData<'pass, 'graph, C> {
 	// UTF-8 encoded, null terminated.
 	name: Vec<u8, &'graph Arena>,
-	wait: Vec<SemaphoreInfo, &'graph Arena>,
-	signal: Vec<SemaphoreInfo, &'graph Arena>,
 	callback: Box<dyn FnOnce(PassContext<'_, 'graph, C>) + 'pass, &'graph Arena>,
 }
 
