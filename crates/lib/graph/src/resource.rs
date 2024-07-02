@@ -1,11 +1,6 @@
 //! TODO: Resource names.
 
-use std::{
-	ffi::CString,
-	hash::Hash,
-	ops::{BitOr, Deref},
-	ptr::NonNull,
-};
+use std::{ffi::CString, hash::Hash, ops::BitOr, ptr::NonNull};
 
 use ash::vk::{self, Handle};
 use gpu_allocator::{

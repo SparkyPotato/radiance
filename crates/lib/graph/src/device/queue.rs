@@ -31,7 +31,7 @@ pub trait QueueType: sealed::Sealed {
 mod sealed {
 	use super::*;
 
-	pub(super) trait Sealed {}
+	pub trait Sealed {}
 	impl Sealed for Graphics {}
 	impl QueueType for Graphics {
 		fn get<T>(q: &Queues<T>) -> &T { &q.graphics }

@@ -382,12 +382,6 @@ struct InProgressDependencyInfo<'graph> {
 	image_barriers: ArenaMap<'graph, vk::Image, InProgressImageBarrier>,
 }
 
-#[derive(Clone, Default)]
-struct SemaphoreInfo {
-	value: u64,
-	stage_mask: vk::PipelineStageFlags2,
-}
-
 #[derive(Clone)]
 struct InProgressCrossQueueSync<'graph> {
 	signal: Vec<SyncStage<vk::Semaphore>, &'graph Arena>,

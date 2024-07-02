@@ -2,7 +2,6 @@
 
 use std::{
 	alloc::{handle_alloc_error, AllocError, Allocator, Global, Layout},
-	borrow::Borrow,
 	cell::UnsafeCell,
 	collections::BTreeMap,
 	ptr::{addr_of_mut, NonNull},
