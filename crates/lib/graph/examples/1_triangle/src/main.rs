@@ -1,11 +1,10 @@
 use std::time::Duration;
 
-use helpers::{cmd, pipeline, run, App, RenderInput, ShaderStage};
+use helpers::{cmd, pipeline, run, App, ShaderStage};
 use radiance_graph::{
 	ash::vk,
 	device::Device,
-	graph::{Frame, ImageUsage, ImageUsageType},
-	resource::Subresource,
+	graph::{Frame, ImageUsage, ImageUsageType, SwapchainImage},
 };
 
 struct Triangle(vk::Pipeline);
@@ -30,26 +29,22 @@ impl App for Triangle {
 		}
 	}
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, _: Duration) {
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, image: SwapchainImage, _: Duration) {
 		let mut pass = frame.pass("triangle");
 
-		let write = input.swapchain.import_image(
-			input.image,
+		let write = pass.output(
+			image,
 			ImageUsage {
-				format: input.format,
+				format: image.format,
 				view_type: vk::ImageViewType::TYPE_2D,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
-				subresource: Subresource {
-					aspect: vk::ImageAspectFlags::COLOR,
-					..Subresource::default()
-				},
+				subresource: Default::default(),
 			},
-			&mut pass,
 		);
 
 		pass.build(move |mut ctx| unsafe {
 			let view = ctx.get(write);
-			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
+			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, image.size);
 			ctx.device
 				.device()
 				.cmd_bind_pipeline(ctx.buf, vk::PipelineBindPoint::GRAPHICS, self.0);

@@ -5,7 +5,7 @@ use tracing::{span, Level};
 
 use crate::{
 	arena::{Arena, IteratorAlloc},
-	device::{Device, QueueWaitOwned, Queues, SyncStage},
+	device::{Device, QueueWaitOwned, SyncStage},
 	graph::{
 		cache::ResourceList,
 		virtual_resource::{
@@ -15,10 +15,8 @@ use crate::{
 			ImageData,
 			ImageUsageOwned,
 			ResourceLifetime,
-			SignalOwned,
 			VirtualResourceData,
 			VirtualResourceType,
-			WaitOwned,
 		},
 		ArenaMap,
 		Frame,
@@ -27,7 +25,16 @@ use crate::{
 		RenderGraph,
 	},
 	resource::Subresource,
-	sync::{as_next_access, as_previous_access, is_write_access, AccessInfo, GlobalBarrierAccess, ImageBarrierAccess},
+	sync::{
+		as_next_access,
+		as_previous_access,
+		get_access_info,
+		is_write_access,
+		AccessInfo,
+		GlobalBarrierAccess,
+		ImageBarrierAccess,
+		UsageType,
+	},
 	Result,
 };
 
@@ -504,17 +511,13 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 }
 
 struct SyncBuilder<'graph> {
-	queues: Queues<u32>,
 	sync: Vec<InProgressSync<'graph>, &'graph Arena>,
 	events: ArenaMap<'graph, SyncPair<u32>, InProgressDependencyInfo<'graph>>,
 }
 
 impl<'graph> SyncBuilder<'graph> {
-	fn new<'temp, 'pass, C>(
-		device: &Device, arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph, C>],
-	) -> Self {
+	fn new<'temp, 'pass, C>(arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph, C>]) -> Self {
 		Self {
-			queues: device.queue_families(),
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
 				cross_queue: InProgressCrossQueueSync {
@@ -544,71 +547,47 @@ impl<'graph> SyncBuilder<'graph> {
 		Self::insert_info(dep_info, image, subresource, prev_access, next_access, None);
 	}
 
-	/// Wait for some external sync.
-	///
-	/// If a global barrier is required, pass `Image::null()` and `ImageAspectFlags::empty()`. If no layout transition
-	/// is required, an image barrier will be converted to a global barrier.
-	fn queue_wait(
-		&mut self, image: vk::Image, subresource: Subresource, pass: u32, wait: WaitOwned<AccessInfo, &'graph Arena>,
-		next_access: AccessInfo,
+	/// Handle the sync a swapchain requires.
+	fn swapchain<A: Allocator>(
+		&mut self, image: vk::Image, pass: u32, usage: &ImageUsageOwned<A>, available: vk::Semaphore,
+		rendered: vk::Semaphore,
 	) {
-		let has_queue_wait = !wait.wait.is_empty();
+		let prev_access = usage.as_prev();
+		let next_access = usage.as_next(AccessInfo::default());
+
 		let sync = Self::before_pass(pass);
 		let cross_queue = &mut self.sync[sync as usize].cross_queue;
+		// Layout transition to pass.
+		Self::insert_info(
+			&mut cross_queue.wait_barriers,
+			image,
+			Subresource::default(),
+			AccessInfo::default(),
+			next_access,
+			None,
+		);
+		// Fire off the pass once the image is available.
+		cross_queue.wait.binary_semaphores.push(SyncStage {
+			point: available,
+			stage: next_access.stage_mask,
+		});
 
-		// If there is a semaphore, we don't need a pipeline barrier for buffers - only images.
-		let need_barrier =
-			(has_queue_wait && image != vk::Image::null() || !has_queue_wait) && wait.usage != AccessInfo::default();
-
-		if need_barrier || next_access.image_layout != vk::ImageLayout::UNDEFINED {
-			let queue = wait
-				.wait
-				.graphics
-				.map(|_| self.queues.graphics)
-				.or_else(|| wait.wait.compute.map(|_| self.queues.compute))
-				.or_else(|| wait.wait.transfer.map(|_| self.queues.transfer));
-			Self::insert_info(
-				&mut cross_queue.wait_barriers,
-				image,
-				subresource,
-				wait.usage,
-				next_access,
-				queue,
-			);
-		}
-
-		cross_queue.wait.merge(wait.wait);
-	}
-
-	/// Signal some external sync.
-	///
-	/// If a global barrier is required, pass `Image::null()` and `ImageAspectFlags::empty()`. If no layout transition
-	/// is required, an image barrier will be converted to a global barrier.
-	fn queue_signal(
-		&mut self, image: vk::Image, subresource: Subresource, pass: u32, prev_access: AccessInfo,
-		signal: SignalOwned<AccessInfo, &'graph Arena>,
-	) {
-		let has_queue_signal = !signal.signal.is_empty();
 		let sync = Self::after_pass(pass);
 		let cross_queue = &mut self.sync[sync as usize].cross_queue;
-
-		// If there is a semaphore, we don't need a pipeline barrier for buffers - only images.
-		let need_barrier = (has_queue_signal && image != vk::Image::null() || !has_queue_signal)
-			&& prev_access != AccessInfo::default();
-
-		if need_barrier && prev_access.image_layout != vk::ImageLayout::UNDEFINED {
-			Self::insert_info(
-				&mut cross_queue.signal_barriers,
-				image,
-				subresource,
-				prev_access,
-				signal.usage,
-				// TODO: no qfot?
-				None,
-			);
-		}
-
-		cross_queue.signal.extend(signal.signal);
+		// Layout transition to present.
+		Self::insert_info(
+			&mut cross_queue.signal_barriers,
+			image,
+			Subresource::default(),
+			prev_access,
+			get_access_info(UsageType::Present),
+			None,
+		);
+		// Fire off present once finished.
+		cross_queue.signal.push(SyncStage {
+			point: rendered,
+			stage: prev_access.stage_mask,
+		})
 	}
 
 	fn get_dep_info(&mut self, prev_pass: u32, next_pass: u32) -> &mut InProgressDependencyInfo<'graph> {
@@ -734,32 +713,12 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 	fn sync(
 		&mut self, device: &Device, event_list: &mut ResourceList<crate::resource::Event>,
 	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
-		let mut sync = SyncBuilder::new(device, self.resource_map.arena(), self.passes);
+		let mut sync = SyncBuilder::new(self.resource_map.arena(), self.passes);
 
 		for buffer in self.resource_map.buffers() {
 			let mut usages = buffer.usages.iter().peekable();
-			let (mut prev_pass, mut prev_access) = {
-				let (&pass, usage) = usages.next().unwrap();
-
-				// TODO: remove clone
-				let prev = buffer.wait.clone().map(|u| u.as_prev());
-				let next = usage.as_next(prev.usage);
-				sync.queue_wait(vk::Image::null(), Subresource::default(), pass, prev, next);
-				let prev = usage.as_prev();
-				let next = buffer.signal.clone().map(|u| u.as_next(prev));
-				sync.queue_signal(vk::Image::null(), Subresource::default(), pass, prev, next);
-
-				debug_assert!(
-					sync.sync[SyncBuilder::after_pass(pass) as usize]
-						.cross_queue
-						.signal_barriers
-						.barriers
-						.is_empty() || usages.len() == 0,
-					"Cannot have signalling `ExternalSync` that is also used as an input to other passes."
-				);
-
-				(pass, prev)
-			};
+			let (&(mut prev_pass), usage) = usages.next().unwrap();
+			let mut prev_access = usage.as_prev();
 
 			while let Some((&pass, usage)) = usages.next() {
 				let next_pass = pass;
@@ -809,27 +768,15 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 
 		for image in self.resource_map.images() {
 			let mut usages = image.usages.iter().peekable();
-			let (mut prev_pass, mut prev_access) = {
+			if let Some((available, rendered)) = image.swapchain {
 				let (&pass, usage) = usages.next().unwrap();
+				assert!(usages.next().is_none(), "Swapchains can only be used in one pass");
+				sync.swapchain(image.handle, pass, usage, available, rendered);
+				continue;
+			}
 
-				let prev = image.wait.clone().map(|u| u.as_prev());
-				let next = usage.as_next(prev.usage);
-				sync.queue_wait(image.handle, usage.subresource, pass, prev, next);
-				let prev = usage.as_prev();
-				let next = image.signal.clone().map(|u| u.as_next(prev));
-				sync.queue_signal(image.handle, usage.subresource, pass, prev, next);
-
-				debug_assert!(
-					sync.sync[SyncBuilder::after_pass(pass) as usize]
-						.cross_queue
-						.signal_barriers
-						.barriers
-						.is_empty() || usages.len() == 0,
-					"Cannot have signalling `ExternalSync` that is also used as an input to other passes."
-				);
-
-				(pass, prev)
-			};
+			let (&(mut prev_pass), usage) = usages.next().unwrap();
+			let mut prev_access = usage.as_prev();
 
 			while let Some((&pass, usage)) = usages.next() {
 				let next_pass = pass;

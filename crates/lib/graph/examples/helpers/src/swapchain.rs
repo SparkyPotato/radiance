@@ -1,8 +1,7 @@
 use radiance_graph::{
 	ash::{extensions::khr, vk},
-	device::{Device, Graphics, QueueWait, SyncPoint, SyncStage},
-	graph::{ExternalImage, ImageUsage, ImageUsageType, PassBuilder, Res, Signal, Wait},
-	resource::ImageView,
+	device::{Device, Graphics, SyncPoint},
+	graph::SwapchainImage,
 };
 use winit::window::Window;
 
@@ -21,11 +20,8 @@ pub struct Swapchain {
 	images: Vec<vk::Image>,
 	available: vk::Semaphore,
 	rendered: vk::Semaphore,
-	size: vk::Extent3D,
+	size: vk::Extent2D,
 }
-
-#[derive(Copy, Clone)]
-pub struct SwapchainImage(u32);
 
 impl Swapchain {
 	pub fn new(device: &Device, surface: vk::SurfaceKHR, window: &Window) -> Self {
@@ -41,66 +37,36 @@ impl Swapchain {
 			images: Vec::new(),
 			available: semaphore(device),
 			rendered: semaphore(device),
-			size: vk::Extent3D {
+			size: vk::Extent2D {
 				width: window.inner_size().width,
 				height: window.inner_size().height,
-				depth: 1,
 			},
 		};
-		this.make(window);
+		this.make();
 		this
 	}
 
-	pub fn acquire(&self) -> SwapchainImage {
+	pub fn acquire(&self) -> u32 {
 		unsafe {
 			let (id, _) = self
 				.swapchain_ext
 				.acquire_next_image(self.swapchain, u64::MAX, self.available, vk::Fence::null())
 				.unwrap();
-			SwapchainImage(id)
+			id
 		}
 	}
 
-	pub fn import_image<C>(
-		&self, image: SwapchainImage, usage: ImageUsage, pass: &mut PassBuilder<C>,
-	) -> Res<ImageView> {
-		// TODO: this is too goofy.
-		pass.output(
-			ExternalImage {
-				handle: self.images[image.0 as usize],
-				size: self.size,
-				levels: 1,
-				layers: 1,
-				samples: vk::SampleCountFlags::TYPE_1,
-				wait: Wait {
-					usage: ImageUsage {
-						usages: &[ImageUsageType::Present],
-						..Default::default()
-					},
-					wait: QueueWait {
-						binary_semaphores: &[SyncStage {
-							point: self.available,
-							stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-						}],
-						..Default::default()
-					},
-				},
-				signal: Signal {
-					usage: ImageUsage {
-						usages: &[ImageUsageType::Present],
-						..Default::default()
-					},
-					signal: &[SyncStage {
-						point: self.rendered,
-						stage: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-					}],
-				},
-			},
-			usage,
-		)
+	pub fn image(&self, id: u32) -> SwapchainImage {
+		SwapchainImage {
+			handle: self.images[id as usize],
+			size: self.size,
+			format: vk::Format::B8G8R8A8_SRGB,
+			available: self.available,
+			rendered: self.rendered,
+		}
 	}
 
-	pub fn present(&mut self, device: &Device, image: SwapchainImage) {
+	pub fn present(&mut self, device: &Device, id: u32) {
 		unsafe {
 			if let Some(sync) = self.old_swapchain.sync {
 				if sync.is_complete(device).unwrap_or_else(|_| false) {
@@ -118,7 +84,7 @@ impl Swapchain {
 					&vk::PresentInfoKHR::builder()
 						.wait_semaphores(&[self.rendered])
 						.swapchains(&[self.swapchain])
-						.image_indices(&[image.0])
+						.image_indices(&[id])
 						.build(),
 				)
 				.unwrap();
@@ -137,15 +103,14 @@ impl Swapchain {
 			swapchain: self.swapchain,
 			sync: Some(device.current_sync_point()),
 		};
-		self.make(window);
-		self.size = vk::Extent3D {
+		self.size = vk::Extent2D {
 			width: window.inner_size().width,
 			height: window.inner_size().height,
-			depth: 1,
 		};
+		self.make();
 	}
 
-	fn make(&mut self, window: &Window) {
+	fn make(&mut self) {
 		unsafe {
 			self.swapchain = self
 				.swapchain_ext
@@ -155,10 +120,7 @@ impl Swapchain {
 						.min_image_count(2)
 						.image_format(vk::Format::B8G8R8A8_SRGB)
 						.image_color_space(vk::ColorSpaceKHR::SRGB_NONLINEAR)
-						.image_extent(vk::Extent2D {
-							width: window.inner_size().width,
-							height: window.inner_size().height,
-						})
+						.image_extent(self.size)
 						.image_array_layers(1)
 						.image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST) // Check
 						.image_sharing_mode(vk::SharingMode::EXCLUSIVE)

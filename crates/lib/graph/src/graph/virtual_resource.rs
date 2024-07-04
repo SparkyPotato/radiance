@@ -5,7 +5,7 @@ use ash::vk;
 pub use crate::sync::{BufferUsage as BufferUsageType, ImageUsage as ImageUsageType, Shader};
 use crate::{
 	arena::{Arena, IteratorAlloc, ToOwnedAlloc},
-	device::{Device, QueueWait, QueueWaitOwned, SyncStage},
+	device::Device,
 	graph::{compile::Resource, Caches, Res},
 	resource::{BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
 	sync::UsageType,
@@ -30,14 +30,6 @@ pub struct BufferUsage<'a> {
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct BufferUsageOwned<A: Allocator> {
 	pub usages: Vec<BufferUsageType, A>,
-}
-
-impl<A: Allocator> BufferUsageOwned<A> {
-	fn default(alloc: A) -> Self {
-		Self {
-			usages: Vec::new_in(alloc),
-		}
-	}
 }
 
 impl<A: Allocator> ToOwnedAlloc<A> for BufferUsage<'_> {
@@ -83,17 +75,6 @@ pub struct ImageUsageOwned<A: Allocator> {
 	pub subresource: Subresource,
 }
 
-impl<A: Allocator> ImageUsageOwned<A> {
-	fn default(alloc: A) -> Self {
-		Self {
-			format: vk::Format::UNDEFINED,
-			usages: Vec::new_in(alloc),
-			view_type: vk::ImageViewType::default(),
-			subresource: Subresource::default(),
-		}
-	}
-}
-
 impl<A: Allocator> ToOwnedAlloc<A> for ImageUsage<'_> {
 	type Owned = ImageUsageOwned<A>;
 
@@ -117,124 +98,35 @@ impl<A: Allocator> ImageUsageOwned<A> {
 	}
 }
 
-/// Wait synchronization to be performed.
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
-pub struct Wait<'a, U> {
-	/// The related usage of the resource.
-	pub usage: U,
-	/// The cross-queue sync required (can be empty).
-	pub wait: QueueWait<'a>,
-}
-
-#[doc(hidden)]
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub struct WaitOwned<U, A: Allocator> {
-	pub usage: U,
-	pub wait: QueueWaitOwned<A>,
-}
-
-impl<U, A: Allocator> WaitOwned<U, A> {
-	pub fn map<O>(self, f: impl FnOnce(U) -> O) -> WaitOwned<O, A> {
-		WaitOwned {
-			usage: f(self.usage),
-			wait: self.wait,
-		}
-	}
-}
-
-impl<A: Allocator + Clone, U: ToOwnedAlloc<A>> ToOwnedAlloc<A> for Wait<'_, U> {
-	type Owned = WaitOwned<U::Owned, A>;
-
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned {
-		Self::Owned {
-			usage: self.usage.to_owned_alloc(alloc.clone()),
-			wait: self.wait.to_owned_alloc(alloc),
-		}
-	}
-}
-
-/// Signal synchronization to be performed.
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
-pub struct Signal<'a, U> {
-	/// The related usage of the resource.
-	pub usage: U,
-	/// The cross-queue sync required (can be empty).
-	pub signal: &'a [SyncStage<vk::Semaphore>],
-}
-
-#[doc(hidden)]
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub struct SignalOwned<U, A: Allocator> {
-	pub usage: U,
-	pub signal: Vec<SyncStage<vk::Semaphore>, A>,
-}
-
-impl<U, A: Allocator> SignalOwned<U, A> {
-	pub fn map<O>(self, f: impl FnOnce(U) -> O) -> SignalOwned<O, A> {
-		SignalOwned {
-			usage: f(self.usage),
-			signal: self.signal,
-		}
-	}
-}
-
-impl<A: Allocator + Clone, U: ToOwnedAlloc<A>> ToOwnedAlloc<A> for Signal<'_, U> {
-	type Owned = SignalOwned<U::Owned, A>;
-
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned {
-		Self::Owned {
-			usage: self.usage.to_owned_alloc(alloc.clone()),
-			signal: self.signal.to_owned_alloc(alloc),
-		}
-	}
-}
-
 /// A buffer external to the render graph.
 ///
 /// Has a corresponding usage of [`BufferUsage`].
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct ExternalBuffer<'a> {
+pub struct ExternalBuffer {
 	/// The handle to the buffer. This is passed as-is to the render pass.
 	pub handle: BufferHandle,
-	/// The external usage of the buffer before the render pass is executed.
-	pub wait: Wait<'a, BufferUsage<'a>>,
-	/// The external usage of the buffer after the render pass is executed. This is usually not required.
-	pub signal: Signal<'a, BufferUsage<'a>>,
-}
-
-#[derive(Clone, Hash, PartialEq, Eq, Debug)]
-pub struct ExternalBufferOwned<A: Allocator> {
-	pub handle: BufferHandle,
-	pub prev_usage: WaitOwned<BufferUsageOwned<A>, A>,
-	pub next_usage: SignalOwned<BufferUsageOwned<A>, A>,
-}
-
-impl<A: Allocator + Clone> ToOwnedAlloc<A> for ExternalBuffer<'_> {
-	type Owned = ExternalBufferOwned<A>;
-
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned {
-		Self::Owned {
-			handle: self.handle,
-			prev_usage: self.wait.to_owned_alloc(alloc.clone()),
-			next_usage: self.signal.to_owned_alloc(alloc),
-		}
-	}
 }
 
 /// An image external to the render graph.
 ///
 /// Has a corresponding usage of [`ImageUsage`].
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
-pub struct ExternalImage<'a> {
+pub struct ExternalImage {
 	pub handle: vk::Image,
-	pub size: vk::Extent3D,
-	pub levels: u32,
-	pub layers: u32,
-	pub samples: vk::SampleCountFlags,
-	/// The external usage of the image before the render pass is executed.
-	pub wait: Wait<'a, ImageUsage<'a>>,
-	/// The external usage of the image after the render pass is executed. This is usually not required.
-	pub signal: Signal<'a, ImageUsage<'a>>,
+	pub desc: ImageDesc,
+	pub format: vk::Format,
+}
+
+/// A swapchain image imported into the render graph.
+///
+/// Has a corresponding usage of [`ImageUsage`].
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct SwapchainImage {
+	pub handle: vk::Image,
+	pub size: vk::Extent2D,
+	pub format: vk::Format,
+	pub available: vk::Semaphore,
+	pub rendered: vk::Semaphore,
 }
 
 pub trait Usage {
@@ -294,7 +186,7 @@ pub trait VirtualResource {
 
 	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self;
 
-	unsafe fn add_read_usage(ty: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>);
+	unsafe fn add_read_usage<'a>(ty: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena);
 }
 
 #[derive(Clone)]
@@ -302,8 +194,7 @@ pub struct GpuData<'graph, D, H, U> {
 	pub desc: D,
 	pub handle: H,
 	pub usages: BTreeMap<u32, U, &'graph Arena>,
-	pub wait: WaitOwned<U, &'graph Arena>,
-	pub signal: SignalOwned<U, &'graph Arena>,
+	pub swapchain: Option<(vk::Semaphore, vk::Semaphore)>,
 }
 
 pub type BufferData<'graph> = GpuData<'graph, BufferDesc, BufferHandle, BufferUsageOwned<&'graph Arena>>;
@@ -337,9 +228,11 @@ impl VirtualResource for BufferHandle {
 
 	unsafe fn from_res(_: u32, res: &mut Resource, _: &mut Caches, _: &Device) -> Self { res.buffer().handle }
 
-	unsafe fn add_read_usage(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>) {
+	unsafe fn add_read_usage<'a>(
+		res: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena,
+	) {
 		let b = res.ty.buffer();
-		b.usages.insert(pass, usage.to_owned_alloc(b.signal.signal.allocator()));
+		b.usages.insert(pass, usage.to_owned_alloc(arena));
 	}
 }
 
@@ -354,14 +247,7 @@ impl VirtualResourceDesc for BufferDesc {
 			desc: self,
 			handle: BufferHandle::default(),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
-			wait: WaitOwned {
-				usage: BufferUsageOwned::default(arena),
-				wait: QueueWaitOwned::default(arena),
-			},
-			signal: SignalOwned {
-				usage: BufferUsageOwned::default(arena),
-				signal: Vec::new_in(arena),
-			},
+			swapchain: None,
 		})
 	}
 }
@@ -401,7 +287,9 @@ impl VirtualResource for ImageView {
 			.expect("Failed to create image view")
 	}
 
-	unsafe fn add_read_usage(res: &mut VirtualResourceData, pass: u32, usage: Self::Usage<'_>) {
+	unsafe fn add_read_usage<'a>(
+		res: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena,
+	) {
 		let image = res.ty.image();
 		let fmt = image.usages.first_key_value().unwrap().1.format;
 		debug_assert!(
@@ -410,9 +298,7 @@ impl VirtualResource for ImageView {
 			fmt,
 			usage.format
 		);
-		image
-			.usages
-			.insert(pass, usage.to_owned_alloc(image.signal.signal.allocator()));
+		image.usages.insert(pass, usage.to_owned_alloc(arena));
 	}
 }
 
@@ -427,19 +313,12 @@ impl VirtualResourceDesc for ImageDesc {
 			desc: self,
 			handle: Default::default(),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
-			wait: WaitOwned {
-				usage: ImageUsageOwned::default(arena),
-				wait: QueueWaitOwned::default(arena),
-			},
-			signal: SignalOwned {
-				usage: ImageUsageOwned::default(arena),
-				signal: Vec::new_in(arena),
-			},
+			swapchain: None,
 		})
 	}
 }
 
-impl VirtualResourceDesc for ExternalBuffer<'_> {
+impl VirtualResourceDesc for ExternalBuffer {
 	type Resource = BufferHandle;
 
 	fn ty<'graph>(
@@ -453,30 +332,56 @@ impl VirtualResourceDesc for ExternalBuffer<'_> {
 			},
 			handle: self.handle,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
-			wait: self.wait.to_owned_alloc(arena),
-			signal: self.signal.to_owned_alloc(arena),
+			swapchain: None,
 		})
 	}
 }
 
-impl VirtualResourceDesc for ExternalImage<'_> {
+impl VirtualResourceDesc for ExternalImage {
 	type Resource = ImageView;
 
 	fn ty<'graph>(
 		self, pass: u32, write_usage: ImageUsage<'_>, _: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
 		_: usize, arena: &'graph Arena,
 	) -> VirtualResourceType<'graph> {
+		assert!(
+			compatible_formats(self.format, write_usage.format),
+			"External image format is invalid"
+		);
+		VirtualResourceType::Image(ImageData {
+			desc: self.desc,
+			handle: self.handle,
+			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			swapchain: None,
+		})
+	}
+}
+
+impl VirtualResourceDesc for SwapchainImage {
+	type Resource = ImageView;
+
+	fn ty<'graph>(
+		self, pass: u32, write_usage: <Self::Resource as VirtualResource>::Usage<'_>,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize, arena: &'graph Arena,
+	) -> VirtualResourceType<'graph> {
+		assert!(
+			compatible_formats(self.format, write_usage.format),
+			"Swapchain format is invalid"
+		);
 		VirtualResourceType::Image(ImageData {
 			desc: ImageDesc {
-				size: self.size,
-				levels: self.levels,
-				layers: self.layers,
-				samples: self.samples,
+				size: vk::Extent3D {
+					width: self.size.width,
+					height: self.size.height,
+					depth: 1,
+				},
+				levels: 1,
+				layers: 1,
+				samples: vk::SampleCountFlags::TYPE_1,
 			},
 			handle: self.handle,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
-			wait: self.wait.to_owned_alloc(arena),
-			signal: self.signal.to_owned_alloc(arena),
+			swapchain: Some((self.available, self.rendered)),
 		})
 	}
 }
@@ -492,14 +397,7 @@ impl VirtualResourceDesc for Res<BufferHandle> {
 			desc: unsafe { resources[self.id - base_id].ty.buffer().desc.clone() },
 			handle: BufferHandle::default(),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
-			wait: WaitOwned {
-				usage: BufferUsageOwned::default(arena),
-				wait: QueueWaitOwned::default(arena),
-			},
-			signal: SignalOwned {
-				usage: BufferUsageOwned::default(arena),
-				signal: Vec::new_in(arena),
-			},
+			swapchain: None,
 		})
 	}
 }
@@ -515,14 +413,7 @@ impl VirtualResourceDesc for Res<ImageView> {
 			desc: unsafe { resources[self.id - base_id].ty.image().desc.clone() },
 			handle: Default::default(),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
-			wait: WaitOwned {
-				usage: ImageUsageOwned::default(arena),
-				wait: QueueWaitOwned::default(arena),
-			},
-			signal: SignalOwned {
-				usage: ImageUsageOwned::default(arena),
-				signal: Vec::new_in(arena),
-			},
+			swapchain: None,
 		})
 	}
 }

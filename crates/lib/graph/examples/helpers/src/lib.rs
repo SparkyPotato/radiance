@@ -7,20 +7,18 @@ pub use bytemuck;
 pub use naga::ShaderStage;
 use radiance_graph::{
 	arena::Arena,
-	ash::vk,
 	device::Device,
-	graph::{ExternalImage, Frame, RenderGraph},
+	graph::{Frame, RenderGraph, SwapchainImage},
 };
 use tracing_subscriber::fmt;
 pub use vek;
-use vek::Vec2;
 use winit::{
 	event::{Event, WindowEvent},
 	event_loop::{ControlFlow, EventLoop},
 	window::WindowBuilder,
 };
 
-use crate::swapchain::{Swapchain, SwapchainImage};
+use crate::swapchain::Swapchain;
 
 pub mod cmd;
 pub mod load;
@@ -29,13 +27,6 @@ pub mod pipeline;
 
 mod swapchain;
 
-pub struct RenderInput<'a> {
-	pub image: SwapchainImage,
-	pub swapchain: &'a Swapchain,
-	pub format: vk::Format,
-	pub size: Vec2<u32>,
-}
-
 pub trait App: 'static + Sized {
 	const NAME: &'static str;
 
@@ -43,7 +34,7 @@ pub trait App: 'static + Sized {
 
 	fn destroy(self, device: &Device);
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, dt: Duration);
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, image: SwapchainImage, dt: Duration);
 }
 
 pub fn run<T: App>() -> ! {
@@ -70,18 +61,7 @@ pub fn run<T: App>() -> ! {
 			let mut frame = graph.frame(&arena, ());
 
 			let image = swapchain.acquire();
-
-			let size = window.inner_size();
-			app.render(
-				&mut frame,
-				RenderInput {
-					image,
-					swapchain: &swapchain,
-					format: vk::Format::B8G8R8A8_SRGB,
-					size: Vec2::new(size.width, size.height),
-				},
-				prev.elapsed(),
-			);
+			app.render(&mut frame, swapchain.image(image), prev.elapsed());
 			prev = Instant::now();
 			frame.run(&device).unwrap();
 

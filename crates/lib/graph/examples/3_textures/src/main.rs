@@ -1,15 +1,15 @@
 use std::time::Duration;
 
 use bytemuck::{bytes_of, NoUninit};
-use helpers::{cmd, load, pipeline, run, App, RenderInput, ShaderStage};
+use helpers::{cmd, load, pipeline, run, App, ShaderStage};
 use radiance_graph::{
 	ash::vk,
 	device::{
 		descriptor::{ImageId, SamplerId},
 		Device,
 	},
-	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType},
-	resource::{Image, ImageView, Resource, Subresource},
+	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, SwapchainImage},
+	resource::{Image, ImageView, Resource},
 };
 
 struct Textures {
@@ -83,21 +83,17 @@ impl App for Textures {
 		}
 	}
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, _: Duration) {
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, image: SwapchainImage, _: Duration) {
 		let mut pass = frame.pass("triangle");
 
-		let write = input.swapchain.import_image(
-			input.image,
+		let write = pass.output(
+			image,
 			ImageUsage {
-				format: input.format,
+				format: image.format,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
 				view_type: vk::ImageViewType::TYPE_2D,
-				subresource: Subresource {
-					aspect: vk::ImageAspectFlags::COLOR,
-					..Default::default()
-				},
+				subresource: Default::default(),
 			},
-			&mut pass,
 		);
 
 		let index = pass.output(
@@ -116,7 +112,7 @@ impl App for Textures {
 			index.data.as_mut()[..b.len()].copy_from_slice(b);
 
 			let view = ctx.get(write);
-			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
+			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, image.size);
 			ctx.device
 				.device()
 				.cmd_bind_pipeline(ctx.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
@@ -129,7 +125,7 @@ impl App for Textures {
 				bytes_of(&PushConstants {
 					image_id: self.view.id.unwrap(),
 					sampler_id: self.sampler_id,
-					aspect_ratio: input.size.x as f32 / input.size.y as f32,
+					aspect_ratio: image.size.width as f32 / image.size.height as f32,
 				}),
 			);
 			ctx.device.device().cmd_bind_descriptor_sets(

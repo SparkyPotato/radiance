@@ -1,12 +1,11 @@
 use std::time::Duration;
 
 use bytemuck::{bytes_of, NoUninit};
-use helpers::{cmd, pipeline, run, vek::mat::repr_simd::row_major::Mat4, App, RenderInput, ShaderStage};
+use helpers::{cmd, pipeline, run, vek::mat::repr_simd::row_major::Mat4, App, ShaderStage};
 use radiance_graph::{
 	ash::vk,
 	device::{descriptor::BufferId, Device},
-	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, Shader},
-	resource::Subresource,
+	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, Shader, SwapchainImage},
 };
 
 const ROTATION_RATE: f32 = 30.0;
@@ -56,21 +55,17 @@ impl App for SpinningTriangle {
 		}
 	}
 
-	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, input: RenderInput, dt: Duration) {
+	fn render<'frame>(&'frame mut self, frame: &mut Frame<'frame, '_, ()>, image: SwapchainImage, dt: Duration) {
 		let mut pass = frame.pass("triangle");
 
-		let write = input.swapchain.import_image(
-			input.image,
+		let write = pass.output(
+			image,
 			ImageUsage {
-				format: input.format,
+				format: image.format,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
 				view_type: vk::ImageViewType::TYPE_2D,
-				subresource: Subresource {
-					aspect: vk::ImageAspectFlags::COLOR,
-					..Default::default()
-				},
+				subresource: Default::default(),
 			},
-			&mut pass,
 		);
 		let storage = pass.output(
 			BufferDesc {
@@ -84,7 +79,7 @@ impl App for SpinningTriangle {
 
 		pass.build(move |mut ctx| unsafe {
 			let view = ctx.get(write);
-			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, input.size);
+			cmd::start_rendering_swapchain(ctx.device, ctx.buf, view, image.size);
 			ctx.device
 				.device()
 				.cmd_bind_pipeline(ctx.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
@@ -101,7 +96,7 @@ impl App for SpinningTriangle {
 				0,
 				bytes_of(&PushConstants {
 					id: storage.id.unwrap(),
-					aspect_ratio: input.size.x as f32 / input.size.y as f32,
+					aspect_ratio: image.size.width as f32 / image.size.height as f32,
 				}),
 			);
 			ctx.device.device().cmd_bind_descriptor_sets(

@@ -21,11 +21,10 @@ pub use crate::graph::virtual_resource::{
 	ImageUsage,
 	ImageUsageType,
 	Shader,
-	Signal,
+	SwapchainImage,
 	VirtualResource,
 	VirtualResourceDesc,
 	VirtualResourceType,
-	Wait,
 };
 use crate::{
 	arena::{Arena, IteratorAlloc},
@@ -239,7 +238,7 @@ impl<'frame, 'pass, 'graph, C> PassBuilder<'frame, 'pass, 'graph, C> {
 		unsafe {
 			let res = self.frame.virtual_resources.get_unchecked_mut(id);
 			res.lifetime.end = self.frame.passes.len() as _;
-			T::add_read_usage(res, self.frame.passes.len() as _, usage);
+			T::add_read_usage(res, self.frame.passes.len() as _, usage, self.name.allocator());
 		}
 	}
 
