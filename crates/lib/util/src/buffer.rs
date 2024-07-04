@@ -3,7 +3,7 @@ use std::ops::Deref;
 use ash::vk;
 use radiance_graph::{
 	device::{Device, QueueType},
-	resource::{BufferDesc, GpuBuffer, Resource},
+	resource::{Buffer, BufferDesc, Resource},
 	Result,
 };
 use range_alloc::RangeAllocator;
@@ -19,20 +19,22 @@ pub struct BufSpan {
 }
 
 pub struct AllocBuffer {
-	inner: GpuBuffer,
+	inner: Buffer,
+	name: String,
 	usage: vk::BufferUsageFlags,
+	on_cpu: bool,
 	alloc: RangeAllocator<u64>,
 }
 
 impl Deref for AllocBuffer {
-	type Target = GpuBuffer;
+	type Target = Buffer;
 
 	fn deref(&self) -> &Self::Target { &self.inner }
 }
 
 impl AllocBuffer {
 	pub fn new(device: &Device, desc: BufferDesc) -> Result<Self> {
-		let inner = GpuBuffer::create(
+		let inner = Buffer::create(
 			device,
 			BufferDesc {
 				usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | desc.usage,
@@ -42,7 +44,9 @@ impl AllocBuffer {
 
 		Ok(Self {
 			inner,
+			name: desc.name.to_owned(),
 			usage: desc.usage,
+			on_cpu: desc.on_cpu,
 			alloc: RangeAllocator::new(0..desc.size),
 		})
 	}
@@ -82,11 +86,13 @@ impl AllocBuffer {
 			while new_size < bytes {
 				new_size *= 2;
 			}
-			let new_buffer = GpuBuffer::create(
+			let new_buffer = Buffer::create(
 				ctx.device,
 				BufferDesc {
+					name: &self.name,
 					size: new_size as _,
 					usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::TRANSFER_SRC | self.usage,
+					on_cpu: self.on_cpu,
 				},
 			)?;
 			unsafe {

@@ -1,7 +1,7 @@
 use radiance_graph::{
 	ash::vk,
-	graph::{BufferUsage, ExternalBuffer, ExternalImage, ImageUsage, Res},
-	resource::{BufferDesc, GpuBuffer, GpuBufferHandle, Image, ImageDesc, ImageView, Resource},
+	graph::{self, BufferUsage, ExternalBuffer, ExternalImage, ImageUsage, Res},
+	resource::{Buffer, BufferDesc, GpuBufferHandle, Image, ImageDesc, ImageView, Resource},
 	Result,
 };
 
@@ -13,38 +13,23 @@ pub struct PersistentBuffer {
 }
 
 impl PersistentBuffer {
-	pub fn new(device: &CoreDevice, size: u64, usage: vk::BufferUsageFlags) -> Result<Self> {
-		let buffers = [
-			GpuBuffer::create(device, BufferDesc { size, usage })?,
-			GpuBuffer::create(device, BufferDesc { size, usage })?,
-		];
+	pub fn new(device: &CoreDevice, desc: BufferDesc) -> Result<Self> {
+		let buffers = [Buffer::create(device, desc)?, Buffer::create(device, desc)?];
 
 		Ok(Self { buffers, current: 0 })
 	}
 
 	pub fn size(&self) -> u64 { self.buffers[0].size() }
 
-	pub fn next(
-		&mut self, pass: &mut CoreBuilder, read_usage: BufferUsage, write_usage: BufferUsage,
-	) -> (Res<GpuBufferHandle>, Res<GpuBufferHandle>) {
+	pub fn next(&mut self) -> (ExternalBuffer, ExternalBuffer) {
 		let next = self.current ^ 1;
 
-		let read = pass.output(
-			ExternalBuffer {
-				handle: self.buffers[self.current].handle(),
-				wait: None,
-				signal: None,
-			},
-			read_usage,
-		);
-		let write = pass.output(
-			ExternalBuffer {
-				handle: self.buffers[next].handle(),
-				wait: None,
-				signal: None,
-			},
-			write_usage,
-		);
+		let read = ExternalBuffer {
+			handle: self.buffers[self.current].handle(),
+		};
+		let write = ExternalBuffer {
+			handle: self.buffers[next].handle(),
+		};
 
 		self.current = next;
 
@@ -62,7 +47,7 @@ impl PersistentBuffer {
 pub struct PersistentImage {
 	pub images: [Image; 2],
 	pub current: usize,
-	pub desc: ImageDesc,
+	pub desc: graph::ImageDesc,
 }
 
 impl PersistentImage {
@@ -76,35 +61,17 @@ impl PersistentImage {
 		})
 	}
 
-	pub fn next(
-		&mut self, pass: &mut CoreBuilder, read_usage: ImageUsage, write_usage: ImageUsage,
-	) -> (Res<ImageView>, Res<ImageView>) {
+	pub fn next(&mut self) -> (ExternalImage, ExternalImage) {
 		let next = self.current ^ 1;
 
-		let read = pass.output(
-			ExternalImage {
-				handle: self.images[self.current].handle(),
-				size: self.desc.size,
-				levels: self.desc.levels,
-				layers: self.desc.layers,
-				samples: self.desc.samples,
-				wait: None,
-				signal: None,
-			},
-			read_usage,
-		);
-		let write = pass.output(
-			ExternalImage {
-				handle: self.images[next].handle(),
-				size: self.desc.size,
-				levels: self.desc.levels,
-				layers: self.desc.layers,
-				samples: self.desc.samples,
-				wait: None,
-				signal: None,
-			},
-			write_usage,
-		);
+		let read = ExternalImage {
+			handle: self.images[self.current].handle(),
+			desc: self.desc,
+			format: self.desc.format,
+		};
+		let write = ExternalImage {
+			handle: self.images[next].handle(),
+		};
 
 		self.current = next;
 

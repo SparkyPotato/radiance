@@ -1,7 +1,7 @@
 use radiance_graph::{
 	device::Device,
 	graph::FRAMES_IN_FLIGHT,
-	resource::{Buffer, GpuBuffer, Image, ImageView, Resource as R, UploadBuffer, AS},
+	resource::{Buffer, Image, ImageView, Resource as R, AS},
 };
 
 pub enum Resource {
@@ -28,14 +28,6 @@ pub trait IntoResource {
 
 impl IntoResource for Resource {
 	fn into_resource(self) -> Resource { self }
-}
-
-impl IntoResource for UploadBuffer {
-	fn into_resource(self) -> Resource { Resource::Buffer(self.into_inner()) }
-}
-
-impl IntoResource for GpuBuffer {
-	fn into_resource(self) -> Resource { Resource::Buffer(self.into_inner()) }
 }
 
 impl IntoResource for Buffer {

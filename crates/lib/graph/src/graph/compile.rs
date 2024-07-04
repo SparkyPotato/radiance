@@ -12,6 +12,7 @@ use crate::{
 			compatible_formats,
 			BufferData,
 			BufferUsageOwned,
+			GpuData,
 			ImageData,
 			ImageUsageOwned,
 			ResourceLifetime,
@@ -24,7 +25,7 @@ use crate::{
 		PassData,
 		RenderGraph,
 	},
-	resource::Subresource,
+	resource::{BufferHandle, Subresource},
 	sync::{
 		as_next_access,
 		as_previous_access,
@@ -38,14 +39,13 @@ use crate::{
 	Result,
 };
 
-pub(super) struct CompiledFrame<'pass, 'graph, C> {
-	pub passes: Vec<PassData<'pass, 'graph, C>, &'graph Arena>,
+pub(super) struct CompiledFrame<'pass, 'graph> {
+	pub passes: Vec<PassData<'pass, 'graph>, &'graph Arena>,
 	/// First sync is before the first pass, then interspersed between passes, and then the last sync is after the last
 	/// pass.
 	pub sync: Vec<Sync<'graph>, &'graph Arena>,
 	pub resource_map: ResourceMap<'graph>,
 	pub graph: &'graph mut RenderGraph,
-	pub ctx: C,
 }
 
 #[derive(Debug)]
@@ -516,7 +516,7 @@ struct SyncBuilder<'graph> {
 }
 
 impl<'graph> SyncBuilder<'graph> {
-	fn new<'temp, 'pass, C>(arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph, C>]) -> Self {
+	fn new<'temp, 'pass>(arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph>]) -> Self {
 		Self {
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
@@ -548,13 +548,10 @@ impl<'graph> SyncBuilder<'graph> {
 	}
 
 	/// Handle the sync a swapchain requires.
-	fn swapchain<A: Allocator>(
-		&mut self, image: vk::Image, pass: u32, usage: &ImageUsageOwned<A>, available: vk::Semaphore,
+	fn swapchain(
+		&mut self, image: vk::Image, pass: u32, as_prev: AccessInfo, as_next: AccessInfo, available: vk::Semaphore,
 		rendered: vk::Semaphore,
 	) {
-		let prev_access = usage.as_prev();
-		let next_access = usage.as_next(AccessInfo::default());
-
 		let sync = Self::before_pass(pass);
 		let cross_queue = &mut self.sync[sync as usize].cross_queue;
 		// Layout transition to pass.
@@ -563,13 +560,13 @@ impl<'graph> SyncBuilder<'graph> {
 			image,
 			Subresource::default(),
 			AccessInfo::default(),
-			next_access,
+			as_next,
 			None,
 		);
 		// Fire off the pass once the image is available.
 		cross_queue.wait.binary_semaphores.push(SyncStage {
 			point: available,
-			stage: next_access.stage_mask,
+			stage: as_next.stage_mask,
 		});
 
 		let sync = Self::after_pass(pass);
@@ -579,14 +576,14 @@ impl<'graph> SyncBuilder<'graph> {
 			&mut cross_queue.signal_barriers,
 			image,
 			Subresource::default(),
-			prev_access,
+			as_prev,
 			get_access_info(UsageType::Present),
 			None,
 		);
 		// Fire off present once finished.
 		cross_queue.signal.push(SyncStage {
 			point: rendered,
-			stage: prev_access.stage_mask,
+			stage: as_prev.stage_mask,
 		})
 	}
 
@@ -668,28 +665,19 @@ impl<'graph> SyncBuilder<'graph> {
 	}
 }
 
-impl<A: Allocator> BufferUsageOwned<A> {
-	fn as_prev(&self) -> AccessInfo { as_previous_access(self.usages.iter().map(|&x| x.into()), false) }
+trait Usage {
+	fn inner(&self) -> impl Iterator<Item = UsageType>;
 
-	fn as_next(&self, prev_access: AccessInfo) -> AccessInfo {
-		as_next_access(self.usages.iter().map(|&x| x.into()), prev_access)
-	}
+	fn subresource(&self) -> Subresource;
 
-	fn is_write(&self) -> bool { self.usages.iter().any(|&x| is_write_access(x.into())) }
-}
+	fn as_prev(&self) -> AccessInfo { as_previous_access(self.inner(), false) }
 
-impl<A: Allocator> ImageUsageOwned<A> {
-	fn as_prev(&self) -> AccessInfo { as_previous_access(self.usages.iter().map(|&x| x.into()), false) }
+	fn as_next(&self, prev_access: AccessInfo) -> AccessInfo { as_next_access(self.inner(), prev_access) }
 
-	fn as_next(&self, prev_access: AccessInfo) -> AccessInfo {
-		as_next_access(self.usages.iter().map(|&x| x.into()), prev_access)
-	}
-
-	// Returns (is_write, is_only_write)
 	fn is_write(&self) -> (bool, bool) {
 		let mut is_write = false;
 		let mut is_only_write = true;
-		for usage in self.usages.iter().map(|&x| x.into_usage()) {
+		for usage in self.inner() {
 			if is_write_access(usage) {
 				is_write = true;
 			} else {
@@ -699,15 +687,122 @@ impl<A: Allocator> ImageUsageOwned<A> {
 		(is_write, is_only_write)
 	}
 }
+impl<A: Allocator> Usage for BufferUsageOwned<A> {
+	fn inner(&self) -> impl Iterator<Item = UsageType> { self.usages.iter().map(|&x| x.into()) }
 
-struct Synchronizer<'temp, 'pass, 'graph, C> {
-	resource_map: &'temp ResourceMap<'graph>,
-	passes: &'temp [PassData<'pass, 'graph, C>],
+	fn subresource(&self) -> Subresource { Subresource::default() }
+}
+impl<A: Allocator> Usage for ImageUsageOwned<A> {
+	fn inner(&self) -> impl Iterator<Item = UsageType> { self.usages.iter().map(|&x| x.into()) }
+
+	fn subresource(&self) -> Subresource { self.subresource }
 }
 
-impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
-	fn new(resource_map: &'temp ResourceMap<'graph>, passes: &'temp [PassData<'pass, 'graph, C>]) -> Self {
+trait ToImage: Copy {
+	fn to_image(self) -> vk::Image;
+}
+impl ToImage for BufferHandle {
+	fn to_image(self) -> vk::Image { vk::Image::null() }
+}
+impl ToImage for vk::Image {
+	fn to_image(self) -> vk::Image { self }
+}
+
+struct Synchronizer<'temp, 'pass, 'graph> {
+	resource_map: &'temp ResourceMap<'graph>,
+	passes: &'temp [PassData<'pass, 'graph>],
+}
+
+impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
+	fn new(resource_map: &'temp ResourceMap<'graph>, passes: &'temp [PassData<'pass, 'graph>]) -> Self {
 		Self { resource_map, passes }
+	}
+
+	fn do_sync_for<D, H: ToImage, U: Usage>(&mut self, sync: &mut SyncBuilder, res: &GpuData<D, H, U>) {
+		let mut usages = res.usages.iter().peekable();
+		if let Some((available, rendered)) = res.swapchain {
+			let (&pass, usage) = usages.next().unwrap();
+			assert!(usages.next().is_none(), "Swapchains can only be used in one pass");
+			sync.swapchain(
+				res.handle.to_image(),
+				pass,
+				usage.as_prev(),
+				usage.as_next(AccessInfo::default()),
+				available,
+				rendered,
+			);
+			return;
+		}
+
+		let (&(mut prev_pass), usage) = usages.next().unwrap();
+		let mut prev_access = usage.as_prev();
+
+		while let Some((&pass, usage)) = usages.next() {
+			let next_pass = pass;
+			let mut next_access = usage.as_next(prev_access);
+			let mut next_prev_access = usage.as_prev();
+
+			let (is_write, is_only_write) = usage.is_write();
+			if is_write {
+				// We're a write, so we can't merge future passes into us.
+				if is_only_write {
+					// If this pass will only write to the image, don't preserve it's contents.
+					prev_access.image_layout = vk::ImageLayout::UNDEFINED;
+				}
+				sync.barrier(
+					res.handle.to_image(),
+					usage.subresource(),
+					prev_pass,
+					prev_access,
+					next_pass,
+					next_access,
+				);
+				prev_pass = next_pass;
+				prev_access = next_prev_access;
+			} else {
+				// We're a read, let's look ahead and merge any other reads into us.
+				let mut last_read_pass = next_pass;
+				let mut subresource = usage.subresource();
+				while let Some((&pass, usage)) = usages.peek() {
+					let as_next = usage.as_next(prev_access);
+					if usage.is_write().0 || as_next.image_layout != prev_access.image_layout {
+						// We've hit a write, stop merging now.
+						// Note that read -> read layout transitions are also writes.
+						break;
+					}
+					last_read_pass = pass;
+					next_access |= as_next;
+					next_prev_access |= usage.as_prev();
+					let sub = usage.subresource();
+					subresource.aspect |= sub.aspect;
+
+					let curr_last_layer = subresource.first_layer + subresource.layer_count;
+					let next_last_layer = sub.first_layer + sub.layer_count;
+					let last_layer = curr_last_layer.max(next_last_layer);
+					subresource.first_layer = subresource.first_layer.min(sub.first_layer);
+					subresource.layer_count = last_layer - subresource.first_layer;
+
+					let curr_last_mip = subresource.first_mip + subresource.mip_count;
+					let next_last_mip = sub.first_mip + sub.mip_count;
+					let last_mip = curr_last_mip.max(next_last_mip);
+					subresource.first_mip = subresource.first_mip.min(sub.first_mip);
+					subresource.mip_count = last_mip - subresource.first_mip;
+
+					usages.next();
+				}
+
+				sync.barrier(
+					res.handle.to_image(),
+					subresource,
+					prev_pass,
+					prev_access,
+					next_pass,
+					next_access,
+				);
+				prev_pass = last_read_pass;
+				prev_access = next_prev_access;
+			}
+		}
 	}
 
 	fn sync(
@@ -716,141 +811,19 @@ impl<'temp, 'pass, 'graph, C> Synchronizer<'temp, 'pass, 'graph, C> {
 		let mut sync = SyncBuilder::new(self.resource_map.arena(), self.passes);
 
 		for buffer in self.resource_map.buffers() {
-			let mut usages = buffer.usages.iter().peekable();
-			let (&(mut prev_pass), usage) = usages.next().unwrap();
-			let mut prev_access = usage.as_prev();
-
-			while let Some((&pass, usage)) = usages.next() {
-				let next_pass = pass;
-				let mut next_access = usage.as_next(prev_access);
-				let mut next_prev_access = usage.as_prev();
-
-				if usage.is_write() {
-					// We're a write, so we can't merge future passes into us.
-					sync.barrier(
-						vk::Image::null(),
-						Subresource::default(),
-						prev_pass,
-						prev_access,
-						next_pass,
-						next_access,
-					);
-					prev_pass = next_pass;
-					prev_access = next_prev_access;
-				} else {
-					// We're a read, let's look ahead and merge any other reads into us.
-					let mut last_read_pass = next_pass;
-					while let Some((&pass, usage)) = usages.peek() {
-						if usage.is_write() {
-							// We've hit a write, stop merging now.
-							break;
-						}
-						last_read_pass = pass;
-						next_access |= usage.as_next(prev_access);
-						next_prev_access |= usage.as_prev();
-
-						usages.next();
-					}
-
-					sync.barrier(
-						vk::Image::null(),
-						Subresource::default(),
-						prev_pass,
-						prev_access,
-						next_pass,
-						next_access,
-					);
-					prev_pass = last_read_pass;
-					prev_access = next_prev_access;
-				}
-			}
+			self.do_sync_for(&mut sync, buffer);
 		}
 
 		for image in self.resource_map.images() {
-			let mut usages = image.usages.iter().peekable();
-			if let Some((available, rendered)) = image.swapchain {
-				let (&pass, usage) = usages.next().unwrap();
-				assert!(usages.next().is_none(), "Swapchains can only be used in one pass");
-				sync.swapchain(image.handle, pass, usage, available, rendered);
-				continue;
-			}
-
-			let (&(mut prev_pass), usage) = usages.next().unwrap();
-			let mut prev_access = usage.as_prev();
-
-			while let Some((&pass, usage)) = usages.next() {
-				let next_pass = pass;
-				let mut next_access = usage.as_next(prev_access);
-				let mut next_prev_access = usage.as_prev();
-
-				let (is_write, is_only_write) = usage.is_write();
-				if is_write {
-					// We're a write, so we can't merge future passes into us.
-					if is_only_write {
-						// If this pass will only write to the image, don't preserve it's contents.
-						prev_access.image_layout = vk::ImageLayout::UNDEFINED;
-					}
-					sync.barrier(
-						image.handle,
-						usage.subresource,
-						prev_pass,
-						prev_access,
-						next_pass,
-						next_access,
-					);
-					prev_pass = next_pass;
-					prev_access = next_prev_access;
-				} else {
-					// We're a read, let's look ahead and merge any other reads into us.
-					let mut last_read_pass = next_pass;
-					let mut subresource = usage.subresource;
-					while let Some((&pass, usage)) = usages.peek() {
-						let as_next = usage.as_next(prev_access);
-						if usage.is_write().0 || as_next.image_layout != prev_access.image_layout {
-							// We've hit a write, stop merging now.
-							// Note that read -> read layout transitions are also writes.
-							break;
-						}
-						last_read_pass = pass;
-						next_access |= as_next;
-						next_prev_access |= usage.as_prev();
-						subresource.aspect |= usage.subresource.aspect;
-
-						let curr_last_layer = subresource.first_layer + subresource.layer_count;
-						let next_last_layer = usage.subresource.first_layer + usage.subresource.layer_count;
-						let last_layer = curr_last_layer.max(next_last_layer);
-						subresource.first_layer = subresource.first_layer.min(usage.subresource.first_layer);
-						subresource.layer_count = last_layer - subresource.first_layer;
-
-						let curr_last_mip = subresource.first_mip + subresource.mip_count;
-						let next_last_mip = usage.subresource.first_mip + usage.subresource.mip_count;
-						let last_mip = curr_last_mip.max(next_last_mip);
-						subresource.first_mip = subresource.first_mip.min(usage.subresource.first_mip);
-						subresource.mip_count = last_mip - subresource.first_mip;
-
-						usages.next();
-					}
-
-					sync.barrier(
-						image.handle,
-						subresource,
-						prev_pass,
-						prev_access,
-						next_pass,
-						next_access,
-					);
-					prev_pass = last_read_pass;
-					prev_access = next_prev_access;
-				}
-			}
+			self.do_sync_for(&mut sync, image)
 		}
 
 		sync.finish(device, event_list)
 	}
 }
 
-impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
-	pub(super) fn compile(self, device: &Device) -> Result<CompiledFrame<'pass, 'graph, C>> {
+impl<'pass, 'graph> Frame<'pass, 'graph> {
+	pub(super) fn compile(self, device: &Device) -> Result<CompiledFrame<'pass, 'graph>> {
 		let span = span!(Level::TRACE, "compile graph");
 		let _e = span.enter();
 
@@ -882,7 +855,6 @@ impl<'pass, 'graph, C> Frame<'pass, 'graph, C> {
 			sync,
 			resource_map,
 			graph: self.graph,
-			ctx: self.ctx,
 		})
 	}
 }

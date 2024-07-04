@@ -4,8 +4,8 @@ use ash::vk;
 use radiance_graph::{
 	arena::Arena,
 	cmd::CommandPool,
-	device::{Device, QueueType, Queues},
-	graph::{ImageUsageType, SemaphoreInfo, TimelineSemaphore},
+	device::{Compute, Device, Graphics, QueueType, Queues, SyncPoint, Transfer},
+	graph::ImageUsageType,
 	resource::{Buffer, BufferDesc},
 	sync::{as_next_access, as_previous_access, get_access_info, ImageBarrierAccess, UsageType},
 	MemoryLocation,
@@ -14,24 +14,14 @@ use radiance_graph::{
 
 pub struct Staging {
 	inner: CircularBuffer,
-	semaphore: TimelineSemaphore,
 	pools: Queues<CommandPool>,
 	min_granularity: vk::Extent3D,
 }
 
 pub struct StageTicket {
-	semaphore: vk::Semaphore,
-	value: u64,
-}
-
-impl StageTicket {
-	pub fn as_info(&self) -> SemaphoreInfo {
-		SemaphoreInfo {
-			semaphore: self.semaphore,
-			value: self.value,
-			stage: vk::PipelineStageFlags2::ALL_COMMANDS,
-		}
-	}
+	graphics: SyncPoint<Graphics>,
+	compute: SyncPoint<Compute>,
+	transfer: SyncPoint<Transfer>,
 }
 
 pub enum StageError<E> {
@@ -63,7 +53,6 @@ impl Staging {
 
 		Ok(Self {
 			inner: CircularBuffer::new(device)?,
-			semaphore: TimelineSemaphore::new(device)?,
 			pools: device
 				.queue_families()
 				.try_map_ref(|&queue| CommandPool::new(device, queue))?,
@@ -73,10 +62,7 @@ impl Staging {
 
 	pub fn destroy(self, device: &Device) {
 		unsafe {
-			self.semaphore.wait(device).unwrap();
-
 			self.inner.destroy(device);
-			self.semaphore.destroy(device);
 			self.pools.map(|x| x.destroy(device));
 		}
 	}
