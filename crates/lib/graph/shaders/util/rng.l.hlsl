@@ -1,4 +1,4 @@
-#include "radiance-core/types.l.hlsl"
+#include "radiance-graph/types.l.hlsl"
 
 static const f32 PI = 3.14159265359f;
 

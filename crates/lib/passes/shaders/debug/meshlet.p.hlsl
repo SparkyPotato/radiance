@@ -1,5 +1,5 @@
-#include "radiance-core/interface.l.hlsl"
-#include "radiance-core/util/screen.l.hlsl"
+#include "radiance-graph/interface.l.hlsl"
+#include "radiance-graph/util/screen.l.hlsl"
 #include "radiance-passes/mesh/visbuffer/visbuffer.l.hlsl"
 
 struct PushConstants {

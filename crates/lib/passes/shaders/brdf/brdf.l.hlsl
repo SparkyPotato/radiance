@@ -1,4 +1,4 @@
-#include "radiance-core/util/rng.l.hlsl"
+#include "radiance-graph/util/rng.l.hlsl"
 
 struct LightingData {
 	// Normalized vector from the shading point towards the camera.

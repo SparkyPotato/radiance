@@ -8,7 +8,6 @@ use crate::{
 	device::Device,
 	graph::{compile::Resource, Caches, Res},
 	resource::{BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
-	sync::UsageType,
 };
 
 /// A description for a GPU buffer.
@@ -45,9 +44,10 @@ impl<A: Allocator> ToOwnedAlloc<A> for BufferUsage<'_> {
 /// A description for an image.
 ///
 /// Has a corresponding usage of [`ImageUsage`].
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct ImageDesc {
 	pub size: vk::Extent3D,
+	pub format: vk::Format,
 	pub levels: u32,
 	pub layers: u32,
 	pub samples: vk::SampleCountFlags,
@@ -59,10 +59,12 @@ pub struct ImageUsage<'a> {
 	/// The format to view the image as. This can be different from the format in [`ImageDesc`], but must be
 	/// [compatible].
 	///
+	/// Can be undefined, in which case the creation-time format of the image is used.
+	///
 	/// [compatible]: https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#formats-compatibility-classes
 	pub format: vk::Format,
 	pub usages: &'a [ImageUsageType],
-	pub view_type: vk::ImageViewType,
+	pub view_type: Option<vk::ImageViewType>,
 	pub subresource: Subresource,
 }
 
@@ -71,7 +73,7 @@ pub struct ImageUsage<'a> {
 pub struct ImageUsageOwned<A: Allocator> {
 	pub format: vk::Format,
 	pub usages: Vec<ImageUsageType, A>,
-	pub view_type: vk::ImageViewType,
+	pub view_type: Option<vk::ImageViewType>,
 	pub subresource: Subresource,
 }
 
@@ -91,8 +93,10 @@ impl<A: Allocator> ToOwnedAlloc<A> for ImageUsage<'_> {
 impl<A: Allocator> ImageUsageOwned<A> {
 	pub fn create_flags(&self) -> vk::ImageCreateFlags {
 		match self.view_type {
-			vk::ImageViewType::CUBE | vk::ImageViewType::CUBE_ARRAY => vk::ImageCreateFlags::CUBE_COMPATIBLE,
-			vk::ImageViewType::TYPE_2D_ARRAY => vk::ImageCreateFlags::TYPE_2D_ARRAY_COMPATIBLE,
+			Some(vk::ImageViewType::CUBE) | Some(vk::ImageViewType::CUBE_ARRAY) => {
+				vk::ImageCreateFlags::CUBE_COMPATIBLE
+			},
+			Some(vk::ImageViewType::TYPE_2D_ARRAY) => vk::ImageCreateFlags::TYPE_2D_ARRAY_COMPATIBLE,
 			_ => vk::ImageCreateFlags::empty(),
 		}
 	}
@@ -114,7 +118,6 @@ pub struct ExternalBuffer {
 pub struct ExternalImage {
 	pub handle: vk::Image,
 	pub desc: ImageDesc,
-	pub format: vk::Format,
 }
 
 /// A swapchain image imported into the render graph.
@@ -127,24 +130,6 @@ pub struct SwapchainImage {
 	pub format: vk::Format,
 	pub available: vk::Semaphore,
 	pub rendered: vk::Semaphore,
-}
-
-pub trait Usage {
-	type Inner: Copy + Into<UsageType>;
-
-	fn get_usages(&self) -> &[Self::Inner];
-}
-
-impl<A: Allocator> Usage for BufferUsageOwned<A> {
-	type Inner = BufferUsageType;
-
-	fn get_usages(&self) -> &[Self::Inner] { &self.usages }
-}
-
-impl<A: Allocator> Usage for ImageUsageOwned<A> {
-	type Inner = ImageUsageType;
-
-	fn get_usages(&self) -> &[Self::Inner] { &self.usages }
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
@@ -183,6 +168,9 @@ pub trait VirtualResourceDesc {
 
 pub trait VirtualResource {
 	type Usage<'a>;
+	type Desc;
+
+	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc;
 
 	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self;
 
@@ -208,14 +196,28 @@ pub enum VirtualResourceType<'graph> {
 }
 
 impl<'graph> VirtualResourceType<'graph> {
-	unsafe fn buffer(&mut self) -> &mut BufferData<'graph> {
+	unsafe fn buffer_mut(&mut self) -> &mut BufferData<'graph> {
 		match self {
 			VirtualResourceType::Buffer(data) => data,
 			_ => unreachable_unchecked(),
 		}
 	}
 
-	unsafe fn image(&mut self) -> &mut ImageData<'graph> {
+	unsafe fn buffer(&self) -> &BufferData<'graph> {
+		match self {
+			VirtualResourceType::Buffer(data) => data,
+			_ => unreachable_unchecked(),
+		}
+	}
+
+	unsafe fn image_mut(&mut self) -> &mut ImageData<'graph> {
+		match self {
+			VirtualResourceType::Image(data) => data,
+			_ => unreachable_unchecked(),
+		}
+	}
+
+	unsafe fn image(&self) -> &ImageData<'graph> {
 		match self {
 			VirtualResourceType::Image(data) => data,
 			_ => unreachable_unchecked(),
@@ -224,14 +226,17 @@ impl<'graph> VirtualResourceType<'graph> {
 }
 
 impl VirtualResource for BufferHandle {
+	type Desc = BufferDesc;
 	type Usage<'a> = BufferUsage<'a>;
+
+	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc { ty.ty.buffer().desc }
 
 	unsafe fn from_res(_: u32, res: &mut Resource, _: &mut Caches, _: &Device) -> Self { res.buffer().handle }
 
 	unsafe fn add_read_usage<'a>(
 		res: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena,
 	) {
-		let b = res.ty.buffer();
+		let b = res.ty.buffer_mut();
 		b.usages.insert(pass, usage.to_owned_alloc(arena));
 	}
 }
@@ -253,49 +258,65 @@ impl VirtualResourceDesc for BufferDesc {
 }
 
 impl VirtualResource for ImageView {
+	type Desc = ImageDesc;
 	type Usage<'a> = ImageUsage<'a>;
+
+	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc { ty.ty.image().desc }
 
 	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self {
 		let image = res.image();
 		let usage = &image.usages[&pass];
 
-		caches
-			.image_views
-			.get(
-				device,
-				ImageViewDescUnnamed {
-					image: image.handle,
-					size: image.desc.size,
-					view_type: usage.view_type,
-					format: usage.format,
-					usage: {
-						let mut u = ImageViewUsage::None;
-						for i in usage.usages.iter() {
-							u = u | match i {
-								ImageUsageType::ShaderStorageRead(_) => ImageViewUsage::Storage,
-								ImageUsageType::ShaderStorageWrite(_) => ImageViewUsage::Storage,
-								ImageUsageType::ShaderReadSampledImage(_) => ImageViewUsage::Sampled,
-								ImageUsageType::General => ImageViewUsage::Both,
-								_ => ImageViewUsage::None,
-							};
-						}
-						u
+		if let Some(view_type) = usage.view_type {
+			caches
+				.image_views
+				.get(
+					device,
+					ImageViewDescUnnamed {
+						image: image.handle,
+						size: image.desc.size,
+						view_type,
+						format: if usage.format == vk::Format::UNDEFINED {
+							image.desc.format
+						} else {
+							usage.format
+						},
+						usage: {
+							let mut u = ImageViewUsage::None;
+							for i in usage.usages.iter() {
+								u = u | match i {
+									ImageUsageType::ShaderStorageRead(_) => ImageViewUsage::Storage,
+									ImageUsageType::ShaderStorageWrite(_) => ImageViewUsage::Storage,
+									ImageUsageType::ShaderReadSampledImage(_) => ImageViewUsage::Sampled,
+									ImageUsageType::General => ImageViewUsage::Both,
+									_ => ImageViewUsage::None,
+								};
+							}
+							u
+						},
+						subresource: usage.subresource,
 					},
-					subresource: usage.subresource,
-				},
-			)
-			.expect("Failed to create image view")
+				)
+				.expect("Failed to create image view")
+		} else {
+			ImageView {
+				image: image.handle,
+				view: vk::ImageView::null(),
+				id: None,
+				storage_id: None,
+				size: image.desc.size,
+			}
+		}
 	}
 
 	unsafe fn add_read_usage<'a>(
 		res: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena,
 	) {
-		let image = res.ty.image();
-		let fmt = image.usages.first_key_value().unwrap().1.format;
+		let image = res.ty.image_mut();
 		debug_assert!(
-			compatible_formats(fmt, usage.format),
+			compatible_formats(image.desc.format, usage.format),
 			"`{:?}` and `{:?}` are not compatible",
-			fmt,
+			image.desc.format,
 			usage.format
 		);
 		image.usages.insert(pass, usage.to_owned_alloc(arena));
@@ -345,7 +366,7 @@ impl VirtualResourceDesc for ExternalImage {
 		_: usize, arena: &'graph Arena,
 	) -> VirtualResourceType<'graph> {
 		assert!(
-			compatible_formats(self.format, write_usage.format),
+			compatible_formats(self.desc.format, write_usage.format),
 			"External image format is invalid"
 		);
 		VirtualResourceType::Image(ImageData {
@@ -364,10 +385,6 @@ impl VirtualResourceDesc for SwapchainImage {
 		self, pass: u32, write_usage: <Self::Resource as VirtualResource>::Usage<'_>,
 		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize, arena: &'graph Arena,
 	) -> VirtualResourceType<'graph> {
-		assert!(
-			compatible_formats(self.format, write_usage.format),
-			"Swapchain format is invalid"
-		);
 		VirtualResourceType::Image(ImageData {
 			desc: ImageDesc {
 				size: vk::Extent3D {
@@ -375,6 +392,7 @@ impl VirtualResourceDesc for SwapchainImage {
 					height: self.size.height,
 					depth: 1,
 				},
+				format: self.format,
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
@@ -394,7 +412,7 @@ impl VirtualResourceDesc for Res<BufferHandle> {
 		base_id: usize, arena: &'graph Arena,
 	) -> VirtualResourceType<'graph> {
 		VirtualResourceType::Buffer(BufferData {
-			desc: unsafe { resources[self.id - base_id].ty.buffer().desc.clone() },
+			desc: unsafe { resources[self.id - base_id].ty.buffer_mut().desc.clone() },
 			handle: BufferHandle::default(),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
@@ -410,7 +428,7 @@ impl VirtualResourceDesc for Res<ImageView> {
 		base_id: usize, arena: &'graph Arena,
 	) -> VirtualResourceType<'graph> {
 		VirtualResourceType::Image(ImageData {
-			desc: unsafe { resources[self.id - base_id].ty.image().desc.clone() },
+			desc: unsafe { resources[self.id - base_id].ty.image_mut().desc.clone() },
 			handle: Default::default(),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,

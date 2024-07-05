@@ -14,10 +14,12 @@ use gpu_allocator::{
 	AllocationSizes,
 	AllocatorDebugSettings,
 };
+use radiance_shader_compiler::runtime::{ShaderBlob, ShaderRuntime};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle};
 use tracing::{error, info, trace, warn};
 
 use crate::{
+	arena::Arena,
 	device::{descriptor::Descriptors, Device, QueueData, Queues},
 	Error,
 	Result,
@@ -33,6 +35,7 @@ pub struct DeviceBuilder<'a> {
 	pub device_extensions: &'a [&'static CStr],
 	pub window: Option<(&'a dyn HasRawWindowHandle, &'a dyn HasRawDisplayHandle)>,
 	pub features: vk::PhysicalDeviceFeatures2Builder<'a>,
+	pub modules: Vec<&'a ShaderBlob>,
 }
 
 impl Default for DeviceBuilder<'_> {
@@ -44,6 +47,7 @@ impl Default for DeviceBuilder<'_> {
 			device_extensions: &[],
 			window: None,
 			features: vk::PhysicalDeviceFeatures2::builder(),
+			modules: Vec::new(),
 		}
 	}
 }
@@ -79,6 +83,11 @@ impl<'a> DeviceBuilder<'a> {
 	/// Any extra features required should be appended to the `p_next` chain.
 	pub fn features(mut self, features: vk::PhysicalDeviceFeatures2Builder<'a>) -> Self {
 		self.features = features;
+		self
+	}
+
+	pub fn shaders(mut self, modules: impl IntoIterator<Item = &'a ShaderBlob>) -> Self {
+		self.modules = modules.into_iter().collect();
 		self
 	}
 
@@ -135,6 +144,7 @@ impl<'a> DeviceBuilder<'a> {
 
 		Ok((
 			Device {
+				arena: Arena::new(),
 				entry,
 				instance,
 				as_ext,
@@ -142,11 +152,12 @@ impl<'a> DeviceBuilder<'a> {
 				debug_messenger,
 				debug_utils_ext,
 				surface_ext,
-				device,
 				physical_device,
 				queues,
 				allocator: ManuallyDrop::new(Mutex::new(allocator)),
+				shaders: ManuallyDrop::new(ShaderRuntime::new(&device, self.modules)),
 				descriptors,
+				device,
 			},
 			s,
 		))

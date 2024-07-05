@@ -6,12 +6,36 @@ use crate::{
 	cmd::CommandPool,
 	device::{Device, Graphics, QueueWaitOwned, SyncPoint, SyncStage},
 	graph::compile::{DependencyInfo, EventInfo, QueueSync, Sync},
+	resource::{Buffer, Image, ImageView, Resource as _, AS},
 	Result,
 };
+
+pub trait Deletable {
+	fn into_resources(self, out: &mut Vec<Resource>);
+}
+
+pub enum Resource {
+	Buffer(Buffer),
+	Image(Image),
+	ImageView(ImageView),
+	AS(AS),
+}
+
+impl Resource {
+	pub unsafe fn destroy(self, device: &Device) {
+		match self {
+			Resource::Buffer(x) => x.destroy(device),
+			Resource::Image(x) => x.destroy(device),
+			Resource::ImageView(x) => x.destroy(device),
+			Resource::AS(x) => x.destroy(device),
+		}
+	}
+}
 
 pub struct FrameData {
 	sync: SyncPoint<Graphics>,
 	pool: CommandPool,
+	delete_queue: Vec<Resource>,
 }
 
 impl FrameData {
@@ -19,14 +43,20 @@ impl FrameData {
 		Ok(Self {
 			sync: SyncPoint::default(),
 			pool: CommandPool::new(device, device.queue_families().graphics)?,
+			delete_queue: Vec::new(),
 		})
 	}
+
+	pub fn delete(&mut self, res: impl Deletable) { res.into_resources(&mut self.delete_queue); }
 
 	pub fn reset(&mut self, device: &Device) -> Result<()> {
 		unsafe {
 			// Let GPU finish this frame before doing anything else.
 			self.sync.wait(device)?;
 			self.pool.reset(device)?;
+			for r in self.delete_queue.drain(..) {
+				r.destroy(device);
+			}
 
 			Ok(())
 		}
@@ -34,9 +64,30 @@ impl FrameData {
 
 	pub unsafe fn destroy(self, device: &Device) {
 		unsafe {
+			// Let GPU finish this frame before doing anything else.
+			let _ = self.sync.wait(device);
 			self.pool.destroy(device);
+			for r in self.delete_queue {
+				r.destroy(device);
+			}
 		}
 	}
+}
+
+impl Deletable for Buffer {
+	fn into_resources(self, out: &mut Vec<Resource>) { out.push(Resource::Buffer(self)); }
+}
+
+impl Deletable for Image {
+	fn into_resources(self, out: &mut Vec<Resource>) { out.push(Resource::Image(self)); }
+}
+
+impl Deletable for ImageView {
+	fn into_resources(self, out: &mut Vec<Resource>) { out.push(Resource::ImageView(self)); }
+}
+
+impl Deletable for AS {
+	fn into_resources(self, out: &mut Vec<Resource>) { out.push(Resource::AS(self)); }
 }
 
 pub struct Submitter<'a, I> {

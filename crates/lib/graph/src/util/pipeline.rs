@@ -1,12 +1,58 @@
-use radiance_graph::{
-	ash::{vk, vk::TaggedStructure},
-	Result,
-};
+use ash::vk::{self, TaggedStructure};
 
-use crate::{CoreDevice, RenderCore};
+use crate::{device::Device, Result};
+
+pub fn reverse_depth() -> vk::PipelineDepthStencilStateCreateInfoBuilder<'static> {
+	vk::PipelineDepthStencilStateCreateInfo::builder()
+		.depth_test_enable(true)
+		.depth_write_enable(true)
+		.depth_compare_op(vk::CompareOp::GREATER)
+}
+
+pub fn no_cull() -> vk::PipelineRasterizationStateCreateInfoBuilder<'static> {
+	vk::PipelineRasterizationStateCreateInfo::builder()
+		.polygon_mode(vk::PolygonMode::FILL)
+		.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+		.cull_mode(vk::CullModeFlags::NONE)
+		.line_width(1.0)
+}
+
+pub fn simple_blend(states: &[vk::PipelineColorBlendAttachmentState]) -> vk::PipelineColorBlendStateCreateInfoBuilder {
+	vk::PipelineColorBlendStateCreateInfo::builder().attachments(states)
+}
+
+pub fn no_blend() -> vk::PipelineColorBlendAttachmentState {
+	vk::PipelineColorBlendAttachmentState::builder()
+		.color_write_mask(
+			vk::ColorComponentFlags::R
+				| vk::ColorComponentFlags::G
+				| vk::ColorComponentFlags::B
+				| vk::ColorComponentFlags::A,
+		)
+		.blend_enable(false)
+		.build()
+}
+
+pub fn default_blend() -> vk::PipelineColorBlendAttachmentState {
+	vk::PipelineColorBlendAttachmentState::builder()
+		.color_write_mask(
+			vk::ColorComponentFlags::R
+				| vk::ColorComponentFlags::G
+				| vk::ColorComponentFlags::B
+				| vk::ColorComponentFlags::A,
+		)
+		.blend_enable(true)
+		.src_color_blend_factor(vk::BlendFactor::ONE)
+		.dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
+		.color_blend_op(vk::BlendOp::ADD)
+		.src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
+		.dst_alpha_blend_factor(vk::BlendFactor::ONE)
+		.alpha_blend_op(vk::BlendOp::ADD)
+		.build()
+}
 
 pub struct GraphicsPipelineDesc<'a> {
-	pub shaders: &'a [vk::PipelineShaderStageCreateInfo],
+	pub shaders: &'a [vk::PipelineShaderStageCreateInfoBuilder<'a>],
 	pub raster: &'a vk::PipelineRasterizationStateCreateInfo,
 	pub depth: &'a vk::PipelineDepthStencilStateCreateInfo,
 	pub multisample: &'a vk::PipelineMultisampleStateCreateInfo,
@@ -100,15 +146,15 @@ impl Default for GraphicsPipelineDesc<'_> {
 	}
 }
 
-impl RenderCore {
-	pub fn graphics_pipeline(&self, device: &CoreDevice, desc: &GraphicsPipelineDesc) -> Result<vk::Pipeline> {
+impl Device {
+	pub fn graphics_pipeline(&self, desc: &GraphicsPipelineDesc) -> Result<vk::Pipeline> {
 		unsafe {
-			let pipeline = device
+			let pipeline = self
 				.device()
 				.create_graphics_pipelines(
-					self.cache.cache(),
+					vk::PipelineCache::null(),
 					&[vk::GraphicsPipelineCreateInfo::builder()
-						.stages(desc.shaders)
+						.stages(std::mem::transmute(desc.shaders))
 						.vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::builder())
 						.input_assembly_state(
 							&vk::PipelineInputAssemblyStateCreateInfo::builder()
@@ -141,13 +187,13 @@ impl RenderCore {
 	}
 
 	pub fn compute_pipeline(
-		&self, device: &CoreDevice, layout: vk::PipelineLayout, shader: vk::PipelineShaderStageCreateInfoBuilder,
+		&self, layout: vk::PipelineLayout, shader: vk::PipelineShaderStageCreateInfoBuilder,
 	) -> Result<vk::Pipeline> {
 		unsafe {
-			let pipeline = device
+			let pipeline = self
 				.device()
 				.create_compute_pipelines(
-					self.cache.cache(),
+					vk::PipelineCache::null(),
 					&[vk::ComputePipelineCreateInfo::builder()
 						.layout(layout)
 						.stage(shader.build())

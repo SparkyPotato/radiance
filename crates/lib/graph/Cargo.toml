@@ -6,7 +6,12 @@ edition = "2021"
 [features]
 bytemuck = ["dep:bytemuck"]
 
+[build-dependencies]
+radiance-shader-compiler = { path = "../shader-compiler", features = ["build-script"] }
+
 [dependencies]
+radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"] }
+
 ash = { workspace = true }
 bytemuck = { workspace = true, optional = true }
 rustc-hash = { workspace = true }

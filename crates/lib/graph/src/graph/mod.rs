@@ -32,7 +32,7 @@ use crate::{
 	graph::{
 		cache::{ResourceCache, ResourceList, UniqueCache},
 		compile::{CompiledFrame, DataState, ResourceMap},
-		frame_data::{FrameData, Submitter},
+		frame_data::{Deletable, FrameData, Submitter},
 		virtual_resource::{ResourceLifetime, VirtualResourceData},
 	},
 	resource::{Buffer, Event, Image, ImageView},
@@ -42,6 +42,7 @@ use crate::{
 mod cache;
 mod compile;
 mod frame_data;
+pub mod util;
 mod virtual_resource;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
@@ -64,7 +65,7 @@ pub struct Caches {
 }
 
 impl RenderGraph {
-	pub fn new(device: &Device) -> Result<Self> {
+	pub fn new<'a>(device: &Device) -> Result<Self> {
 		let frame_data = [FrameData::new(device)?, FrameData::new(device)?];
 
 		let caches = Caches {
@@ -83,12 +84,12 @@ impl RenderGraph {
 		})
 	}
 
-	pub fn frame<'pass, 'graph>(&'graph mut self, arena: &'graph Arena) -> Frame<'pass, 'graph> {
+	pub fn frame<'pass, 'graph>(&'graph mut self, device: &'graph Device) -> Frame<'pass, 'graph> {
 		Frame {
 			graph: self,
-			arena,
-			passes: Vec::new_in(arena),
-			virtual_resources: Vec::new_in(arena),
+			device,
+			passes: Vec::new_in(device.arena()),
+			virtual_resources: Vec::new_in(device.arena()),
 		}
 	}
 
@@ -115,7 +116,7 @@ impl RenderGraph {
 /// A frame being recorded to run in the render graph.
 pub struct Frame<'pass, 'graph> {
 	graph: &'graph mut RenderGraph,
-	arena: &'graph Arena,
+	device: &'graph Device,
 	passes: Vec<PassData<'pass, 'graph>, &'graph Arena>,
 	virtual_resources: Vec<VirtualResourceData<'graph>, &'graph Arena>,
 }
@@ -123,21 +124,25 @@ pub struct Frame<'pass, 'graph> {
 impl<'pass, 'graph> Frame<'pass, 'graph> {
 	pub fn graph(&self) -> &RenderGraph { self.graph }
 
-	pub fn arena(&self) -> &'graph Arena { self.arena }
+	pub fn device(&self) -> &'graph Device { &self.device }
+
+	pub fn arena(&self) -> &'graph Arena { self.device.arena() }
 
 	/// Build a pass with a name.
 	pub fn pass(&mut self, name: &str) -> PassBuilder<'_, 'pass, 'graph> {
-		let arena = self.arena;
 		let name = name.as_bytes().iter().copied().chain([0]);
 		PassBuilder {
-			name: name.collect_in(arena),
+			name: name.collect_in(self.device.arena()),
 			frame: self,
 		}
 	}
 
+	pub fn delete(&mut self, res: impl Deletable) { self.graph.frame_data[self.graph.curr_frame].delete(res); }
+
 	/// Run the frame.
-	pub fn run(self, device: &Device) -> Result<()> {
-		let arena = self.arena;
+	pub fn run(self) -> Result<()> {
+		let device = self.device;
+		let arena = device.arena();
 		let data = &mut self.graph.frame_data[self.graph.curr_frame];
 		data.reset(device)?;
 		unsafe {
@@ -153,7 +158,6 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			sync,
 			mut resource_map,
 			graph,
-			mut ctx,
 		} = self.compile(device)?;
 
 		let span = span!(Level::TRACE, "run passes");
@@ -188,7 +192,6 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 					pass: i as u32,
 					resource_map: &mut resource_map,
 					caches: &mut graph.caches,
-					ctx: &mut ctx,
 				});
 
 				#[cfg(debug_assertions)]
@@ -247,7 +250,7 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 			usage,
 			&mut self.frame.virtual_resources,
 			self.frame.graph.resource_base_id,
-			self.frame.arena,
+			self.frame.device.arena(),
 		);
 
 		self.frame.virtual_resources.push(VirtualResourceData {
@@ -274,7 +277,7 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 
 		self.frame.virtual_resources.push(VirtualResourceData {
 			lifetime: ResourceLifetime::singular(self.frame.passes.len() as _),
-			ty: VirtualResourceType::Data(self.frame.arena.allocate(Layout::new::<T>()).unwrap().cast()),
+			ty: VirtualResourceType::Data(self.frame.arena().allocate(Layout::new::<T>()).unwrap().cast()),
 		});
 
 		(
@@ -289,11 +292,16 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		)
 	}
 
+	pub fn desc<T: VirtualResource>(&mut self, res: Res<T>) -> T::Desc {
+		let data = &self.frame.virtual_resources[res.id - self.frame.graph.resource_base_id];
+		unsafe { T::desc(data) }
+	}
+
 	/// Build the pass with the given callback.
 	pub fn build(self, callback: impl FnOnce(PassContext<'_, 'graph>) + 'pass) {
 		let pass = PassData {
 			name: self.name,
-			callback: Box::new_in(callback, self.frame.arena),
+			callback: Box::new_in(callback, self.frame.device.arena()),
 		};
 		self.frame.passes.push(pass);
 	}

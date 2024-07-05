@@ -12,6 +12,7 @@ use crate::{
 		Device,
 		Queues,
 	},
+	graph,
 	Error,
 	Result,
 };
@@ -110,17 +111,6 @@ impl Buffer {
 	pub fn inner(&self) -> vk::Buffer { self.inner }
 
 	pub fn addr(&self) -> u64 { self.addr }
-
-	/// # Safety
-	/// The resource must not be used after being destroyed, and appropriate synchronization must be performed.
-	pub unsafe fn destroy(self, device: &Device) {
-		if let Some(id) = self.id {
-			device.descriptors().return_buffer(id);
-		}
-
-		let _ = device.allocator().free(self.alloc);
-		device.device().destroy_buffer(self.inner, None);
-	}
 }
 
 impl Resource for Buffer {
@@ -199,7 +189,14 @@ impl Resource for Buffer {
 		}
 	}
 
-	unsafe fn destroy(self, device: &Device) { self.destroy(device) }
+	unsafe fn destroy(self, device: &Device) {
+		if let Some(id) = self.id {
+			device.descriptors().return_buffer(id);
+		}
+
+		let _ = device.allocator().free(self.alloc);
+		device.device().destroy_buffer(self.inner, None);
+	}
 }
 
 /// A description for an image.
@@ -247,7 +244,12 @@ impl ToNamed for ImageDescUnnamed {
 #[derive(Default)]
 pub struct Image {
 	inner: vk::Image,
+	desc: graph::ImageDesc,
 	alloc: Allocation,
+}
+
+impl Image {
+	pub fn desc(&self) -> graph::ImageDesc { self.desc }
 }
 
 impl Resource for Image {
@@ -316,7 +318,17 @@ impl Resource for Image {
 				.device()
 				.bind_image_memory(image, alloc.memory(), alloc.offset())?;
 
-			Ok(Self { inner: image, alloc })
+			Ok(Self {
+				inner: image,
+				alloc,
+				desc: graph::ImageDesc {
+					size: desc.size,
+					levels: desc.levels,
+					layers: desc.layers,
+					format: desc.format,
+					samples: desc.samples,
+				},
+			})
 		}
 	}
 

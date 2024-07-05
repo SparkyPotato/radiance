@@ -1,6 +1,7 @@
 //! An abstraction over a raw Vulkan device.
 
 use std::{
+	ffi::CStr,
 	mem::ManuallyDrop,
 	sync::{Mutex, MutexGuard},
 };
@@ -11,6 +12,7 @@ use ash::{
 };
 pub use gpu_allocator::vulkan as alloc;
 use gpu_allocator::vulkan::Allocator;
+use radiance_shader_compiler::runtime::ShaderRuntime;
 
 pub use crate::device::queue::{
 	Compute,
@@ -24,6 +26,7 @@ pub use crate::device::queue::{
 	Transfer,
 };
 use crate::{
+	arena::Arena,
 	device::{descriptor::Descriptors, queue::QueueData},
 	Result,
 };
@@ -34,6 +37,7 @@ mod queue;
 
 /// Has everything you need to do Vulkan stuff.
 pub struct Device {
+	arena: Arena,
 	debug_messenger: vk::DebugUtilsMessengerEXT, // Can be null.
 	physical_device: vk::PhysicalDevice,
 	device: ash::Device,
@@ -43,12 +47,21 @@ pub struct Device {
 	debug_utils_ext: Option<ext::DebugUtils>,
 	queues: Queues<QueueData>,
 	allocator: ManuallyDrop<Mutex<Allocator>>,
+	shaders: ManuallyDrop<ShaderRuntime>,
 	descriptors: Descriptors,
 	instance: ash::Instance,
 	entry: ash::Entry,
 }
 
 impl Device {
+	pub fn arena(&self) -> &Arena { &self.arena }
+
+	pub fn shader<'a>(
+		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
+	) -> vk::PipelineShaderStageCreateInfoBuilder {
+		self.shaders.shader(name, stage, specialization)
+	}
+
 	pub fn entry(&self) -> &ash::Entry { &self.entry }
 
 	pub fn instance(&self) -> &ash::Instance { &self.instance }
@@ -80,7 +93,7 @@ impl Device {
 	) -> Result<SyncPoint<TY>> {
 		self.queues
 			.get::<TY>()
-			.submit(&self.queues, &self.device, wait, bufs, signal, fence)
+			.submit(&self.queues, self, wait, bufs, signal, fence)
 	}
 }
 
@@ -89,6 +102,7 @@ impl Drop for Device {
 		unsafe {
 			// Drop the allocator before the device.
 			ManuallyDrop::drop(&mut self.allocator);
+			ManuallyDrop::take(&mut self.shaders).destroy(&self.device);
 			self.descriptors.cleanup(&self.device);
 			self.queues.map_ref(|x| x.destroy(&self.device));
 

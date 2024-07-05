@@ -338,11 +338,10 @@ impl<'graph> ResourceAliaser<'graph> {
 				Resource::Image(data) => {
 					images.push(i as _);
 					if data.handle == vk::Image::null() {
-						let format = data.usages.first_key_value().unwrap().1.format;
 						let flags = data
 							.usages
 							.values()
-							.any(|u| u.format != format)
+							.any(|u| u.format != data.desc.format)
 							.then_some(vk::ImageCreateFlags::MUTABLE_FORMAT)
 							.unwrap_or_default();
 						data.handle = graph
@@ -352,7 +351,7 @@ impl<'graph> ResourceAliaser<'graph> {
 								device,
 								crate::resource::ImageDescUnnamed {
 									flags,
-									format,
+									format: data.desc.format,
 									size: data.desc.size,
 									levels: data.desc.levels,
 									layers: data.desc.layers,
@@ -674,18 +673,7 @@ trait Usage {
 
 	fn as_next(&self, prev_access: AccessInfo) -> AccessInfo { as_next_access(self.inner(), prev_access) }
 
-	fn is_write(&self) -> (bool, bool) {
-		let mut is_write = false;
-		let mut is_only_write = true;
-		for usage in self.inner() {
-			if is_write_access(usage) {
-				is_write = true;
-			} else {
-				is_only_write = false;
-			}
-		}
-		(is_write, is_only_write)
-	}
+	fn is_write(&self) -> bool { self.inner().any(is_write_access) }
 }
 impl<A: Allocator> Usage for BufferUsageOwned<A> {
 	fn inner(&self) -> impl Iterator<Item = UsageType> { self.usages.iter().map(|&x| x.into()) }
@@ -742,13 +730,8 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 			let mut next_access = usage.as_next(prev_access);
 			let mut next_prev_access = usage.as_prev();
 
-			let (is_write, is_only_write) = usage.is_write();
-			if is_write {
+			if usage.is_write() {
 				// We're a write, so we can't merge future passes into us.
-				if is_only_write {
-					// If this pass will only write to the image, don't preserve it's contents.
-					prev_access.image_layout = vk::ImageLayout::UNDEFINED;
-				}
 				sync.barrier(
 					res.handle.to_image(),
 					usage.subresource(),
@@ -765,7 +748,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 				let mut subresource = usage.subresource();
 				while let Some((&pass, usage)) = usages.peek() {
 					let as_next = usage.as_next(prev_access);
-					if usage.is_write().0 || as_next.image_layout != prev_access.image_layout {
+					if usage.is_write() || as_next.image_layout != prev_access.image_layout {
 						// We've hit a write, stop merging now.
 						// Note that read -> read layout transitions are also writes.
 						break;
@@ -836,7 +819,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 
 			self.virtual_resources
 				.into_iter()
-				.fold(ResourceAliaser::new(self.arena), |mut a, r| {
+				.fold(ResourceAliaser::new(self.device.arena()), |mut a, r| {
 					a.add(r);
 					a
 				})

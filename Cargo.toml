@@ -1,8 +1,6 @@
 [workspace]
 members = [
     "crates/lib/*",
-    "crates/lib/graph/examples/*",
-
     "crates/editor",
 ]
 default-members = ["crates/editor", "crates/lib/*"]

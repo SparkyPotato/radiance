@@ -1,4 +1,4 @@
-#include "radiance-core/interface.l.hlsl"
+#include "radiance-graph/interface.l.hlsl"
 
 struct VertexInput {
     float2 position;

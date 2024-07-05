@@ -1,4 +1,4 @@
-#include "radiance-core/interface.l.hlsl"
+#include "radiance-graph/interface.l.hlsl"
 
 struct PushConstants {
     Tex2D depth;

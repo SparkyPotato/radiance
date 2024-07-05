@@ -8,10 +8,8 @@ radiance-shader-compiler = { path = "../shader-compiler", features = ["build-scr
 
 [dependencies]
 radiance-asset-runtime = { path = "../asset-runtime" }
-radiance-core = { path = "../core" }
 radiance-graph = { path = "../graph", features = ["bytemuck"] }
 radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"] }
-radiance-util = { path = "../util" }
 
 ash = { workspace = true }
 crossbeam-channel = { workspace = true }

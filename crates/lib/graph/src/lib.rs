@@ -7,6 +7,7 @@ use std::fmt::{Debug, Display};
 
 pub use ash;
 pub use gpu_allocator::{vulkan as alloc, MemoryLocation};
+use radiance_shader_compiler::runtime::{shader, ShaderBlob};
 
 pub mod arena;
 pub mod cmd;
@@ -14,6 +15,9 @@ pub mod device;
 pub mod graph;
 pub mod resource;
 pub mod sync;
+pub mod util;
+
+pub const SHADERS: ShaderBlob = shader!("radiance-graph");
 
 #[derive(Clone)]
 pub enum Error {

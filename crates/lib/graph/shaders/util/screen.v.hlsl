@@ -1,4 +1,4 @@
-#include "radiance-core/types.l.hlsl"
+#include "radiance-graph/types.l.hlsl"
 
 #include "screen.l.hlsl"
 

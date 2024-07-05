@@ -1,6 +1,6 @@
 #pragma once
 
-#include "radiance-core/interface.l.hlsl"
+#include "radiance-graph/interface.l.hlsl"
 
 struct Aabb {
     float4 min;

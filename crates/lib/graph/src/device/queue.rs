@@ -13,7 +13,11 @@ use std::{
 use ash::vk;
 use tracing::{span, Level};
 
-use crate::{arena::ToOwnedAlloc, device::Device, Result};
+use crate::{
+	arena::{IteratorAlloc, ToOwnedAlloc},
+	device::Device,
+	Result,
+};
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct Graphics;
@@ -331,26 +335,26 @@ impl QueueData {
 	pub fn current<T: QueueType>(&self) -> SyncPoint<T> { SyncPoint(self.value.load(Ordering::Acquire), PhantomData) }
 
 	pub fn submit<T: QueueType>(
-		&self, qs: &Queues<Self>, device: &ash::Device, wait: QueueWait, bufs: &[vk::CommandBuffer],
+		&self, qs: &Queues<Self>, device: &Device, wait: QueueWait, bufs: &[vk::CommandBuffer],
 		signal: &[SyncStage<vk::Semaphore>], fence: vk::Fence,
 	) -> Result<SyncPoint<T>> {
 		let s = span!(Level::TRACE, "gpu submit");
 		let _e = s.enter();
 
-		let wait: Vec<_> = wait
+		let wait: Vec<_, _> = wait
 			.graphics
 			.into_iter()
 			.map(|x| x.info(qs))
 			.chain(wait.compute.into_iter().map(|x| x.info(qs)))
 			.chain(wait.transfer.into_iter().map(|x| x.info(qs)))
 			.chain(wait.binary_semaphores.into_iter().map(|x| x.info()))
-			.collect();
-		let infos: Vec<_> = bufs
+			.collect_in(device.arena());
+		let infos: Vec<_, _> = bufs
 			.iter()
 			.map(|&b| vk::CommandBufferSubmitInfo::builder().command_buffer(b).build())
-			.collect();
+			.collect_in(device.arena());
 		let v = self.value.fetch_add(1, Ordering::Release);
-		let signal: Vec<_> = iter::once(
+		let signal: Vec<_, _> = iter::once(
 			vk::SemaphoreSubmitInfo::builder()
 				.semaphore(self.semaphore)
 				.value(v + 1)
@@ -358,13 +362,13 @@ impl QueueData {
 				.build(),
 		)
 		.chain(signal.into_iter().map(|x| x.info()))
-		.collect();
+		.collect_in(device.arena());
 
 		unsafe {
 			let s = span!(Level::TRACE, "driver submit");
 			let _e = s.enter();
 			let q = self.queue.lock().unwrap();
-			device.queue_submit2(
+			device.device().queue_submit2(
 				*q,
 				&[vk::SubmitInfo2::builder()
 					.wait_semaphore_infos(&wait)
