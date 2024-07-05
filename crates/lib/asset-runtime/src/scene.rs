@@ -10,14 +10,9 @@ use parry3d::{
 };
 use radiance_asset::{scene, util::SliceWriter, Asset, AssetSource};
 use radiance_graph::{
-	device::{
-		descriptor::{ASId, BufferId},
-		QueueType,
-	},
-	resource::{ASDesc, BufferDesc, GpuBuffer, Resource, AS},
-	sync::{get_global_barrier, GlobalBarrier, UsageType},
+	device::descriptor::{ASId, BufferId},
+	resource::{ASDesc, Buffer, BufferDesc, Resource, AS},
 };
-use radiance_util::{buffer::AllocBuffer, deletion::IntoResource, staging::StageError};
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::Uuid;
@@ -28,8 +23,8 @@ use crate::{
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
 	DelRes,
-	LErr,
 	LResult,
+	LoadError,
 	Loader,
 };
 
@@ -42,8 +37,8 @@ pub struct Node {
 }
 
 pub struct Scene {
-	instance_buffer: AllocBuffer,
-	meshlet_pointer_buffer: AllocBuffer,
+	instance_buffer: Buffer,
+	meshlet_pointer_buffer: Buffer,
 	meshlet_pointer_count: u32,
 	acceleration_structure: AS,
 	pub cameras: Vec<scene::Camera>,
@@ -86,10 +81,10 @@ pub struct VkAccelerationStructureInstanceKHR {
 unsafe impl NoUninit for VkAccelerationStructureInstanceKHR {}
 
 impl RuntimeAsset for Scene {
-	fn into_resources(self, queue: Sender<DelRes>) {
-		queue.send(self.instance_buffer.into_resource().into()).unwrap();
-		queue.send(self.meshlet_pointer_buffer.into_resource().into()).unwrap();
-		queue.send(self.acceleration_structure.into_resource().into()).unwrap();
+	fn into_resources(self, _: Sender<DelRes>) {
+		// queue.send(self.instance_buffer.into_resource().into()).unwrap();
+		// queue.send(self.meshlet_pointer_buffer.into_resource().into()).unwrap();
+		// queue.send(self.acceleration_structure.into_resource().into()).unwrap();
 	}
 }
 
@@ -173,34 +168,38 @@ impl Scene {
 
 impl AssetRuntime {
 	pub fn load_scene_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, '_, '_, S>, scene: Uuid,
+		&mut self, loader: &mut Loader<'_, S>, scene: Uuid,
 	) -> LResult<Scene, S> {
 		let Asset::Scene(s) = loader.sys.load(scene)? else {
 			unreachable!("Scene asset is not a scene");
 		};
 
 		let size = (std::mem::size_of::<GpuInstance>() * s.nodes.len()) as u64;
-		let mut instance_buffer = AllocBuffer::new(
+		let instance_buffer = Buffer::create(
 			loader.device,
 			BufferDesc {
+				name: "test",
 				size,
 				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+				on_cpu: false,
 			},
 		)
-		.map_err(StageError::Vulkan)?;
-		instance_buffer
-			.alloc_size(loader.ctx, loader.queue, size)
-			.map_err(StageError::Vulkan)?;
+		.map_err(LoadError::Vulkan)?;
+		// instance_buffer
+		// 	.alloc_size(loader.ctx, loader.queue, size)
+		// 	.map_err(LoadError::Vulkan)?;
 		let mut writer = SliceWriter::new(unsafe { instance_buffer.data().as_mut() });
 
-		let temp_build_buffer = GpuBuffer::create(
+		let temp_build_buffer = Buffer::create(
 			loader.device,
 			BufferDesc {
+				name: "test",
 				size: (std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() * s.nodes.len()) as u64,
 				usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
+				on_cpu: false,
 			},
 		)
-		.map_err(StageError::Vulkan)?;
+		.map_err(LoadError::Vulkan)?;
 		let mut awriter = SliceWriter::new(unsafe { temp_build_buffer.data().as_mut() });
 
 		let nodes: Vec<_> = s
@@ -246,21 +245,23 @@ impl AssetRuntime {
 					instance: i as u32,
 				})
 			})
-			.collect::<Result<_, LErr<S>>>()?;
+			.collect::<Result<_, LoadError<S>>>()?;
 
 		let meshlet_pointer_count: u32 = nodes.iter().map(|n| n.mesh.meshlet_count).sum();
 		let size = std::mem::size_of::<GpuMeshletPointer>() as u64 * meshlet_pointer_count as u64;
-		let mut meshlet_pointer_buffer = AllocBuffer::new(
+		let meshlet_pointer_buffer = Buffer::create(
 			loader.device,
 			BufferDesc {
+				name: "test",
 				size,
 				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+				on_cpu: false,
 			},
 		)
-		.map_err(StageError::Vulkan)?;
-		meshlet_pointer_buffer
-			.alloc_size(loader.ctx, loader.queue, size)
-			.map_err(StageError::Vulkan)?;
+		.map_err(LoadError::Vulkan)?;
+		// meshlet_pointer_buffer
+		// 	.alloc_size(loader.ctx, loader.queue, size)
+		// 	.map_err(LoadError::Vulkan)?;
 		let mut writer = SliceWriter::new(unsafe { meshlet_pointer_buffer.data().as_mut() });
 
 		for (instance, node) in nodes.iter().enumerate() {
@@ -305,49 +306,52 @@ impl AssetRuntime {
 			let as_ = AS::create(
 				loader.device,
 				ASDesc {
+					name: "test",
 					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
 					ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
 					size: size.acceleration_structure_size,
 				},
 			)
-			.map_err(StageError::Vulkan)?;
+			.map_err(LoadError::Vulkan)?;
 
-			let scratch = GpuBuffer::create(
+			let scratch = Buffer::create(
 				loader.device,
 				BufferDesc {
+					name: "test",
 					size: size.build_scratch_size,
 					usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+					on_cpu: false,
 				},
 			)
-			.map_err(StageError::Vulkan)?;
+			.map_err(LoadError::Vulkan)?;
 
 			info.dst_acceleration_structure = as_.handle();
 			info.scratch_data = vk::DeviceOrHostAddressKHR {
 				device_address: scratch.addr(),
 			};
 
-			let buf = loader
-				.ctx
-				.execute_before(QueueType::Compute)
-				.map_err(StageError::Vulkan)?;
+			// let buf = loader
+			// 	.ctx
+			// 	.execute_before(QueueType::Compute)
+			// 	.map_err(StageError::Vulkan)?;
+			//
+			// loader.device.device().cmd_pipeline_barrier2(
+			// 	buf,
+			// 	&vk::DependencyInfo::builder().memory_barriers(&[get_global_barrier(&GlobalBarrier {
+			// 		previous_usages: &[UsageType::AccelerationStructureBuildWrite],
+			// 		next_usages: &[UsageType::AccelerationStructureBuildRead],
+			// 	})]),
+			// );
+			// ext.cmd_build_acceleration_structures(
+			// 	buf,
+			// 	&[info.build()],
+			// 	&[&[vk::AccelerationStructureBuildRangeInfoKHR::builder()
+			// 		.primitive_count(count)
+			// 		.build()]],
+			// );
 
-			loader.device.device().cmd_pipeline_barrier2(
-				buf,
-				&vk::DependencyInfo::builder().memory_barriers(&[get_global_barrier(&GlobalBarrier {
-					previous_usages: &[UsageType::AccelerationStructureBuildWrite],
-					next_usages: &[UsageType::AccelerationStructureBuildRead],
-				})]),
-			);
-			ext.cmd_build_acceleration_structures(
-				buf,
-				&[info.build()],
-				&[&[vk::AccelerationStructureBuildRangeInfoKHR::builder()
-					.primitive_count(count)
-					.build()]],
-			);
-
-			loader.queue.delete(temp_build_buffer);
-			loader.queue.delete(scratch);
+			// loader.queue.delete(temp_build_buffer);
+			// loader.queue.delete(scratch);
 
 			as_
 		};

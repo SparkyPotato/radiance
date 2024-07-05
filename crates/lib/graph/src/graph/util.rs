@@ -1,20 +1,22 @@
+use std::alloc::Allocator;
+
 use ash::vk;
+use bytemuck::{cast_slice, NoUninit};
 
 use crate::{
 	graph::{
 		BufferDesc,
 		BufferUsage,
 		BufferUsageType,
-		ExternalBuffer,
-		ExternalImage,
 		Frame,
 		ImageUsage,
 		ImageUsageType,
 		PassBuilder,
 		PassContext,
 		Res,
+		VirtualResourceDesc,
 	},
-	resource::{Buffer, BufferHandle, Image, ImageView, Resource, Subresource},
+	resource::{BufferHandle, ImageView, Subresource},
 };
 
 #[derive(Copy, Clone)]
@@ -26,6 +28,12 @@ pub struct ImageStage {
 	pub extent: vk::Extent3D,
 }
 
+pub struct ByteReader<T, A: Allocator>(pub Vec<T, A>);
+
+impl<T: NoUninit, A: Allocator> AsRef<[u8]> for ByteReader<T, A> {
+	fn as_ref(&self) -> &[u8] { cast_slice(&self.0) }
+}
+
 impl<'pass, 'graph> Frame<'pass, 'graph> {
 	/// Stage some data into a GPU resource
 	///
@@ -33,7 +41,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	pub fn stage_buffer(&mut self, name: &str, dst: Res<BufferHandle>, offset: u64, data: impl AsRef<[u8]> + 'pass) {
 		let mut pass = self.pass(name);
 		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		pass.input(
+		pass.reference(
 			dst,
 			BufferUsage {
 				usages: &[BufferUsageType::TransferWrite],
@@ -42,13 +50,13 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 		pass.build(move |ctx| Self::exec_buffer_stage(ctx, staging, dst, offset, data.as_ref()));
 	}
 
-	pub fn stage_buffer_ext(
-		&mut self, name: &str, dst: &Buffer, offset: u64, data: impl AsRef<[u8]> + 'pass,
+	pub fn stage_buffer_new<D: VirtualResourceDesc<Resource = BufferHandle>>(
+		&mut self, name: &str, dst: D, offset: u64, data: impl AsRef<[u8]> + 'pass,
 	) -> Res<BufferHandle> {
 		let mut pass = self.pass(name);
 		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		let dst = pass.output(
-			ExternalBuffer { handle: dst.handle() },
+		let dst = pass.resource(
+			dst,
 			BufferUsage {
 				usages: &[BufferUsageType::TransferWrite],
 			},
@@ -63,7 +71,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	pub fn stage_image(&mut self, name: &str, dst: Res<ImageView>, stage: ImageStage, data: impl AsRef<[u8]> + 'pass) {
 		let mut pass = self.pass(name);
 		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		pass.input(
+		pass.reference(
 			dst,
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
@@ -75,16 +83,13 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 		pass.build(move |ctx| Self::exec_image_stage(ctx, staging, dst, stage, data.as_ref()));
 	}
 
-	pub fn stage_image_ext(
-		&mut self, name: &str, dst: &Image, stage: ImageStage, data: impl AsRef<[u8]> + 'pass,
+	pub fn stage_image_new<D: VirtualResourceDesc<Resource = ImageView>>(
+		&mut self, name: &str, desc: D, stage: ImageStage, data: impl AsRef<[u8]> + 'pass,
 	) -> Res<ImageView> {
 		let mut pass = self.pass(name);
 		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		let dst = pass.output(
-			ExternalImage {
-				handle: dst.handle(),
-				desc: dst.desc(),
-			},
+		let dst = pass.resource(
+			desc,
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
 				usages: &[ImageUsageType::TransferWrite],
@@ -97,7 +102,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	}
 
 	fn make_staging_buffer(pass: &mut PassBuilder, data: &[u8]) -> Res<BufferHandle> {
-		pass.output(
+		pass.resource(
 			BufferDesc {
 				size: data.len() as _,
 				upload: true,
@@ -111,10 +116,10 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	fn exec_buffer_stage(
 		mut ctx: PassContext, staging: Res<BufferHandle>, dst: Res<BufferHandle>, offset: u64, data: &[u8],
 	) {
-		let mut staging = ctx.get(staging);
+		let staging = ctx.get(staging);
 		let dst = ctx.get(dst);
 		unsafe {
-			staging.data.as_mut().copy_from_slice(data);
+			staging.data.as_ptr().as_mut_ptr().copy_from(data.as_ptr(), data.len());
 			ctx.device.device().cmd_copy_buffer2(
 				ctx.buf,
 				&vk::CopyBufferInfo2::builder()
@@ -132,14 +137,14 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	fn exec_image_stage(
 		mut ctx: PassContext, staging: Res<BufferHandle>, dst: Res<ImageView>, stage: ImageStage, data: &[u8],
 	) {
-		let mut staging = ctx.get(staging);
+		let staging = ctx.get(staging);
 		let dst = ctx.get(dst);
 		unsafe {
 			assert!(
 				stage.subresource.mip_count == 1 || stage.subresource.mip_count == vk::REMAINING_MIP_LEVELS,
 				"Only one mip can be staged in a single command"
 			);
-			staging.data.as_mut().copy_from_slice(data);
+			staging.data.as_ptr().as_mut_ptr().copy_from(data.as_ptr(), data.len());
 			ctx.device.device().cmd_copy_buffer_to_image2(
 				ctx.buf,
 				&vk::CopyBufferToImageInfo2::builder()

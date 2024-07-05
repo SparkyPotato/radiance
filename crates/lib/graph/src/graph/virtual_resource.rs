@@ -265,7 +265,7 @@ impl VirtualResource for ImageView {
 
 	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self {
 		let image = res.image();
-		let usage = &image.usages[&pass];
+		let usage = image.usages.get(&pass).expect("Resource was never referenced in pass");
 
 		if let Some(view_type) = usage.view_type {
 			caches
@@ -438,7 +438,7 @@ impl VirtualResourceDesc for Res<ImageView> {
 
 pub fn compatible_formats(a: vk::Format, b: vk::Format) -> bool {
 	// get_format_block(a) == get_format_block(b)  TODO: fix
-	a == b
+	a == b || a == vk::Format::UNDEFINED || b == vk::Format::UNDEFINED
 }
 
 fn get_format_block(f: vk::Format) -> i32 {

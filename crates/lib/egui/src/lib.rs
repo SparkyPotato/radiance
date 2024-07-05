@@ -1,13 +1,12 @@
 #![feature(allocator_api)]
 
-use std::{alloc::Allocator, io::Write};
+use std::io::Write;
 
 use ash::vk;
 use bytemuck::{bytes_of, cast_slice, NoUninit};
 use egui::{
 	epaint::{Primitive, Vertex},
 	ClippedPrimitive,
-	Color32,
 	ImageData,
 	Rect,
 	TextureFilter,
@@ -22,10 +21,11 @@ use radiance_graph::{
 		Device,
 	},
 	graph::{
-		util::ImageStage,
+		util::{ByteReader, ImageStage},
 		BufferDesc,
 		BufferUsage,
 		BufferUsageType,
+		ExternalImage,
 		Frame,
 		ImageUsage,
 		ImageUsageType,
@@ -161,14 +161,14 @@ impl Renderer {
 		let mut pass = frame.pass("ui");
 
 		for x in imgs {
-			pass.input(x, img_usage);
+			pass.reference(x, img_usage);
 		}
 
 		let vertex_size = vertices * std::mem::size_of::<Vertex>();
 		if vertex_size as u64 > self.vertex_size {
 			self.vertex_size *= 2;
 		}
-		let vertex = pass.output(
+		let vertex = pass.resource(
 			BufferDesc {
 				size: self.vertex_size,
 				upload: true,
@@ -182,7 +182,7 @@ impl Renderer {
 		if index_size as u64 > self.index_size {
 			self.index_size *= 2;
 		}
-		let index = pass.output(
+		let index = pass.resource(
 			BufferDesc {
 				size: self.index_size,
 				upload: true,
@@ -191,7 +191,7 @@ impl Renderer {
 				usages: &[BufferUsageType::IndexBuffer],
 			},
 		);
-		let out = pass.output(
+		let out = pass.resource(
 			out,
 			ImageUsage {
 				format: self.format,
@@ -205,7 +205,7 @@ impl Renderer {
 			for tris in tris.iter() {
 				match &tris.primitive {
 					Primitive::Mesh(m) => match m.texture_id {
-						TextureId::User(x) => pass.input::<ImageView>(Res::from_raw(x as _), img_usage),
+						TextureId::User(x) => pass.reference::<ImageView>(Res::from_raw(x as _), img_usage),
 						_ => {},
 					},
 					_ => {},
@@ -484,11 +484,15 @@ impl Renderer {
 					ImageData::Color(c) => c.pixels.to_vec_in(frame.arena()),
 					ImageData::Font(f) => f.srgba_pixels(None).collect_in(frame.arena()),
 				};
-				struct V<A: Allocator>(Vec<Color32, A>);
-				impl<A: Allocator> AsRef<[u8]> for V<A> {
-					fn as_ref(&self) -> &[u8] { cast_slice(&self.0) }
-				}
-				let img = frame.stage_image_ext("upload ui image", image, stage, V(vec));
+				let img = frame.stage_image_new(
+					"upload ui image",
+					ExternalImage {
+						handle: image.handle(),
+						desc: image.desc(),
+					},
+					stage,
+					ByteReader(vec),
+				);
 				imgs.push(img);
 			}
 		}

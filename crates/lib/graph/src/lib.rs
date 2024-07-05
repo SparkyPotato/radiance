@@ -1,6 +1,7 @@
 #![feature(allocator_api)]
 #![feature(btreemap_alloc)]
 #![feature(ptr_metadata)]
+#![feature(slice_ptr_get)]
 #![feature(strict_provenance)]
 
 use std::fmt::{Debug, Display};

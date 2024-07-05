@@ -2,13 +2,8 @@ use ash::vk;
 use crossbeam_channel::Sender;
 use radiance_asset::{image::Format, Asset, AssetSource};
 use radiance_graph::{
-	device::QueueType,
-	resource::{Image as GImage, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource},
-	sync::{ImageUsage, Shader},
-};
-use radiance_util::{
-	deletion::IntoResource,
-	staging::{ImageStage, StageError},
+	graph::Resource,
+	resource::{Image as GImage, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource as _, Subresource},
 };
 use uuid::Uuid;
 
@@ -17,6 +12,7 @@ use crate::{
 	AssetRuntime,
 	DelRes,
 	LResult,
+	LoadError,
 	Loader,
 };
 
@@ -27,14 +23,14 @@ pub struct Image {
 
 impl RuntimeAsset for Image {
 	fn into_resources(self, queue: Sender<DelRes>) {
-		queue.send(self.image.into_resource().into()).unwrap();
-		queue.send(self.view.into_resource().into()).unwrap();
+		queue.send(DelRes::Resource(Resource::Image(self.image))).unwrap();
+		queue.send(DelRes::Resource(Resource::ImageView(self.view))).unwrap();
 	}
 }
 
 impl AssetRuntime {
 	pub(crate) fn load_image_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, '_, '_, S>, image: Uuid, srgb: bool,
+		&mut self, loader: &mut Loader<'_, S>, image: Uuid, srgb: bool,
 	) -> LResult<Image, S> {
 		let Asset::Image(i) = loader.sys.load(image)? else {
 			unreachable!("image asset is not image");
@@ -69,10 +65,12 @@ impl AssetRuntime {
 			Format::R32G32B32FLOAT => vk::Format::R32G32B32_SFLOAT,
 			Format::R32G32B32A32FLOAT => vk::Format::R32G32B32A32_SFLOAT,
 		};
+		let name = loader.sys.human_name(image).unwrap_or("unnamed image".to_string());
 		let size = vk::Extent3D::builder().width(i.width).height(i.height).depth(1).build();
 		let img = GImage::create(
 			loader.device,
 			ImageDesc {
+				name: &name,
 				flags: vk::ImageCreateFlags::empty(),
 				format,
 				size,
@@ -82,42 +80,21 @@ impl AssetRuntime {
 				usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
 			},
 		)
-		.map_err(StageError::Vulkan)?;
+		.map_err(LoadError::Vulkan)?;
 		let view = ImageView::create(
 			loader.device,
 			ImageViewDesc {
+				name: &name,
 				image: img.handle(),
 				view_type: vk::ImageViewType::TYPE_2D,
 				format,
 				usage: ImageViewUsage::Sampled,
-				aspect: vk::ImageAspectFlags::COLOR,
+				subresource: Subresource::default(),
 				size,
 			},
 		)
-		.map_err(StageError::Vulkan)?;
-		loader
-			.ctx
-			.stage_image(
-				&i.data,
-				img.handle(),
-				ImageStage {
-					buffer_row_length: 0,
-					buffer_image_height: 0,
-					image_subresource: vk::ImageSubresourceLayers::builder()
-						.aspect_mask(vk::ImageAspectFlags::COLOR)
-						.mip_level(0)
-						.base_array_layer(0)
-						.layer_count(1)
-						.build(),
-					image_offset: vk::Offset3D::default(),
-					image_extent: size,
-				},
-				true,
-				QueueType::Graphics,
-				&[],
-				&[ImageUsage::ShaderReadSampledImage(Shader::Any)],
-			)
-			.map_err(StageError::Vulkan)?;
+		.map_err(LoadError::Vulkan)?;
+		// TODO: Write data
 
 		Ok(RRef::new(Image { image: img, view }, loader.deleter.clone()))
 	}

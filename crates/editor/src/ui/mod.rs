@@ -7,8 +7,7 @@ mod render;
 mod widgets;
 
 use egui::{menu, Context, TopBottomPanel};
-use radiance_core::{CoreDevice, CoreFrame, RenderCore};
-use radiance_graph::Result;
+use radiance_graph::{device::Device, graph::Frame, Result};
 use rfd::FileDialog;
 pub use widgets::Fonts;
 use winit::event::WindowEvent;
@@ -27,19 +26,18 @@ pub struct UiState {
 }
 
 impl UiState {
-	pub fn new(device: &CoreDevice, core: &RenderCore, fonts: Fonts) -> Result<Self> {
+	pub fn new(device: &Device, fonts: Fonts) -> Result<Self> {
 		Ok(Self {
 			fonts,
 			debug: Debug::new(),
 			assets: AssetManager::new(),
-			renderer: Renderer::new(device, core)?,
+			renderer: Renderer::new(device)?,
 			notifs: NotifStack::new(),
 		})
 	}
 
 	pub fn render<'pass>(
-		&'pass mut self, device: &'pass CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
-		arena_size: usize,
+		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, window: &Window, arena_size: usize,
 	) {
 		TopBottomPanel::top("menu").show(ctx, |ui| {
 			menu::bar(ui, |ui| {
@@ -62,12 +60,11 @@ impl UiState {
 		});
 
 		self.debug.set_arena_size(arena_size);
-		self.debug.render(ctx, device);
+		self.debug.render(frame.device(), ctx);
 
 		self.assets
 			.render(ctx, &mut self.notifs, &mut self.renderer, &self.fonts);
 		self.renderer.render(
-			device,
 			frame,
 			ctx,
 			window,
@@ -82,5 +79,5 @@ impl UiState {
 		self.renderer.on_window_event(window, event);
 	}
 
-	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
+	pub unsafe fn destroy(self, device: &Device) { self.renderer.destroy(device); }
 }

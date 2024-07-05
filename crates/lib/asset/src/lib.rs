@@ -325,6 +325,12 @@ impl<S: AssetSource> AssetSystem<S> {
 
 	pub fn metadata(&self, uuid: Uuid) -> Option<AssetHeader> { self.assets.get(&uuid).map(|x| x.header) }
 
+	pub fn human_name(&self, uuid: Uuid) -> Option<String> {
+		self.assets
+			.get(&uuid)
+			.and_then(|x| x.source.human_name().map(|x| x.to_string()))
+	}
+
 	pub fn assets_of_type(&self, ty: AssetType) -> impl Iterator<Item = Uuid> + '_ {
 		self.assets.iter().filter_map(move |item| {
 			if item.header.ty == ty {

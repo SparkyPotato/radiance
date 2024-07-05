@@ -10,10 +10,9 @@ use parry3d::{
 };
 use radiance_asset::{mesh::Vertex, util::SliceWriter, Asset, AssetSource};
 use radiance_graph::{
-	device::QueueType,
-	resource::{ASDesc, BufferDesc, GpuBuffer, Resource, AS},
+	graph::Resource,
+	resource::{ASDesc, Buffer, BufferDesc, Resource as _, AS},
 };
-use radiance_util::{deletion::IntoResource, staging::StageError};
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::Uuid;
@@ -24,8 +23,8 @@ use crate::{
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
 	DelRes,
-	LErr,
 	LResult,
+	LoadError,
 	Loader,
 };
 
@@ -61,7 +60,7 @@ pub struct SubMesh {
 }
 
 pub struct Mesh {
-	pub(super) buffer: GpuBuffer,
+	pub(super) buffer: Buffer,
 	pub(super) submeshes: Vec<SubMesh>,
 	pub(super) acceleration_structure: AS,
 	pub(super) meshlet_count: u32,
@@ -135,14 +134,16 @@ impl Mesh {
 
 impl RuntimeAsset for Mesh {
 	fn into_resources(self, queue: Sender<DelRes>) {
-		queue.send(self.buffer.into_resource().into()).unwrap();
-		queue.send(self.acceleration_structure.into_resource().into()).unwrap();
+		queue.send(DelRes::Resource(Resource::Buffer(self.buffer))).unwrap();
+		queue
+			.send(DelRes::Resource(Resource::AS(self.acceleration_structure)))
+			.unwrap();
 	}
 }
 
 impl AssetRuntime {
 	pub(crate) fn load_mesh_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, '_, '_, S>, mesh: Uuid,
+		&mut self, loader: &mut Loader<'_, S>, mesh: Uuid,
 	) -> LResult<Mesh, S> {
 		let Asset::Mesh(m) = loader.sys.load(mesh)? else {
 			unreachable!("Mesh asset is not a mesh");
@@ -159,15 +160,18 @@ impl AssetRuntime {
 		let size = index_byte_offset + index_byte_len;
 		let meshlet_count = m.meshlets.len() as u32;
 
-		let buffer = GpuBuffer::create(
+		let name = loader.sys.human_name(mesh).unwrap_or("unnamed mesh".to_string());
+		let buffer = Buffer::create(
 			loader.device,
 			BufferDesc {
+				name: &name,
 				size,
 				usage: vk::BufferUsageFlags::STORAGE_BUFFER
 					| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
+				on_cpu: false,
 			},
 		)
-		.map_err(StageError::Vulkan)?;
+		.map_err(LoadError::Vulkan)?;
 
 		let vertices: Vec<_> = m
 			.vertices
@@ -210,18 +214,20 @@ impl AssetRuntime {
 					tris: start..end,
 				})
 			})
-			.collect::<Result<_, LErr<S>>>()?;
+			.collect::<Result<_, LoadError<S>>>()?;
 		let mesh = TriMesh::new(vertices, indices);
 
-		let raw_mesh = GpuBuffer::create(
+		let raw_mesh = Buffer::create(
 			loader.device,
 			BufferDesc {
+				name: "AS build scratch mesh",
 				size: (std::mem::size_of::<u16>() * m.indices.len()) as u64,
 				usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
 					| vk::BufferUsageFlags::STORAGE_BUFFER,
+				on_cpu: false,
 			},
 		)
-		.map_err(StageError::Vulkan)?;
+		.map_err(LoadError::Vulkan)?;
 		let mut iwriter = SliceWriter::new(unsafe { raw_mesh.data().as_mut() });
 		let mut geo = Vec::with_capacity(m.submeshes.len());
 		let mut counts = Vec::with_capacity(m.submeshes.len());
@@ -305,39 +311,42 @@ impl AssetRuntime {
 			let as_ = AS::create(
 				loader.device,
 				ASDesc {
+					name: &name,
 					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
 					ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
 					size: size.acceleration_structure_size,
 				},
 			)
-			.map_err(StageError::Vulkan)?;
+			.map_err(LoadError::Vulkan)?;
 
-			let scratch = GpuBuffer::create(
+			let scratch = Buffer::create(
 				loader.device,
 				BufferDesc {
+					name: "AS build scratch",
 					size: size.build_scratch_size,
 					usage: vk::BufferUsageFlags::STORAGE_BUFFER
 						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
+					on_cpu: false,
 				},
 			)
-			.map_err(StageError::Vulkan)?;
+			.map_err(LoadError::Vulkan)?;
 
 			info.dst_acceleration_structure = as_.handle();
 			info.scratch_data = vk::DeviceOrHostAddressKHR {
 				device_address: scratch.addr(),
 			};
 
-			ext.cmd_build_acceleration_structures(
-				loader
-					.ctx
-					.execute_before(QueueType::Compute)
-					.map_err(StageError::Vulkan)?,
-				&[info.build()],
-				&[&ranges],
-			);
-
-			loader.queue.delete(scratch);
-			loader.queue.delete(raw_mesh);
+			// ext.cmd_build_acceleration_structures(
+			// 	loader
+			// 		.ctx
+			// 		.execute_before(QueueType::Compute)
+			// 		.map_err(StageError::Vulkan)?,
+			// 	&[info.build()],
+			// 	&[&ranges],
+			// );
+			//
+			// loader.queue.delete(scratch);
+			// loader.queue.delete(raw_mesh);
 
 			as_
 		};

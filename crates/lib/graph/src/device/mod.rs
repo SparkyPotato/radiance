@@ -56,6 +56,8 @@ pub struct Device {
 impl Device {
 	pub fn arena(&self) -> &Arena { &self.arena }
 
+	pub fn reset_arena(&mut self) { self.arena.reset() }
+
 	pub fn shader<'a>(
 		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
 	) -> vk::PipelineShaderStageCreateInfoBuilder {

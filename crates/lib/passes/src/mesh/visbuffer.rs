@@ -3,23 +3,29 @@ use std::io::Write;
 use ash::{extensions::ext, vk};
 use bytemuck::{bytes_of, cast_slice, NoUninit};
 use radiance_asset_runtime::{rref::RRef, scene::Scene};
-use radiance_core::{
-	persistent::PersistentBuffer,
-	pipeline::GraphicsPipelineDesc,
-	CoreDevice,
-	CoreFrame,
-	CorePass,
-	PassBuilderExt,
-	RenderCore,
-};
 use radiance_graph::{
-	device::descriptor::BufferId,
-	graph::{BufferUsage, BufferUsageType, ImageDesc, ImageUsage, ImageUsageType, Res, Shader, UploadBufferDesc},
-	resource::{GpuBufferHandle, ImageView, UploadBufferHandle},
+	device::{descriptor::BufferId, Device},
+	graph::{
+		self,
+		util::ByteReader,
+		BufferUsage,
+		BufferUsageType,
+		Frame,
+		ImageDesc,
+		ImageUsage,
+		ImageUsageType,
+		PassContext,
+		Res,
+		Shader,
+	},
+	resource::{BufferDesc, BufferHandle, ImageView, Subresource},
+	util::{
+		persistent::PersistentBuffer,
+		pipeline::{no_blend, reverse_depth, simple_blend, GraphicsPipelineDesc},
+	},
 	Result,
 };
 use radiance_shader_compiler::c_str;
-use radiance_util::pipeline::{no_blend, reverse_depth, simple_blend};
 use vek::{Mat4, Vec2};
 
 #[derive(Copy, Clone, Default, PartialEq)]
@@ -82,61 +88,52 @@ struct PushConstants {
 struct PassIO {
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	rw: Res<GpuBufferHandle>,
-	ww: Res<GpuBufferHandle>,
-	rd: Res<GpuBufferHandle>,
-	wd: Res<GpuBufferHandle>,
+	rw: Res<BufferHandle>,
+	ww: Res<BufferHandle>,
+	rd: Res<BufferHandle>,
+	wd: Res<BufferHandle>,
 	cull_camera: CameraData,
 	draw_camera: CameraData,
 	meshlet_count: u32,
-	camera: Res<UploadBufferHandle>,
+	camera: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
 	depth: Res<ImageView>,
 }
 
 impl VisBuffer {
-	fn pipeline(device: &CoreDevice, core: &RenderCore, layout: vk::PipelineLayout, vis: bool) -> Result<vk::Pipeline> {
-		core.graphics_pipeline(
-			device,
-			&GraphicsPipelineDesc {
-				shaders: &[
-					core.shaders
-						.shader(
-							if vis {
-								c_str!("radiance-passes/mesh/visbuffer/visible")
-							} else {
-								c_str!("radiance-passes/mesh/visbuffer/invisible")
-							},
-							vk::ShaderStageFlags::TASK_EXT,
-							None,
-						)
-						.build(),
-					core.shaders
-						.shader(
-							c_str!("radiance-passes/mesh/visbuffer/mesh"),
-							vk::ShaderStageFlags::MESH_EXT,
-							None,
-						)
-						.build(),
-					core.shaders
-						.shader(
-							c_str!("radiance-passes/mesh/visbuffer/pixel"),
-							vk::ShaderStageFlags::FRAGMENT,
-							None,
-						)
-						.build(),
-				],
-				depth: &reverse_depth(),
-				blend: &simple_blend(&[no_blend()]),
-				layout,
-				color_attachments: &[vk::Format::R32_UINT],
-				depth_attachment: vk::Format::D32_SFLOAT,
-				..Default::default()
-			},
-		)
+	fn pipeline(device: &Device, layout: vk::PipelineLayout, vis: bool) -> Result<vk::Pipeline> {
+		device.graphics_pipeline(&GraphicsPipelineDesc {
+			shaders: &[
+				device.shader(
+					if vis {
+						c_str!("radiance-passes/mesh/visbuffer/visible")
+					} else {
+						c_str!("radiance-passes/mesh/visbuffer/invisible")
+					},
+					vk::ShaderStageFlags::TASK_EXT,
+					None,
+				),
+				device.shader(
+					c_str!("radiance-passes/mesh/visbuffer/mesh"),
+					vk::ShaderStageFlags::MESH_EXT,
+					None,
+				),
+				device.shader(
+					c_str!("radiance-passes/mesh/visbuffer/pixel"),
+					vk::ShaderStageFlags::FRAGMENT,
+					None,
+				),
+			],
+			depth: &reverse_depth(),
+			blend: &simple_blend(&[no_blend()]),
+			layout,
+			color_attachments: &[vk::Format::R32_UINT],
+			depth_attachment: vk::Format::D32_SFLOAT,
+			..Default::default()
+		})
 	}
 
-	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
+	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::builder()
@@ -148,8 +145,8 @@ impl VisBuffer {
 				None,
 			)?;
 
-			let vis_pipeline = Self::pipeline(device, core, layout, true)?;
-			let invis_pipeline = Self::pipeline(device, core, layout, false)?;
+			let vis_pipeline = Self::pipeline(device, layout, true)?;
+			let invis_pipeline = Self::pipeline(device, layout, false)?;
 
 			Ok(Self {
 				vis_pipeline,
@@ -158,10 +155,14 @@ impl VisBuffer {
 				mesh: ext::MeshShader::new(device.instance(), device.device()),
 				workgroups: PersistentBuffer::new(
 					device,
-					32,
-					vk::BufferUsageFlags::INDIRECT_BUFFER
-						| vk::BufferUsageFlags::TRANSFER_DST
-						| vk::BufferUsageFlags::STORAGE_BUFFER,
+					BufferDesc {
+						name: "workgroups",
+						size: 32,
+						usage: vk::BufferUsageFlags::INDIRECT_BUFFER
+							| vk::BufferUsageFlags::TRANSFER_DST
+							| vk::BufferUsageFlags::STORAGE_BUFFER,
+						on_cpu: false,
+					},
 				)?,
 				visibility: None,
 			})
@@ -169,29 +170,43 @@ impl VisBuffer {
 	}
 
 	pub fn init_visibility<'pass>(
-		&mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
-	) -> (Res<GpuBufferHandle>, Res<GpuBufferHandle>) {
-		let new = self.visibility(device, &info.scene);
-		let work = &mut self.workgroups;
+		&mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo,
+	) -> (
+		Res<BufferHandle>,
+		Res<BufferHandle>,
+		Res<BufferHandle>,
+		Res<BufferHandle>,
+	) {
+		let new = self.visibility(frame.device(), &info.scene);
 		let data = self.visibility.as_mut().unwrap();
-		let mut pass = frame.pass("init visibility");
+		let work = &mut self.workgroups;
 
+		let (rd, wd) = data.next();
 		let mut usages: &[_] = &[];
-		if new {
+		let rds = if new {
 			let values: Vec<_> = (0..info.scene.meshlet_pointer_count()).collect();
-			pass.stage(device, |cx, _| {
-				cx.stage_buffer(cast_slice(&values), data.buffers[data.current].inner(), 0)
-			})
-			.unwrap();
 			usages = &[BufferUsageType::TransferWrite];
-		}
-		let (rw, ww) = work.next(
-			&mut pass,
-			BufferUsage { usages },
+			Some(frame.stage_buffer_new("init visibility", rd, 0, ByteReader(values)))
+		} else {
+			None
+		};
+
+		let mut pass = frame.pass("reset workgroups");
+
+		let (rw, ww) = work.next();
+		let rw = pass.resource(rw, BufferUsage { usages });
+		let ww = pass.resource(
+			ww,
 			BufferUsage {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
+		let rd = if let Some(rd) = rds {
+			rd
+		} else {
+			pass.resource(rd, BufferUsage { usages: &[] })
+		};
+		let wd = pass.resource(wd, BufferUsage { usages: &[] });
 
 		pass.build(move |mut ctx| unsafe {
 			let rw = ctx.get(rw);
@@ -219,16 +234,14 @@ impl VisBuffer {
 			dev.cmd_update_buffer(buf, ww.buffer, 0, &cast_slice(&[0u32, 0, 1, 1, 0, 0, 1, 1]));
 		});
 
-		(rw, ww)
+		(rw, ww, rd, wd)
 	}
 
-	pub fn run<'pass>(
-		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
-	) -> Res<ImageView> {
-		let (rw, ww) = self.init_visibility(device, frame, info.clone());
+	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
+		let (rw, ww, rd, wd) = self.init_visibility(frame, info.clone());
 
 		let mut pass = frame.pass("visbuffer");
-		pass.input(
+		pass.reference(
 			rw,
 			BufferUsage {
 				usages: &[
@@ -237,7 +250,7 @@ impl VisBuffer {
 				],
 			},
 		);
-		pass.input(
+		pass.reference(
 			ww,
 			BufferUsage {
 				usages: &[
@@ -246,12 +259,15 @@ impl VisBuffer {
 				],
 			},
 		);
-		let data = self.visibility.as_mut().unwrap();
-		let (rd, wd) = data.next(
-			&mut pass,
+
+		pass.reference(
+			rd,
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::Task)],
 			},
+		);
+		pass.reference(
+			wd,
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Task)],
 			},
@@ -264,9 +280,10 @@ impl VisBuffer {
 			.map(|c| CameraData::new(aspect, c))
 			.unwrap_or(draw_camera);
 
-		let c = pass.output(
-			UploadBufferDesc {
+		let c = pass.resource(
+			graph::BufferDesc {
 				size: (std::mem::size_of::<CameraData>() * 2) as _,
+				upload: true,
 			},
 			BufferUsage {
 				usages: &[
@@ -282,26 +299,33 @@ impl VisBuffer {
 				height: info.size.y,
 				depth: 1,
 			},
+			format: vk::Format::R32_UINT,
 			levels: 1,
 			layers: 1,
 			samples: vk::SampleCountFlags::TYPE_1,
 		};
-		let visbuffer = pass.output(
+		let visbuffer = pass.resource(
 			desc,
 			ImageUsage {
 				format: vk::Format::R32_UINT,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: vk::ImageViewType::TYPE_2D,
-				aspect: vk::ImageAspectFlags::COLOR,
+				view_type: Some(vk::ImageViewType::TYPE_2D),
+				subresource: Subresource::default(),
 			},
 		);
-		let depth = pass.output(
-			desc,
+		let depth = pass.resource(
+			ImageDesc {
+				format: vk::Format::D32_SFLOAT,
+				..desc
+			},
 			ImageUsage {
 				format: vk::Format::D32_SFLOAT,
 				usages: &[ImageUsageType::DepthStencilAttachmentWrite],
-				view_type: vk::ImageViewType::TYPE_2D,
-				aspect: vk::ImageAspectFlags::DEPTH,
+				view_type: Some(vk::ImageViewType::TYPE_2D),
+				subresource: Subresource {
+					aspect: vk::ImageAspectFlags::DEPTH,
+					..Default::default()
+				},
 			},
 		);
 
@@ -328,7 +352,7 @@ impl VisBuffer {
 		visbuffer
 	}
 
-	fn execute(&self, mut pass: CorePass, io: PassIO) {
+	fn execute(&self, mut pass: PassContext, io: PassIO) {
 		let mut camera = pass.get(io.camera);
 		let visbuffer = pass.get(io.visbuffer);
 		let depth = pass.get(io.depth);
@@ -424,16 +448,20 @@ impl VisBuffer {
 		}
 	}
 
-	fn visibility(&mut self, device: &CoreDevice, scene: &Scene) -> bool {
+	fn visibility(&mut self, device: &Device, scene: &Scene) -> bool {
 		let mut new = false;
 		let size = scene.meshlet_pointer_count() as u64 * 2 * 4;
-		if self.visibility.is_none() || self.visibility.as_ref().unwrap().size() < size {
+		if self.visibility.is_none() || self.visibility.as_ref().unwrap().desc().size < size {
 			new = true;
 			if let Some(old) = self.visibility.replace(
 				PersistentBuffer::new(
 					device,
-					size,
-					vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+					BufferDesc {
+						name: "visibility",
+						size,
+						usage: vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+						on_cpu: false,
+					},
 				)
 				.unwrap(),
 			) {
@@ -443,7 +471,7 @@ impl VisBuffer {
 		new
 	}
 
-	pub unsafe fn destroy(self, device: &CoreDevice) {
+	pub unsafe fn destroy(self, device: &Device) {
 		device.device().destroy_pipeline(self.vis_pipeline, None);
 		device.device().destroy_pipeline(self.invis_pipeline, None);
 		device.device().destroy_pipeline_layout(self.layout, None);

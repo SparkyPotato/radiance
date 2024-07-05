@@ -6,11 +6,24 @@ use radiance_asset_runtime::{
 	rref::{RRef, RWeak},
 	scene::Scene,
 };
-use radiance_core::{CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
-	device::descriptor::{ASId, BufferId, SamplerId, StorageImageId},
-	graph::{BufferUsage, BufferUsageType, ExternalImage, ImageUsage, ImageUsageType, Res, UploadBufferDesc},
-	resource::{BufferDesc, GpuBuffer, Image, ImageView, Resource, UploadBufferHandle},
+	device::{
+		descriptor::{ASId, BufferId, SamplerId, StorageImageId},
+		Device,
+	},
+	graph::{
+		self,
+		BufferUsage,
+		BufferUsageType,
+		ExternalImage,
+		Frame,
+		ImageDesc,
+		ImageUsage,
+		ImageUsageType,
+		PassContext,
+		Res,
+	},
+	resource::{Buffer, BufferDesc, BufferHandle, Image, ImageView, Resource, Subresource},
 	sync::Shader,
 	Result,
 };
@@ -32,7 +45,7 @@ pub struct GroundTruth {
 	pipeline: vk::Pipeline,
 	sampler: vk::Sampler,
 	sampler_id: SamplerId,
-	sbt: GpuBuffer,
+	sbt: Buffer,
 	accum: Image,
 	size: vk::Extent3D,
 	samples: u32,
@@ -45,7 +58,7 @@ pub struct GroundTruth {
 
 struct PassIO {
 	write: Res<ImageView>,
-	camera: Res<UploadBufferHandle>,
+	camera: Res<BufferHandle>,
 	info: RenderInfo,
 }
 
@@ -72,7 +85,7 @@ struct CameraData {
 fn align_up(size: u64, align: u64) -> u64 { (size + align - 1) & !(align - 1) }
 
 impl GroundTruth {
-	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
+	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::builder()
@@ -90,32 +103,32 @@ impl GroundTruth {
 
 			let pipeline = device.rt_ext().create_ray_tracing_pipelines(
 				vk::DeferredOperationKHR::null(),
-				core.cache.cache(),
+				vk::PipelineCache::null(),
 				&[vk::RayTracingPipelineCreateInfoKHR::builder()
 					.flags(vk::PipelineCreateFlags::empty())
 					.stages(&[
-						core.shaders
+						device
 							.shader(
 								c_str!("radiance-passes/ground_truth/gen"),
 								vk::ShaderStageFlags::RAYGEN_KHR,
 								None,
 							)
 							.build(),
-						core.shaders
+						device
 							.shader(
 								c_str!("radiance-passes/ground_truth/miss"),
 								vk::ShaderStageFlags::MISS_KHR,
 								None,
 							)
 							.build(),
-						core.shaders
+						device
 							.shader(
 								c_str!("radiance-passes/ground_truth/shadow"),
 								vk::ShaderStageFlags::MISS_KHR,
 								None,
 							)
 							.build(),
-						core.shaders
+						device
 							.shader(
 								c_str!("radiance-passes/ground_truth/hit"),
 								vk::ShaderStageFlags::CLOSEST_HIT_KHR,
@@ -191,11 +204,13 @@ impl GroundTruth {
 			hit.stride = handle_size_align;
 			hit.size = align_up(1 * handle_size, base_align);
 
-			let sbt = GpuBuffer::create(
+			let sbt = Buffer::create(
 				device,
 				BufferDesc {
+					name: "ground truth shader binding table",
 					size: rgen.size + miss.size + hit.size,
 					usage: vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
+					on_cpu: false,
 				},
 			)?;
 			rgen.device_address = sbt.addr();
@@ -245,7 +260,7 @@ impl GroundTruth {
 		}
 	}
 
-	pub fn destroy(self, device: &CoreDevice) {
+	pub fn destroy(self, device: &Device) {
 		unsafe {
 			self.sbt.destroy(device);
 			self.accum.destroy(device);
@@ -256,9 +271,7 @@ impl GroundTruth {
 		}
 	}
 
-	pub fn run<'pass>(
-		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
-	) -> Res<ImageView> {
+	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
 		let size = vk::Extent3D {
 			width: info.size.x,
 			height: info.size.y,
@@ -272,10 +285,11 @@ impl GroundTruth {
 
 		if new {
 			unsafe {
-				std::mem::take(&mut self.accum).destroy(device);
+				std::mem::take(&mut self.accum).destroy(frame.device());
 				self.accum = Image::create(
-					device,
+					frame.device(),
 					radiance_graph::resource::ImageDesc {
+						name: "ground truth accumulation",
 						flags: vk::ImageCreateFlags::empty(),
 						format: vk::Format::R16G16B16A16_SFLOAT,
 						size,
@@ -293,15 +307,16 @@ impl GroundTruth {
 		self.samples = if clear { 0 } else { self.samples + 1 };
 
 		let mut pass = frame.pass("raytrace");
-		let write = pass.output(
+		let write = pass.resource(
 			ExternalImage {
 				handle: self.accum.handle(),
-				size,
-				levels: 1,
-				layers: 1,
-				samples: vk::SampleCountFlags::TYPE_1,
-				wait: None,
-				signal: None,
+				desc: ImageDesc {
+					size,
+					levels: 1,
+					layers: 1,
+					samples: vk::SampleCountFlags::TYPE_1,
+					format: vk::Format::R16G16B16A16_SFLOAT,
+				},
 			},
 			ImageUsage {
 				format: vk::Format::R16G16B16A16_SFLOAT,
@@ -309,8 +324,8 @@ impl GroundTruth {
 					ImageUsageType::ShaderStorageRead(Shader::RayTracing),
 					ImageUsageType::ShaderStorageWrite(Shader::RayTracing),
 				],
-				view_type: vk::ImageViewType::TYPE_2D,
-				aspect: vk::ImageAspectFlags::COLOR,
+				view_type: Some(vk::ImageViewType::TYPE_2D),
+				subresource: Subresource::default(),
 			},
 		);
 		// let (read, write) = pass.output(
@@ -328,9 +343,10 @@ impl GroundTruth {
 		// },
 		// );
 
-		let camera = pass.output(
-			UploadBufferDesc {
+		let camera = pass.resource(
+			graph::BufferDesc {
 				size: std::mem::size_of::<CameraData>() as _,
+				upload: true,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::RayTracing)],
@@ -342,7 +358,7 @@ impl GroundTruth {
 		write
 	}
 
-	fn execute(&self, mut pass: CorePass, io: PassIO) {
+	fn execute(&self, mut pass: PassContext, io: PassIO) {
 		let mut camera = pass.get(io.camera);
 		let write = pass.get(io.write);
 

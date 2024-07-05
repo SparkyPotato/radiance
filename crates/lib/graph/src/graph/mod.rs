@@ -11,20 +11,23 @@ use hashbrown::HashMap;
 use rustc_hash::FxHasher;
 use tracing::{span, Level};
 
-pub use crate::graph::virtual_resource::{
-	BufferDesc,
-	BufferUsage,
-	BufferUsageType,
-	ExternalBuffer,
-	ExternalImage,
-	ImageDesc,
-	ImageUsage,
-	ImageUsageType,
-	Shader,
-	SwapchainImage,
-	VirtualResource,
-	VirtualResourceDesc,
-	VirtualResourceType,
+pub use crate::graph::{
+	frame_data::Resource,
+	virtual_resource::{
+		BufferDesc,
+		BufferUsage,
+		BufferUsageType,
+		ExternalBuffer,
+		ExternalImage,
+		ImageDesc,
+		ImageUsage,
+		ImageUsageType,
+		Shader,
+		SwapchainImage,
+		VirtualResource,
+		VirtualResourceDesc,
+		VirtualResourceType,
+	},
 };
 use crate::{
 	arena::{Arena, IteratorAlloc},
@@ -228,7 +231,7 @@ pub struct PassBuilder<'frame, 'pass, 'graph> {
 
 impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 	/// Read GPU data that another pass outputs.
-	pub fn input<T: VirtualResource>(&mut self, id: Res<T>, usage: T::Usage<'_>) {
+	pub fn reference<T: VirtualResource>(&mut self, id: Res<T>, usage: T::Usage<'_>) {
 		let id = id.id.wrapping_sub(self.frame.graph.resource_base_id);
 
 		unsafe {
@@ -239,7 +242,7 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 	}
 
 	/// Output GPU data for other passes.
-	pub fn output<D: VirtualResourceDesc>(
+	pub fn resource<D: VirtualResourceDesc>(
 		&mut self, desc: D, usage: <D::Resource as VirtualResource>::Usage<'_>,
 	) -> Res<D::Resource> {
 		let real_id = self.frame.virtual_resources.len();

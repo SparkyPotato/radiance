@@ -1,8 +1,7 @@
 use egui::{Context, ViewportId};
 use egui_winit::pixels_per_point;
-use radiance_core::{CoreDevice, CoreFrame, RenderCore};
 use radiance_egui::ScreenDescriptor;
-use radiance_graph::Result;
+use radiance_graph::{device::Device, graph::Frame, Result};
 use vek::Vec2;
 use winit::{event::WindowEvent, event_loop::EventLoop};
 
@@ -16,7 +15,7 @@ pub struct UiHandler {
 }
 
 impl UiHandler {
-	pub fn new(device: &CoreDevice, core: &RenderCore, event_loop: &EventLoop<()>, window: &Window) -> Result<Self> {
+	pub fn new(device: &Device, event_loop: &EventLoop<()>, window: &Window) -> Result<Self> {
 		let ctx = Context::default();
 		let (defs, fonts) = Fonts::defs();
 		ctx.set_fonts(defs);
@@ -31,7 +30,7 @@ impl UiHandler {
 		Ok(Self {
 			ctx,
 			platform_state,
-			renderer: radiance_egui::Renderer::new(device, core, window.format())?,
+			renderer: radiance_egui::Renderer::new(device, window.format())?,
 			fonts,
 		})
 	}
@@ -43,9 +42,10 @@ impl UiHandler {
 			.begin_frame(self.platform_state.take_egui_input(&window.window));
 	}
 
-	pub fn run<'pass>(
-		&'pass mut self, device: &CoreDevice, frame: &mut CoreFrame<'pass, '_>, window: &Window,
-	) -> Result<u32> {
+	pub fn run<'pass, 'graph>(&'pass mut self, frame: &mut Frame<'pass, 'graph>, window: &Window) -> Result<u32>
+	where
+		'graph: 'pass,
+	{
 		let (image, id) = {
 			tracy::zone!("swapchain acquire");
 			window.acquire()?
@@ -66,7 +66,6 @@ impl UiHandler {
 		};
 
 		self.renderer.run(
-			device,
 			frame,
 			tris,
 			output.textures_delta,
@@ -82,6 +81,5 @@ impl UiHandler {
 
 	pub fn on_event(&mut self, event: &WindowEvent) { let _ = self.platform_state.on_window_event(&self.ctx, event); }
 
-	pub unsafe fn destroy(self, device: &CoreDevice) { self.renderer.destroy(device); }
+	pub unsafe fn destroy(self, device: &Device) { self.renderer.destroy(device); }
 }
-

@@ -1,8 +1,7 @@
-use bytemuck::{bytes_of, NoUninit};
+use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
 use radiance_asset::{Asset, AssetSource};
 use radiance_graph::device::descriptor::ImageId;
-use radiance_util::{buffer::BufSpan, staging::StageError};
 use static_assertions::const_assert_eq;
 use uuid::Uuid;
 use vek::{Vec3, Vec4};
@@ -48,7 +47,7 @@ impl RuntimeAsset for Material {
 
 impl AssetRuntime {
 	pub(crate) fn load_material_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, '_, '_, S>, material: Uuid,
+		&mut self, loader: &mut Loader<'_, S>, material: Uuid,
 	) -> LResult<Material, S> {
 		let Asset::Material(m) = loader.sys.load(material)? else {
 			unreachable!("Material asset is not a material");
@@ -74,11 +73,8 @@ impl AssetRuntime {
 			emissive: emissive.as_ref().map(|x| x.view.id.unwrap()),
 		};
 
-		let BufSpan { offset, .. } = self
-			.material_buffer
-			.alloc(loader.ctx, loader.queue, bytes_of(&mat))
-			.map_err(StageError::Vulkan)?;
-		let index = (offset / std::mem::size_of::<GpuMaterial>() as u64) as u32;
+		// TODO: Write data
+		let index = 0;
 		Ok(RRef::new(
 			Material {
 				index,

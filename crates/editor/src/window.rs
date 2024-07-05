@@ -1,13 +1,13 @@
 use ash::{extensions::khr, vk};
 use radiance_graph::{
-	device::Device,
-	graph::{ExecutionSnapshot, ExternalImage, ExternalSync, ImageUsageType, RenderGraph, FRAMES_IN_FLIGHT},
+	device::{Device, Graphics, SyncPoint},
+	graph::{SwapchainImage, FRAMES_IN_FLIGHT},
 	Result,
 };
 
 struct OldSwapchain {
 	swapchain: vk::SwapchainKHR,
-	snapshot: ExecutionSnapshot,
+	sync: SyncPoint<Graphics>,
 }
 
 pub struct Window {
@@ -20,13 +20,11 @@ pub struct Window {
 	semas: [(vk::Semaphore, vk::Semaphore); FRAMES_IN_FLIGHT],
 	curr_frame: usize,
 	format: vk::Format,
-	size: vk::Extent3D,
+	size: vk::Extent2D,
 }
 
 impl Window {
-	pub fn new(
-		device: &Device, graph: &RenderGraph, window: winit::window::Window, surface: vk::SurfaceKHR,
-	) -> Result<Self> {
+	pub fn new(device: &Device, window: winit::window::Window, surface: vk::SurfaceKHR) -> Result<Self> {
 		let swapchain_ext = khr::Swapchain::new(device.instance(), device.device());
 		let mut this = Self {
 			window,
@@ -35,7 +33,7 @@ impl Window {
 			swapchain: vk::SwapchainKHR::null(),
 			old_swapchain: OldSwapchain {
 				swapchain: vk::SwapchainKHR::null(),
-				snapshot: ExecutionSnapshot::default(),
+				sync: SyncPoint::default(),
 			},
 			images: Vec::new(),
 			semas: [
@@ -44,37 +42,27 @@ impl Window {
 			],
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
-			size: vk::Extent3D::default(),
+			size: vk::Extent2D::default(),
 		};
-		this.make(device, graph)?;
+		this.make(device)?;
 		Ok(this)
 	}
 
 	pub fn request_redraw(&self) { self.window.request_redraw(); }
 
-	pub fn acquire(&self) -> Result<(ExternalImage, u32)> {
+	pub fn acquire(&self) -> Result<(SwapchainImage, u32)> {
 		unsafe {
 			let (available, rendered) = self.semas[self.curr_frame];
 			let (id, _) =
 				self.swapchain_ext
 					.acquire_next_image(self.swapchain, u64::MAX, available, vk::Fence::null())?;
 			let ret = (
-				ExternalImage {
+				SwapchainImage {
 					handle: self.images[id as usize],
 					size: self.size,
-					levels: 1,
-					layers: 1,
-					samples: vk::SampleCountFlags::TYPE_1,
-					wait: Some(ExternalSync {
-						semaphore: available,
-						usage: &[ImageUsageType::Present],
-						..Default::default()
-					}),
-					signal: Some(ExternalSync {
-						semaphore: rendered,
-						usage: &[ImageUsageType::Present],
-						..Default::default()
-					}),
+					format: self.format,
+					available,
+					rendered,
 				},
 				id,
 			);
@@ -89,7 +77,7 @@ impl Window {
 
 			let (_, rendered) = self.semas[self.curr_frame];
 			self.swapchain_ext.queue_present(
-				*device.graphics_queue(),
+				*device.queue::<Graphics>(),
 				&vk::PresentInfoKHR::builder()
 					.wait_semaphores(&[rendered])
 					.swapchains(&[self.swapchain])
@@ -104,7 +92,7 @@ impl Window {
 
 	pub fn format(&self) -> vk::Format { self.format }
 
-	pub fn resize(&mut self, device: &Device, graph: &RenderGraph) -> Result<()> { self.make(device, graph) }
+	pub fn resize(&mut self, device: &Device) -> Result<()> { self.make(device) }
 
 	pub fn destroy(&mut self, device: &Device) {
 		unsafe {
@@ -120,7 +108,7 @@ impl Window {
 
 	fn cleanup_old(&mut self, device: &Device) -> Result<()> {
 		if self.old_swapchain.swapchain != vk::SwapchainKHR::null() {
-			self.old_swapchain.snapshot.wait(device)?;
+			self.old_swapchain.sync.wait(device)?;
 			unsafe {
 				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			}
@@ -130,7 +118,7 @@ impl Window {
 		Ok(())
 	}
 
-	fn make(&mut self, device: &Device, graph: &RenderGraph) -> Result<()> {
+	fn make(&mut self, device: &Device) -> Result<()> {
 		unsafe {
 			let size = self.window.inner_size();
 			if size.height == 0 || size.width == 0 {
@@ -155,7 +143,7 @@ impl Window {
 			if self.swapchain != vk::SwapchainKHR::null() {
 				self.old_swapchain = OldSwapchain {
 					swapchain: self.swapchain,
-					snapshot: graph.snapshot(),
+					sync: device.current_sync_point(),
 				};
 			}
 
@@ -184,10 +172,9 @@ impl Window {
 				.unwrap();
 			self.images = self.swapchain_ext.get_swapchain_images(self.swapchain).unwrap();
 			self.format = format;
-			self.size = vk::Extent3D {
+			self.size = vk::Extent2D {
 				width: size.width,
 				height: size.height,
-				depth: 1,
 			};
 		}
 

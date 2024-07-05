@@ -1,6 +1,5 @@
 use egui::{ComboBox, Context, Window};
-use radiance_core::CoreDevice;
-use radiance_graph::alloc::AllocatorVisualizer;
+use radiance_graph::{alloc::AllocatorVisualizer, device::Device};
 use radiance_passes::mesh::visbuffer::Camera;
 
 #[derive(Copy, Clone)]
@@ -35,7 +34,7 @@ impl Debug {
 		}
 	}
 
-	pub fn render(&mut self, ctx: &Context, device: &CoreDevice) {
+	pub fn render(&mut self, device: &Device, ctx: &Context) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut x = self.render_mode as usize;
 			ComboBox::from_label("render mode").show_index(ui, &mut x, 3, |x| match x {

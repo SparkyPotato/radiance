@@ -1,7 +1,6 @@
 use std::mem::ManuallyDrop;
 
 use ash::{extensions::ext, vk};
-use radiance_core::{CoreDevice, RenderCore};
 use radiance_graph::{device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 use winit::{
@@ -54,14 +53,14 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 							.build(),
 					),
 			)
+			.shaders(&[radiance_egui::SHADERS, radiance_passes::SHADERS])
 			.build()
 	}
 }
 
 struct State {
-	device: CoreDevice,
+	device: Device,
 	graph: ManuallyDrop<RenderGraph>,
-	core: ManuallyDrop<RenderCore>,
 	state: ManuallyDrop<UiState>,
 	ui: ManuallyDrop<UiHandler>,
 	window: ManuallyDrop<Window>,
@@ -70,20 +69,14 @@ struct State {
 impl State {
 	pub fn new(event_loop: &EventLoop<()>, window: winit::window::Window) -> Result<Self> {
 		let (device, surface) = init_device(&window, event_loop)?;
-		let device = CoreDevice::new(device)?;
 		let graph = ManuallyDrop::new(RenderGraph::new(&device)?);
-		let core = ManuallyDrop::new(RenderCore::new(
-			&device,
-			&[radiance_core::SHADERS, radiance_egui::SHADERS, radiance_passes::SHADERS],
-		)?);
-		let window = ManuallyDrop::new(Window::new(&device, &graph, window, surface)?);
-		let ui = ManuallyDrop::new(UiHandler::new(&device, &core, event_loop, &window)?);
-		let state = ManuallyDrop::new(UiState::new(&device, &core, ui.fonts().clone())?);
+		let window = ManuallyDrop::new(Window::new(&device, window, surface)?);
+		let ui = ManuallyDrop::new(UiHandler::new(&device, event_loop, &window)?);
+		let state = ManuallyDrop::new(UiState::new(&device, ui.fonts().clone())?);
 
 		Ok(Self {
 			device,
 			graph,
-			core,
 			ui,
 			window,
 			state,
@@ -98,7 +91,6 @@ impl Drop for State {
 
 			ManuallyDrop::take(&mut self.graph).destroy(&self.device);
 			ManuallyDrop::take(&mut self.state).destroy(&self.device);
-			ManuallyDrop::take(&mut self.core).destroy(&self.device);
 			ManuallyDrop::take(&mut self.ui).destroy(&self.device);
 			ManuallyDrop::take(&mut self.window).destroy(&self.device);
 		}
@@ -131,17 +123,15 @@ fn main() {
 		Event::NewEvents(StartCause::Init) => state.window.window.set_visible(true),
 		Event::MainEventsCleared => state.window.request_redraw(),
 		Event::RedrawRequested(_) => {
-			let arena_size = state.device.arena.memory_usage();
-			state.device.arena.reset();
-			let mut frame = state.core.frame(&state.device, &mut state.graph).unwrap();
+			let arena_size = state.device.arena().memory_usage();
+			state.device.reset_arena();
+			let mut frame = state.graph.frame(&state.device);
 
 			state.ui.begin_frame(&state.window);
-			state
-				.state
-				.render(&state.device, &mut frame, &state.ui.ctx, &state.window, arena_size);
-			let id = state.ui.run(&state.device, &mut frame, &state.window).unwrap();
+			state.state.render(&mut frame, &state.ui.ctx, &state.window, arena_size);
+			let id = state.ui.run(&mut frame, &state.window).unwrap();
 
-			frame.run(&state.device).unwrap();
+			frame.run().unwrap();
 			state.window.present(&state.device, id).unwrap();
 			tracy::frame!();
 		},
@@ -150,11 +140,10 @@ fn main() {
 			state.ui.on_event(&event);
 			match event {
 				WindowEvent::CloseRequested => *flow = ControlFlow::Exit,
-				WindowEvent::Resized(_) => state.window.resize(&state.device, &state.graph).unwrap(),
+				WindowEvent::Resized(_) => state.window.resize(&state.device).unwrap(),
 				_ => {},
 			}
 		},
 		_ => {},
 	})
 }
-

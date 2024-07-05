@@ -88,6 +88,7 @@ impl<'a> DeviceBuilder<'a> {
 
 	pub fn shaders(mut self, modules: impl IntoIterator<Item = &'a ShaderBlob>) -> Self {
 		self.modules = modules.into_iter().collect();
+		self.modules.push(&crate::SHADERS);
 		self
 	}
 

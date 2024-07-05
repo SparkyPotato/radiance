@@ -1,14 +1,13 @@
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
-use radiance_core::{pipeline::GraphicsPipelineDesc, CoreDevice, CoreFrame, CorePass, RenderCore};
 use radiance_graph::{
-	device::descriptor::ImageId,
-	graph::{ImageUsage, ImageUsageType, Res, Shader},
-	resource::ImageView,
+	device::{descriptor::ImageId, Device},
+	graph::{Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
+	resource::{ImageView, Subresource},
+	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
 	Result,
 };
 use radiance_shader_compiler::c_str;
-use radiance_util::pipeline::{no_blend, no_cull, simple_blend};
 
 pub struct DebugMeshlets {
 	pipeline: vk::Pipeline,
@@ -22,11 +21,11 @@ struct PushConstants {
 }
 
 impl DebugMeshlets {
-	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
+	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::builder()
-					.set_layouts(&[device.device.descriptors().layout()])
+					.set_layouts(&[device.descriptors().layout()])
 					.push_constant_ranges(&[vk::PushConstantRange::builder()
 						.stage_flags(vk::ShaderStageFlags::FRAGMENT)
 						.size(std::mem::size_of::<PushConstants>() as u32)
@@ -34,51 +33,44 @@ impl DebugMeshlets {
 				None,
 			)?;
 
-			let pipeline = core.graphics_pipeline(
-				device,
-				&GraphicsPipelineDesc {
-					layout,
-					shaders: &[
-						core.shaders
-							.shader(c_str!("radiance-core/util/screen"), vk::ShaderStageFlags::VERTEX, None)
-							.build(),
-						core.shaders
-							.shader(
-								c_str!("radiance-passes/debug/meshlet"),
-								vk::ShaderStageFlags::FRAGMENT,
-								None,
-							)
-							.build(),
-					],
-					color_attachments: &[vk::Format::R8G8B8A8_SRGB],
-					raster: &no_cull(),
-					blend: &simple_blend(&[no_blend()]),
-					..Default::default()
-				},
-			)?;
+			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
+				layout,
+				shaders: &[
+					device.shader(c_str!("radiance-graph/util/screen"), vk::ShaderStageFlags::VERTEX, None),
+					device.shader(
+						c_str!("radiance-passes/debug/meshlet"),
+						vk::ShaderStageFlags::FRAGMENT,
+						None,
+					),
+				],
+				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
+				raster: &no_cull(),
+				blend: &simple_blend(&[no_blend()]),
+				..Default::default()
+			})?;
 
 			Ok(Self { layout, pipeline })
 		}
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut CoreFrame<'pass, '_>, visbuffer: Res<ImageView>) -> Res<ImageView> {
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, visbuffer: Res<ImageView>) -> Res<ImageView> {
 		let mut pass = frame.pass("debug meshlets");
-		pass.input(
+		pass.reference(
 			visbuffer,
 			ImageUsage {
 				format: vk::Format::R32_UINT,
 				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
-				view_type: vk::ImageViewType::TYPE_2D,
-				aspect: vk::ImageAspectFlags::COLOR,
+				view_type: Some(vk::ImageViewType::TYPE_2D),
+				subresource: Subresource::default(),
 			},
 		);
-		let output = pass.output(
+		let output = pass.resource(
 			visbuffer,
 			ImageUsage {
 				format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
 				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: vk::ImageViewType::TYPE_2D,
-				aspect: vk::ImageAspectFlags::COLOR,
+				view_type: Some(vk::ImageViewType::TYPE_2D),
+				subresource: Subresource::default(),
 			},
 		);
 
@@ -87,7 +79,7 @@ impl DebugMeshlets {
 		output
 	}
 
-	fn execute(&self, mut pass: CorePass, visbuffer: Res<ImageView>, out: Res<ImageView>) {
+	fn execute(&self, mut pass: PassContext, visbuffer: Res<ImageView>, out: Res<ImageView>) {
 		let visbuffer = pass.get(visbuffer);
 		let out = pass.get(out);
 
@@ -156,7 +148,7 @@ impl DebugMeshlets {
 		}
 	}
 
-	pub unsafe fn destroy(self, device: &CoreDevice) {
+	pub unsafe fn destroy(self, device: &Device) {
 		device.device().destroy_pipeline(self.pipeline, None);
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}

@@ -90,6 +90,10 @@ impl Deletable for AS {
 	fn into_resources(self, out: &mut Vec<Resource>) { out.push(Resource::AS(self)); }
 }
 
+impl Deletable for Resource {
+	fn into_resources(self, out: &mut Vec<Resource>) { out.push(self) }
+}
+
 pub struct Submitter<'a, I> {
 	cached_wait: QueueWaitOwned<&'a Arena>,
 	data: &'a mut FrameData,

@@ -1,9 +1,8 @@
 use egui::{CentralPanel, Context, PointerButton, RichText, Ui};
 use radiance_asset::{AssetSource, AssetSystem, Uuid};
 use radiance_asset_runtime::{rref::RRef, scene, AssetRuntime};
-use radiance_core::{CoreDevice, CoreFrame, RenderCore};
 use radiance_egui::to_texture_id;
-use radiance_graph::Result;
+use radiance_graph::{device::Device, graph::Frame, Result};
 use radiance_passes::{
 	cpu_path::{self, CpuPath},
 	debug::meshlet::DebugMeshlets,
@@ -43,14 +42,14 @@ pub struct Renderer {
 }
 
 impl Renderer {
-	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
+	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
 			scene: Scene::None,
-			visbuffer: VisBuffer::new(device, core)?,
-			debug: DebugMeshlets::new(device, core)?,
-			ground_truth: GroundTruth::new(device, core)?,
+			visbuffer: VisBuffer::new(device)?,
+			debug: DebugMeshlets::new(device)?,
+			ground_truth: GroundTruth::new(device)?,
 			cpu_path: CpuPath::new(),
-			tonemap: AcesTonemap::new(device, core)?,
+			tonemap: AcesTonemap::new(device)?,
 			runtime: AssetRuntime::new(device)?,
 			camera: CameraController::new(),
 		})
@@ -59,12 +58,12 @@ impl Renderer {
 	pub fn set_scene(&mut self, scene: Uuid) { self.scene = Scene::Unloaded(scene); }
 
 	pub fn render<'pass, S: AssetSource>(
-		&'pass mut self, device: &'pass CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, window: &Window,
-		debug: &Debug, system: Option<&AssetSystem<S>>,
+		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, window: &Window, debug: &Debug,
+		system: Option<&AssetSystem<S>>,
 	) {
-		self.runtime.tick(frame.ctx());
+		self.runtime.tick(frame);
 		CentralPanel::default().show(ctx, |ui| {
-			if let Some(x) = self.render_inner(device, frame, ctx, ui, window, system, debug) {
+			if let Some(x) = self.render_inner(frame, ctx, ui, window, system, debug) {
 				if x {
 					ui.centered_and_justified(|ui| {
 						ui.label(RichText::new("no scene loaded").size(20.0));
@@ -79,28 +78,25 @@ impl Renderer {
 	}
 
 	fn render_inner<'pass, S: AssetSource>(
-		&'pass mut self, device: &'pass CoreDevice, frame: &mut CoreFrame<'pass, '_>, ctx: &Context, ui: &mut Ui,
-		window: &Window, system: Option<&AssetSystem<S>>, debug: &Debug,
+		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, ui: &mut Ui, window: &Window,
+		system: Option<&AssetSystem<S>>, debug: &Debug,
 	) -> Option<bool> {
 		let Some(system) = system else {
 			return Some(true);
 		};
-		let (scene, ticket) = match self.scene {
+		let scene = match self.scene {
 			Scene::None => return Some(true),
-			Scene::Unloaded(s) => match self
-				.runtime
-				.load(device, frame.ctx(), system, |r, l| r.load_scene(l, s))
-			{
-				Ok((s, t)) => {
+			Scene::Unloaded(s) => match self.runtime.load(frame.device(), system, |r, l| r.load_scene(l, s)) {
+				Ok(s) => {
 					self.scene = Scene::Loaded(s.clone());
-					(s, Some(t))
+					s
 				},
 				Err(e) => {
 					event!(Level::ERROR, "error loading scene: {:?}", e);
 					return None;
 				},
 			},
-			Scene::Loaded(ref s) => (s.clone(), None),
+			Scene::Loaded(ref s) => s.clone(),
 		};
 
 		let rect = ui.available_rect_before_wrap();
@@ -116,17 +112,10 @@ impl Renderer {
 		}
 		self.camera.control(ctx);
 
-		if let Some(ticket) = ticket {
-			let mut pass = frame.pass("wait for staging");
-			pass.wait_on(ticket.as_info());
-			pass.build(|_| {});
-		}
-
 		let s = Vec2::new(size.x as u32, size.y as u32);
 		let img = match debug.render_mode() {
 			RenderMode::Realtime => {
 				let visbuffer = self.visbuffer.run(
-					device,
 					frame,
 					RenderInfo {
 						scene,
@@ -139,7 +128,6 @@ impl Renderer {
 			},
 			RenderMode::GroundTruth => {
 				let rt = self.ground_truth.run(
-					device,
 					frame,
 					ground_truth::RenderInfo {
 						scene,
@@ -152,7 +140,6 @@ impl Renderer {
 			},
 			RenderMode::CpuPath => {
 				let rt = self.cpu_path.run(
-					device,
 					frame,
 					cpu_path::RenderInfo {
 						scene,
@@ -185,7 +172,7 @@ impl Renderer {
 		self.camera.on_window_event(window, event);
 	}
 
-	pub unsafe fn destroy(mut self, device: &CoreDevice) {
+	pub unsafe fn destroy(mut self, device: &Device) {
 		self.scene = Scene::None;
 		self.visbuffer.destroy(device);
 		self.debug.destroy(device);

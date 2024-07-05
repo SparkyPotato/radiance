@@ -111,6 +111,13 @@ impl Buffer {
 	pub fn inner(&self) -> vk::Buffer { self.inner }
 
 	pub fn addr(&self) -> u64 { self.addr }
+
+	pub fn desc(&self) -> graph::BufferDesc {
+		graph::BufferDesc {
+			size: self.data().len() as _,
+			upload: false,
+		}
+	}
 }
 
 impl Resource for Buffer {

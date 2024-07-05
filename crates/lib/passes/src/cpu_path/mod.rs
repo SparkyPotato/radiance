@@ -1,6 +1,6 @@
 use std::{
 	panic,
-	sync::Arc,
+	sync::{Arc, MutexGuard},
 	thread::{self, JoinHandle},
 };
 
@@ -8,13 +8,10 @@ use ash::vk;
 use crossbeam_channel::{Receiver, Sender};
 use half::f16;
 use radiance_asset_runtime::{rref::RRef, scene::Scene};
-use radiance_core::{CoreDevice, CoreFrame};
 use radiance_graph::{
-	device::QueueType,
-	graph::{ImageDesc, ImageUsage, ImageUsageType, Res},
-	resource::ImageView,
+	graph::{util::ImageStage, Frame, ImageDesc, Res},
+	resource::{ImageView, Subresource},
 };
-use radiance_util::staging::ImageStage;
 use rand::{rngs::SmallRng, Rng, SeedableRng};
 use rayon::prelude::*;
 use tracing::{span, Level};
@@ -72,9 +69,7 @@ impl CpuPath {
 		}
 	}
 
-	pub fn run<'pass>(
-		&'pass mut self, device: &'pass CoreDevice, frame: &mut CoreFrame<'pass, '_>, info: RenderInfo,
-	) -> Res<ImageView> {
+	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
 		if self.curr_camera != info.camera {
 			self.curr_camera = info.camera;
 			self.cmds.send(Command::CameraChange(info.camera)).unwrap();
@@ -96,57 +91,35 @@ impl CpuPath {
 		}
 		self.cmds.send(Command::Render).unwrap();
 
-		let mut pass = frame.pass("CPU Path");
 		let size = self.curr_framebuffer.size();
 		let size = vk::Extent3D {
 			width: size.x,
 			height: size.y,
 			depth: 1,
 		};
-		let out = pass.output(
+
+		struct Guard<'a>(MutexGuard<'a, Vec<u8>>);
+		impl AsRef<[u8]> for Guard<'_> {
+			fn as_ref(&self) -> &[u8] { &self.0 }
+		}
+		frame.stage_image_new(
+			"cpu path",
 			ImageDesc {
 				size,
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
-			},
-			ImageUsage {
 				format: vk::Format::R16G16B16A16_SFLOAT,
-				usages: &[ImageUsageType::TransferWrite],
-				view_type: vk::ImageViewType::TYPE_2D,
-				aspect: vk::ImageAspectFlags::COLOR,
 			},
-		);
-		pass.build(move |mut ctx| {
-			let image = ctx.get(out).image;
-			ctx.ctx
-				.stage(device, |sctx, _| {
-					sctx.stage_image(
-						&self.curr_framebuffer.read.lock().unwrap(),
-						image,
-						ImageStage {
-							buffer_row_length: 0,
-							buffer_image_height: 0,
-							image_subresource: vk::ImageSubresourceLayers {
-								aspect_mask: vk::ImageAspectFlags::COLOR,
-								mip_level: 0,
-								base_array_layer: 0,
-								layer_count: 1,
-							},
-							image_offset: vk::Offset3D::default(),
-							image_extent: size,
-						},
-						true,
-						QueueType::Graphics,
-						// TODO: Maybe remove the general usage but it doesn't matter because we're
-						// hammering the CPU, not the GPU here.
-						&[ImageUsageType::General],
-						&[ImageUsageType::General],
-					)
-				})
-				.unwrap();
-		});
-		out
+			ImageStage {
+				row_stride: 0,
+				plane_stride: 0,
+				subresource: Subresource::default(),
+				offset: vk::Offset3D::default(),
+				extent: size,
+			},
+			Guard(self.curr_framebuffer.read.lock().unwrap()),
+		)
 	}
 }
 
