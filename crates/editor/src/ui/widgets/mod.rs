@@ -105,7 +105,7 @@ impl Widget for TextButton {
 				underline: Stroke::NONE,
 				angle: 0.0,
 				fallback_color: Color32::default(),
-				opacity_factor: 0.0,
+				opacity_factor: 1.0,
 			});
 		}
 

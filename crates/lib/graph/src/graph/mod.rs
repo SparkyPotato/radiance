@@ -139,7 +139,9 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			frame: self,
 		}
 	}
+}
 
+impl Frame<'_, '_> {
 	pub fn delete(&mut self, res: impl Deletable) { self.graph.frame_data[self.graph.curr_frame].delete(res); }
 
 	/// Run the frame.

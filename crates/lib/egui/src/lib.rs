@@ -62,7 +62,6 @@ pub struct Renderer {
 	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
 	layout: vk::PipelineLayout,
 	pipeline: vk::Pipeline,
-	format: vk::Format,
 	vertex_size: u64,
 	index_size: u64,
 }
@@ -128,7 +127,6 @@ impl Renderer {
 			samplers: FxHashMap::default(),
 			layout,
 			pipeline,
-			format: vk::Format::B8G8R8A8_UNORM,
 			vertex_size: VERTEX_BUFFER_START_CAPACITY,
 			index_size: INDEX_BUFFER_START_CAPACITY,
 		})
@@ -335,7 +333,7 @@ impl Renderer {
 							let sampler = self.samplers[&TextureOptions {
 								magnification: TextureFilter::Linear,
 								minification: TextureFilter::Linear,
-								wrap_mode: TextureWrapMode::Repeat,
+								wrap_mode: TextureWrapMode::ClampToEdge,
 							}]
 								.1;
 							(image.id.unwrap(), sampler)

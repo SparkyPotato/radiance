@@ -121,28 +121,32 @@ impl<'graph> Resource<'graph> {
 	pub unsafe fn buffer(&self) -> &BufferData<'graph> {
 		match self {
 			Resource::Buffer(res) => res,
-			_ => unreachable_unchecked(),
+			Resource::Image(_) => unreachable!("expected buffer got image"),
+			Resource::Data(..) => unreachable!("expected buffer got cpu data"),
 		}
 	}
 
 	pub unsafe fn buffer_mut(&mut self) -> &mut BufferData<'graph> {
 		match self {
 			Resource::Buffer(res) => res,
-			_ => unreachable_unchecked(),
+			Resource::Image(_) => unreachable!("expected buffer got image"),
+			Resource::Data(..) => unreachable!("expected buffer got cpu data"),
 		}
 	}
 
 	pub unsafe fn image(&self) -> &ImageData<'graph> {
 		match self {
 			Resource::Image(res) => res,
-			_ => unreachable_unchecked(),
+			Resource::Buffer(_) => unreachable!("expected image got buffer"),
+			Resource::Data(..) => unreachable!("expected image got cpu data"),
 		}
 	}
 
 	pub unsafe fn image_mut(&mut self) -> &mut ImageData<'graph> {
 		match self {
 			Resource::Image(res) => res,
-			_ => unreachable_unchecked(),
+			Resource::Buffer(_) => unreachable!("expected image got buffer"),
+			Resource::Data(..) => unreachable!("expected image got cpu data"),
 		}
 	}
 }
@@ -263,6 +267,7 @@ impl<'graph> ResourceAliaser<'graph> {
 				buffer.desc.size = buffer.desc.size.max(data.desc.size);
 				buffer.usages.extend(data.usages);
 				*res_lifetime = res_lifetime.union(lifetime);
+				self.resource_map.push(i);
 
 				return;
 			}
@@ -288,6 +293,7 @@ impl<'graph> ResourceAliaser<'graph> {
 
 				image.usages.extend(data.usages);
 				*res_lifetime = res_lifetime.union(lifetime);
+				self.resource_map.push(i);
 
 				return;
 			}

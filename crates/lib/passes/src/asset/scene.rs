@@ -186,11 +186,16 @@ impl<S: AssetSource> Loader<'_, S> {
 			unreachable!("Scene asset is not a scene");
 		};
 
+		let name = self
+			.sys
+			.human_name(scene)
+			.to_owned()
+			.unwrap_or("unnamed scene".to_string());
 		let size = (std::mem::size_of::<GpuInstance>() * s.nodes.len()) as u64;
 		let instance_buffer = Buffer::create(
 			self.device,
 			BufferDesc {
-				name: "test",
+				name: &format!("{name} instance buffer"),
 				size,
 				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
 				on_cpu: false,
@@ -202,17 +207,17 @@ impl<S: AssetSource> Loader<'_, S> {
 		// 	.map_err(LoadError::Vulkan)?;
 		let mut writer = SliceWriter::new(unsafe { instance_buffer.data().as_mut() });
 
-		let temp_build_buffer = Buffer::create(
-			self.device,
-			BufferDesc {
-				name: "test",
-				size: (std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() * s.nodes.len()) as u64,
-				usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
-				on_cpu: false,
-			},
-		)
-		.map_err(LoadError::Vulkan)?;
-		let mut awriter = SliceWriter::new(unsafe { temp_build_buffer.data().as_mut() });
+		// let temp_build_buffer = Buffer::create(
+		// 	self.device,
+		// 	BufferDesc {
+		// 		name: "test",
+		// 		size: (std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() * s.nodes.len()) as u64,
+		// 		usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
+		// 		on_cpu: false,
+		// 	},
+		// )
+		// .map_err(LoadError::Vulkan)?;
+		// let mut awriter = SliceWriter::new(unsafe { temp_build_buffer.data().as_mut() });
 
 		let nodes: Vec<_> = s
 			.nodes
@@ -228,27 +233,27 @@ impl<S: AssetSource> Loader<'_, S> {
 						submesh_count: mesh.submeshes.len() as u32,
 					})
 					.unwrap();
-				awriter
-					.write(VkAccelerationStructureInstanceKHR {
-						transform: vk::TransformMatrixKHR {
-							matrix: unsafe {
-								std::mem::transmute(
-									n.transform.transposed().cols.xyz().map(|x| x.into_array()).into_array(),
-								)
-							},
-						},
-						instance_custom_index_and_mask: vk::Packed24_8::new(i as _, 0xff),
-						instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(0, 0),
-						acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-							device_handle: unsafe {
-								self.device.as_ext().get_acceleration_structure_device_address(
-									&vk::AccelerationStructureDeviceAddressInfoKHR::default()
-										.acceleration_structure(mesh.acceleration_structure.handle()),
-								)
-							},
-						},
-					})
-					.unwrap();
+				// awriter
+				// 	.write(VkAccelerationStructureInstanceKHR {
+				// 		transform: vk::TransformMatrixKHR {
+				// 			matrix: unsafe {
+				// 				std::mem::transmute(
+				// 					n.transform.transposed().cols.xyz().map(|x| x.into_array()).into_array(),
+				// 				)
+				// 			},
+				// 		},
+				// 		instance_custom_index_and_mask: vk::Packed24_8::new(i as _, 0xff),
+				// 		instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(0, 0),
+				// 		acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
+				// 			device_handle: unsafe {
+				// 				self.device.as_ext().get_acceleration_structure_device_address(
+				// 					&vk::AccelerationStructureDeviceAddressInfoKHR::default()
+				// 						.acceleration_structure(mesh.acceleration_structure.handle()),
+				// 				)
+				// 			},
+				// 		},
+				// 	})
+				// 	.unwrap();
 				Ok(Node {
 					name: n.name,
 					transform: n.transform,
@@ -296,7 +301,7 @@ impl<S: AssetSource> Loader<'_, S> {
 					instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
 						.array_of_pointers(false)
 						.data(vk::DeviceOrHostAddressConstKHR {
-							device_address: temp_build_buffer.addr(),
+							device_address: 0, // temp_build_buffer.addr(),
 						}),
 				})
 				.flags(vk::GeometryFlagsKHR::OPAQUE)];
@@ -318,7 +323,7 @@ impl<S: AssetSource> Loader<'_, S> {
 			let as_ = AS::create(
 				self.device,
 				ASDesc {
-					name: "test",
+					name: &format!("{name} AS"),
 					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
 					ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
 					size: size.acceleration_structure_size,
@@ -326,21 +331,21 @@ impl<S: AssetSource> Loader<'_, S> {
 			)
 			.map_err(LoadError::Vulkan)?;
 
-			let scratch = Buffer::create(
-				self.device,
-				BufferDesc {
-					name: "test",
-					size: size.build_scratch_size,
-					usage: vk::BufferUsageFlags::STORAGE_BUFFER,
-					on_cpu: false,
-				},
-			)
-			.map_err(LoadError::Vulkan)?;
+			// let scratch = Buffer::create(
+			// 	self.device,
+			// 	BufferDesc {
+			// 		name: "AS build scratch buffer",
+			// 		size: size.build_scratch_size,
+			// 		usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+			// 		on_cpu: false,
+			// 	},
+			// )
+			// .map_err(LoadError::Vulkan)?;
 
 			info.dst_acceleration_structure = as_.handle();
-			info.scratch_data = vk::DeviceOrHostAddressKHR {
-				device_address: scratch.addr(),
-			};
+			// info.scratch_data = vk::DeviceOrHostAddressKHR {
+			// 	device_address: scratch.addr(),
+			// };
 
 			// let buf = loader
 			// 	.ctx

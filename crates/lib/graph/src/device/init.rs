@@ -183,11 +183,10 @@ impl<'a> DeviceBuilder<'a> {
 			};
 
 			let mut exts: Vec<&CStr> = Self::get_surface_extensions(window)?.to_vec();
-			if validation.is_some()
-				&& entry
-					.enumerate_instance_extension_properties(None)?
-					.into_iter()
-					.any(|props| CStr::from_ptr(props.extension_name.as_ptr()) == ext::debug_utils::NAME)
+			if entry
+				.enumerate_instance_extension_properties(None)?
+				.into_iter()
+				.any(|props| CStr::from_ptr(props.extension_name.as_ptr()) == ext::debug_utils::NAME)
 			{
 				exts.push(ext::debug_utils::NAME);
 			}
@@ -338,6 +337,7 @@ impl<'a> DeviceBuilder<'a> {
 			let mut as_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
 			let mut rt_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
 			let mut rq_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
+			let mut maint5_features = vk::PhysicalDeviceMaintenance5FeaturesKHR::default();
 			{
 				let mut next = features.p_next as *mut VkStructHeader;
 				let mut found_11 = false;
@@ -346,6 +346,7 @@ impl<'a> DeviceBuilder<'a> {
 				let mut found_as = false;
 				let mut found_rt = false;
 				let mut found_rq = false;
+				let mut found_maint5 = false;
 				while !next.is_null() {
 					unsafe {
 						match (*next).ty {
@@ -355,6 +356,7 @@ impl<'a> DeviceBuilder<'a> {
 							vk::PhysicalDeviceAccelerationStructureFeaturesKHR::STRUCTURE_TYPE => found_as = true,
 							vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::STRUCTURE_TYPE => found_rt = true,
 							vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => found_rq = true,
+							vk::PhysicalDeviceMaintenance5FeaturesKHR::STRUCTURE_TYPE => found_maint5 = true,
 							_ => {},
 						}
 						next = (*next).next;
@@ -388,6 +390,11 @@ impl<'a> DeviceBuilder<'a> {
 				};
 				features = if !found_rq {
 					features.push_next(&mut rq_features)
+				} else {
+					features
+				};
+				features = if !found_maint5 {
+					features.push_next(&mut maint5_features)
 				} else {
 					features
 				};
@@ -439,6 +446,10 @@ impl<'a> DeviceBuilder<'a> {
 							let rq_features = &mut *(next as *mut vk::PhysicalDeviceRayQueryFeaturesKHR);
 							rq_features.ray_query = true as _;
 						},
+						vk::PhysicalDeviceMaintenance5FeaturesKHR::STRUCTURE_TYPE => {
+							let maint5_features = &mut *(next as *mut vk::PhysicalDeviceMaintenance5FeaturesKHR);
+							maint5_features.maintenance5 = true as _;
+						},
 						_ => {},
 					}
 					next = (*next).next;
@@ -459,15 +470,6 @@ impl<'a> DeviceBuilder<'a> {
 						continue;
 					}
 				}
-			}
-
-			let exts = unsafe { instance.enumerate_device_extension_properties(physical_device)? };
-			let has_debug = exts
-				.iter()
-				.find(|x| x.extension_name_as_c_str().unwrap() == ext::debug_utils::NAME)
-				.is_some();
-			if has_debug {
-				extensions.push(ext::debug_utils::NAME.as_ptr());
 			}
 
 			let info = vk::DeviceCreateInfo::default()
@@ -500,8 +502,8 @@ impl<'a> DeviceBuilder<'a> {
 					info!("created device: {}", name);
 
 					let queues = queues.try_map(|family| QueueData::new(&device, family))?;
-					let debug = has_debug.then(|| ext::debug_utils::Device::new(instance, &device));
-					return Ok((device, physical_device, queues, debug));
+					let debug = ext::debug_utils::Device::new(instance, &device);
+					return Ok((device, physical_device, queues, Some(debug)));
 				},
 				Err(err) => {
 					warn!("failed to create device: {}", err);
