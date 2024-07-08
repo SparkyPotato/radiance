@@ -63,9 +63,9 @@ pub struct CrossQueueSync<'graph> {
 #[derive(Clone, Debug)]
 pub struct DependencyInfo<'graph> {
 	/// Global barriers.
-	pub barriers: Vec<vk::MemoryBarrier2, &'graph Arena>,
+	pub barriers: Vec<vk::MemoryBarrier2<'static>, &'graph Arena>,
 	/// Image barriers.
-	pub image_barriers: Vec<vk::ImageMemoryBarrier2, &'graph Arena>,
+	pub image_barriers: Vec<vk::ImageMemoryBarrier2<'static>, &'graph Arena>,
 }
 
 #[derive(Debug)]
@@ -546,6 +546,13 @@ impl<'graph> SyncBuilder<'graph> {
 		Self::insert_info(dep_info, image, subresource, prev_access, next_access, None);
 	}
 
+	fn init_layout(&mut self, image: vk::Image, subresource: Subresource, access: AccessInfo) {
+		if access.image_layout != vk::ImageLayout::UNDEFINED {
+			let dep_info = &mut self.sync[Self::before_pass(0) as usize].queue;
+			Self::insert_info(dep_info, image, subresource, AccessInfo::default(), access, None);
+		}
+	}
+
 	/// Handle the sync a swapchain requires.
 	fn swapchain(
 		&mut self, image: vk::Image, pass: u32, as_prev: AccessInfo, as_next: AccessInfo, available: vk::Semaphore,
@@ -724,6 +731,11 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 
 		let (&(mut prev_pass), usage) = usages.next().unwrap();
 		let mut prev_access = usage.as_prev();
+		sync.init_layout(
+			res.handle.to_image(),
+			usage.subresource(),
+			usage.as_next(AccessInfo::default()),
+		);
 
 		while let Some((&pass, usage)) = usages.next() {
 			let next_pass = pass;

@@ -1,4 +1,4 @@
-#include "radiance-asset-runtime/data.l.hlsl"
+#include "radiance-passes/asset/data.l.hlsl"
 #include "radiance-passes/brdf/brdf.l.hlsl"
 
 struct CameraData {

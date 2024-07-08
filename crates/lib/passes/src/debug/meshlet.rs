@@ -24,12 +24,11 @@ impl DebugMeshlets {
 	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::builder()
+				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::builder()
+					.push_constant_ranges(&[vk::PushConstantRange::default()
 						.stage_flags(vk::ShaderStageFlags::FRAGMENT)
-						.size(std::mem::size_of::<PushConstants>() as u32)
-						.build()]),
+						.size(std::mem::size_of::<PushConstants>() as u32)]),
 				None,
 			)?;
 
@@ -87,18 +86,16 @@ impl DebugMeshlets {
 		let buf = pass.buf;
 
 		unsafe {
-			let area = vk::Rect2D::builder()
-				.extent(vk::Extent2D {
-					width: visbuffer.size.width,
-					height: visbuffer.size.height,
-				})
-				.build();
+			let area = vk::Rect2D::default().extent(vk::Extent2D {
+				width: visbuffer.size.width,
+				height: visbuffer.size.height,
+			});
 			dev.cmd_begin_rendering(
 				buf,
-				&vk::RenderingInfo::builder()
+				&vk::RenderingInfo::default()
 					.render_area(area)
 					.layer_count(1)
-					.color_attachments(&[vk::RenderingAttachmentInfo::builder()
+					.color_attachments(&[vk::RenderingAttachmentInfo::default()
 						.image_view(out.view)
 						.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
 						.load_op(vk::AttachmentLoadOp::CLEAR)
@@ -107,8 +104,7 @@ impl DebugMeshlets {
 								float32: [0.0, 0.0, 0.0, 1.0],
 							},
 						})
-						.store_op(vk::AttachmentStoreOp::STORE)
-						.build()]),
+						.store_op(vk::AttachmentStoreOp::STORE)]),
 			);
 			dev.cmd_set_viewport(
 				buf,

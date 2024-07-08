@@ -122,14 +122,13 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			staging.data.as_ptr().as_mut_ptr().copy_from(data.as_ptr(), data.len());
 			ctx.device.device().cmd_copy_buffer2(
 				ctx.buf,
-				&vk::CopyBufferInfo2::builder()
+				&vk::CopyBufferInfo2::default()
 					.src_buffer(staging.buffer)
 					.dst_buffer(dst.buffer)
-					.regions(&[vk::BufferCopy2::builder()
+					.regions(&[vk::BufferCopy2::default()
 						.src_offset(0)
 						.dst_offset(offset)
-						.size(data.len() as _)
-						.build()]),
+						.size(data.len() as _)]),
 			);
 		}
 	}
@@ -147,11 +146,11 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			staging.data.as_ptr().as_mut_ptr().copy_from(data.as_ptr(), data.len());
 			ctx.device.device().cmd_copy_buffer_to_image2(
 				ctx.buf,
-				&vk::CopyBufferToImageInfo2::builder()
+				&vk::CopyBufferToImageInfo2::default()
 					.src_buffer(staging.buffer)
 					.dst_image(dst.image)
 					.dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-					.regions(&[vk::BufferImageCopy2::builder()
+					.regions(&[vk::BufferImageCopy2::default()
 						.buffer_offset(0)
 						.buffer_row_length(stage.row_stride)
 						.buffer_image_height(stage.plane_stride)
@@ -162,8 +161,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 							layer_count: stage.subresource.layer_count,
 						})
 						.image_offset(stage.offset)
-						.image_extent(stage.extent)
-						.build()]),
+						.image_extent(stage.extent)]),
 			);
 		}
 	}

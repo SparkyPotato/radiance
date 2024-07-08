@@ -7,7 +7,6 @@ use std::{
 use ash::vk;
 use crossbeam_channel::{Receiver, Sender};
 use half::f16;
-use radiance_asset_runtime::{rref::RRef, scene::Scene};
 use radiance_graph::{
 	graph::{util::ImageStage, Frame, ImageDesc, Res},
 	resource::{ImageView, Subresource},
@@ -25,7 +24,11 @@ use vek::{
 	Vec4,
 };
 
-use crate::{cpu_path::framebuffer::Framebuffer, mesh::visbuffer::Camera};
+use crate::{
+	asset::{rref::RRef, scene::Scene},
+	cpu_path::framebuffer::Framebuffer,
+	mesh::visbuffer::Camera,
+};
 
 mod framebuffer;
 

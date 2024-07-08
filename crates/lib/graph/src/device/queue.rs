@@ -71,7 +71,7 @@ impl<TY: QueueType> SyncPoint<TY> {
 			device
 				.device()
 				.wait_semaphores(
-					&vk::SemaphoreWaitInfo::builder()
+					&vk::SemaphoreWaitInfo::default()
 						.semaphores(&[device.queues.get::<TY>().semaphore])
 						.values(&[self.0]),
 					u64::MAX,
@@ -185,21 +185,19 @@ impl<TY: Copy + QueueType> SyncStage<SyncPoint<TY>> {
 		self.stage |= other.stage;
 	}
 
-	fn info(self, qs: &Queues<QueueData>) -> vk::SemaphoreSubmitInfo {
-		vk::SemaphoreSubmitInfo::builder()
+	fn info(self, qs: &Queues<QueueData>) -> vk::SemaphoreSubmitInfo<'static> {
+		vk::SemaphoreSubmitInfo::default()
 			.semaphore(qs.get::<TY>().semaphore)
 			.value(self.point.0)
 			.stage_mask(self.stage)
-			.build()
 	}
 }
 
 impl SyncStage<vk::Semaphore> {
-	fn info(self) -> vk::SemaphoreSubmitInfo {
-		vk::SemaphoreSubmitInfo::builder()
+	fn info(self) -> vk::SemaphoreSubmitInfo<'static> {
+		vk::SemaphoreSubmitInfo::default()
 			.semaphore(self.point)
 			.stage_mask(self.stage)
-			.build()
 	}
 }
 
@@ -311,8 +309,8 @@ impl QueueData {
 		unsafe {
 			let queue = Mutex::new(device.get_device_queue(family, 0));
 			let semaphore = device.create_semaphore(
-				&vk::SemaphoreCreateInfo::builder().push_next(
-					&mut vk::SemaphoreTypeCreateInfo::builder()
+				&vk::SemaphoreCreateInfo::default().push_next(
+					&mut vk::SemaphoreTypeCreateInfo::default()
 						.semaphore_type(vk::SemaphoreType::TIMELINE)
 						.initial_value(0),
 				),
@@ -351,15 +349,14 @@ impl QueueData {
 			.collect_in(device.arena());
 		let infos: Vec<_, _> = bufs
 			.iter()
-			.map(|&b| vk::CommandBufferSubmitInfo::builder().command_buffer(b).build())
+			.map(|&b| vk::CommandBufferSubmitInfo::default().command_buffer(b))
 			.collect_in(device.arena());
 		let v = self.value.fetch_add(1, Ordering::Release);
 		let signal: Vec<_, _> = iter::once(
-			vk::SemaphoreSubmitInfo::builder()
+			vk::SemaphoreSubmitInfo::default()
 				.semaphore(self.semaphore)
 				.value(v + 1)
-				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-				.build(),
+				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
 		)
 		.chain(signal.into_iter().map(|x| x.info()))
 		.collect_in(device.arena());
@@ -370,11 +367,10 @@ impl QueueData {
 			let q = self.queue.lock().unwrap();
 			device.device().queue_submit2(
 				*q,
-				&[vk::SubmitInfo2::builder()
+				&[vk::SubmitInfo2::default()
 					.wait_semaphore_infos(&wait)
 					.command_buffer_infos(&infos)
-					.signal_semaphore_infos(&signal)
-					.build()],
+					.signal_semaphore_infos(&signal)],
 				fence,
 			)?;
 

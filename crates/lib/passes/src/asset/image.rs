@@ -7,7 +7,7 @@ use radiance_graph::{
 };
 use uuid::Uuid;
 
-use crate::{
+use crate::asset::{
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
 	DelRes,
@@ -23,16 +23,25 @@ pub struct Image {
 
 impl RuntimeAsset for Image {
 	fn into_resources(self, queue: Sender<DelRes>) {
-		queue.send(DelRes::Resource(Resource::Image(self.image))).unwrap();
-		queue.send(DelRes::Resource(Resource::ImageView(self.view))).unwrap();
+		queue.send(Resource::Image(self.image).into()).unwrap();
+		queue.send(Resource::ImageView(self.view).into()).unwrap();
 	}
 }
 
-impl AssetRuntime {
-	pub(crate) fn load_image_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, S>, image: Uuid, srgb: bool,
-	) -> LResult<Image, S> {
-		let Asset::Image(i) = loader.sys.load(image)? else {
+impl<S: AssetSource> Loader<'_, S> {
+	pub fn load_image(&mut self, uuid: Uuid, srgb: bool) -> LResult<Image, S> {
+		match AssetRuntime::get_cache(&mut self.runtime.images, uuid) {
+			Some(x) => Ok(x),
+			None => {
+				let i = self.load_image_from_disk(uuid, srgb)?;
+				self.runtime.images.insert(uuid, i.downgrade());
+				Ok(i)
+			},
+		}
+	}
+
+	fn load_image_from_disk(&mut self, image: Uuid, srgb: bool) -> LResult<Image, S> {
+		let Asset::Image(i) = self.sys.load(image)? else {
 			unreachable!("image asset is not image");
 		};
 
@@ -65,10 +74,10 @@ impl AssetRuntime {
 			Format::R32G32B32FLOAT => vk::Format::R32G32B32_SFLOAT,
 			Format::R32G32B32A32FLOAT => vk::Format::R32G32B32A32_SFLOAT,
 		};
-		let name = loader.sys.human_name(image).unwrap_or("unnamed image".to_string());
-		let size = vk::Extent3D::builder().width(i.width).height(i.height).depth(1).build();
+		let name = self.sys.human_name(image).unwrap_or("unnamed image".to_string());
+		let size = vk::Extent3D::default().width(i.width).height(i.height).depth(1);
 		let img = GImage::create(
-			loader.device,
+			self.device,
 			ImageDesc {
 				name: &name,
 				flags: vk::ImageCreateFlags::empty(),
@@ -82,7 +91,7 @@ impl AssetRuntime {
 		)
 		.map_err(LoadError::Vulkan)?;
 		let view = ImageView::create(
-			loader.device,
+			self.device,
 			ImageViewDesc {
 				name: &name,
 				image: img.handle(),
@@ -96,6 +105,6 @@ impl AssetRuntime {
 		.map_err(LoadError::Vulkan)?;
 		// TODO: Write data
 
-		Ok(RRef::new(Image { image: img, view }, loader.deleter.clone()))
+		Ok(RRef::new(Image { image: img, view }, self.runtime.deleter.clone()))
 	}
 }

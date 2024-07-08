@@ -1,8 +1,7 @@
 use std::io::Write;
 
-use ash::{extensions::ext, vk};
+use ash::{ext, vk};
 use bytemuck::{bytes_of, cast_slice, NoUninit};
-use radiance_asset_runtime::{rref::RRef, scene::Scene};
 use radiance_graph::{
 	device::{descriptor::BufferId, Device},
 	graph::{
@@ -28,6 +27,8 @@ use radiance_graph::{
 use radiance_shader_compiler::c_str;
 use vek::{Mat4, Vec2};
 
+use crate::asset::{rref::RRef, scene::Scene};
+
 #[derive(Copy, Clone, Default, PartialEq)]
 pub struct Camera {
 	/// Vertical FOV in radians.
@@ -49,7 +50,7 @@ pub struct VisBuffer {
 	vis_pipeline: vk::Pipeline,
 	invis_pipeline: vk::Pipeline,
 	layout: vk::PipelineLayout,
-	mesh: ext::MeshShader,
+	mesh: ext::mesh_shader::Device,
 	workgroups: PersistentBuffer,
 	visibility: Option<PersistentBuffer>,
 }
@@ -136,12 +137,11 @@ impl VisBuffer {
 	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::builder()
+				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::builder()
+					.push_constant_ranges(&[vk::PushConstantRange::default()
 						.stage_flags(vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT)
-						.size(std::mem::size_of::<PushConstants>() as u32)
-						.build()]),
+						.size(std::mem::size_of::<PushConstants>() as u32)]),
 				None,
 			)?;
 
@@ -152,7 +152,7 @@ impl VisBuffer {
 				vis_pipeline,
 				invis_pipeline,
 				layout,
-				mesh: ext::MeshShader::new(device.instance(), device.device()),
+				mesh: ext::mesh_shader::Device::new(device.instance(), device.device()),
 				workgroups: PersistentBuffer::new(
 					device,
 					BufferDesc {
@@ -369,28 +369,25 @@ impl VisBuffer {
 			writer.write(bytes_of(&io.cull_camera)).unwrap();
 			writer.write(bytes_of(&io.draw_camera)).unwrap();
 
-			let area = vk::Rect2D::builder()
-				.extent(vk::Extent2D {
-					width: visbuffer.size.width,
-					height: visbuffer.size.height,
-				})
-				.build();
+			let area = vk::Rect2D::default().extent(vk::Extent2D {
+				width: visbuffer.size.width,
+				height: visbuffer.size.height,
+			});
 			dev.cmd_begin_rendering(
 				buf,
-				&vk::RenderingInfo::builder()
+				&vk::RenderingInfo::default()
 					.render_area(area)
 					.layer_count(1)
-					.color_attachments(&[vk::RenderingAttachmentInfo::builder()
+					.color_attachments(&[vk::RenderingAttachmentInfo::default()
 						.image_view(visbuffer.view)
 						.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
 						.load_op(vk::AttachmentLoadOp::CLEAR)
 						.clear_value(vk::ClearValue {
 							color: vk::ClearColorValue { uint32: [0, 0, 0, 0] },
 						})
-						.store_op(vk::AttachmentStoreOp::STORE)
-						.build()])
+						.store_op(vk::AttachmentStoreOp::STORE)])
 					.depth_attachment(
-						&vk::RenderingAttachmentInfo::builder()
+						&vk::RenderingAttachmentInfo::default()
 							.image_view(depth.view)
 							.image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
 							.load_op(vk::AttachmentLoadOp::CLEAR)

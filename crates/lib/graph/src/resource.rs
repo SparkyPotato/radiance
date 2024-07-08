@@ -1,6 +1,6 @@
 use std::{ffi::CString, hash::Hash, ops::BitOr, ptr::NonNull};
 
-use ash::vk::{self, Handle};
+use ash::vk;
 use gpu_allocator::{
 	vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
 	MemoryLocation,
@@ -139,7 +139,7 @@ impl Resource for Buffer {
 		Self: Sized,
 	{
 		unsafe {
-			let info = vk::BufferCreateInfo::builder()
+			let info = vk::BufferCreateInfo::default()
 				.size(desc.size)
 				.usage(desc.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
 				.sharing_mode(vk::SharingMode::CONCURRENT);
@@ -157,10 +157,8 @@ impl Resource for Buffer {
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
 				d.set_debug_utils_object_name(
-					device.device().handle(),
-					&vk::DebugUtilsObjectNameInfoEXT::builder()
-						.object_type(vk::ObjectType::BUFFER)
-						.object_handle(buffer.as_raw())
+					&vk::DebugUtilsObjectNameInfoEXT::default()
+						.object_handle(buffer)
 						.object_name(&name),
 				)
 			});
@@ -185,7 +183,7 @@ impl Resource for Buffer {
 				.then(|| device.descriptors().get_buffer(device, buffer));
 			let addr = device
 				.device()
-				.get_buffer_device_address(&vk::BufferDeviceAddressInfo::builder().buffer(buffer));
+				.get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer));
 
 			Ok(Self {
 				inner: buffer,
@@ -269,7 +267,7 @@ impl Resource for Image {
 	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
 			let image = device.device().create_image(
-				&vk::ImageCreateInfo::builder()
+				&vk::ImageCreateInfo::default()
 					.flags(desc.flags)
 					.image_type(if desc.size.depth > 1 {
 						vk::ImageType::TYPE_3D
@@ -291,19 +289,17 @@ impl Resource for Image {
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
 				d.set_debug_utils_object_name(
-					device.device().handle(),
-					&vk::DebugUtilsObjectNameInfoEXT::builder()
-						.object_type(vk::ObjectType::IMAGE)
-						.object_handle(image.as_raw())
+					&vk::DebugUtilsObjectNameInfoEXT::default()
+						.object_handle(image)
 						.object_name(&name),
 				)
 			});
 
 			let mut dedicated = vk::MemoryDedicatedRequirements::default();
-			let mut out = vk::MemoryRequirements2::builder().push_next(&mut dedicated);
+			let mut out = vk::MemoryRequirements2::default().push_next(&mut dedicated);
 			device
 				.device()
-				.get_image_memory_requirements2(&vk::ImageMemoryRequirementsInfo2::builder().image(image), &mut out);
+				.get_image_memory_requirements2(&vk::ImageMemoryRequirementsInfo2::default().image(image), &mut out);
 
 			let alloc = device
 				.allocator()
@@ -450,7 +446,7 @@ impl Resource for ImageView {
 	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
 			let view = device.device().create_image_view(
-				&vk::ImageViewCreateInfo::builder()
+				&vk::ImageViewCreateInfo::default()
 					.image(desc.image)
 					.view_type(desc.view_type)
 					.format(desc.format)
@@ -473,10 +469,8 @@ impl Resource for ImageView {
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
 				d.set_debug_utils_object_name(
-					device.device().handle(),
-					&vk::DebugUtilsObjectNameInfoEXT::builder()
-						.object_type(vk::ObjectType::IMAGE_VIEW)
-						.object_handle(view.as_raw())
+					&vk::DebugUtilsObjectNameInfoEXT::default()
+						.object_handle(view)
 						.object_name(&name),
 				)
 			});
@@ -569,7 +563,7 @@ impl Resource for AS {
 				},
 			)?;
 			let inner = device.as_ext().create_acceleration_structure(
-				&vk::AccelerationStructureCreateInfoKHR::builder()
+				&vk::AccelerationStructureCreateInfoKHR::default()
 					.create_flags(desc.flags)
 					.buffer(buffer.inner)
 					.offset(0)
@@ -580,10 +574,8 @@ impl Resource for AS {
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
 				d.set_debug_utils_object_name(
-					device.device().handle(),
-					&vk::DebugUtilsObjectNameInfoEXT::builder()
-						.object_type(vk::ObjectType::ACCELERATION_STRUCTURE_KHR)
-						.object_handle(inner.as_raw())
+					&vk::DebugUtilsObjectNameInfoEXT::default()
+						.object_handle(inner)
 						.object_name(&name),
 				)
 			});
@@ -624,7 +616,7 @@ impl Resource for Event {
 	fn create(device: &Device, _: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
 			let inner = device.device().create_event(
-				&vk::EventCreateInfo::builder().flags(vk::EventCreateFlags::DEVICE_ONLY),
+				&vk::EventCreateInfo::default().flags(vk::EventCreateFlags::DEVICE_ONLY),
 				None,
 			)?;
 			Ok(Self { inner })

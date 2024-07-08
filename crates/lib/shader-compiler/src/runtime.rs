@@ -32,7 +32,7 @@ impl ShaderRuntime {
 			.map(|(name, spirv)| {
 				let module = unsafe {
 					let s = ash::util::read_spv(&mut std::io::Cursor::new(spirv)).unwrap();
-					device.create_shader_module(&vk::ShaderModuleCreateInfo::builder().code(&s), None)
+					device.create_shader_module(&vk::ShaderModuleCreateInfo::default().code(&s), None)
 				}
 				.unwrap();
 				(*name, module)
@@ -52,13 +52,13 @@ impl ShaderRuntime {
 
 	pub fn shader<'a>(
 		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
-	) -> vk::PipelineShaderStageCreateInfoBuilder {
+	) -> vk::PipelineShaderStageCreateInfo {
 		let name = name.to_str().expect("shader module name is not valid utf8");
 		let module = self
 			.modules
 			.get(name)
 			.unwrap_or_else(|| panic!("shader module {} not found", name));
-		let info = vk::PipelineShaderStageCreateInfo::builder()
+		let info = vk::PipelineShaderStageCreateInfo::default()
 			.stage(stage)
 			.module(*module)
 			.name(c_str!("main"));
@@ -69,4 +69,3 @@ impl ShaderRuntime {
 		}
 	}
 }
-

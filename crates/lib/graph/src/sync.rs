@@ -425,7 +425,7 @@ impl Default for ImageBarrier<'_> {
 	}
 }
 
-impl From<ImageBarrier<'_>> for vk::ImageMemoryBarrier2 {
+impl From<ImageBarrier<'_>> for vk::ImageMemoryBarrier2<'static> {
 	fn from(barrier: ImageBarrier) -> Self {
 		let previous_access = as_previous_access(barrier.previous_usages.iter().copied(), barrier.discard_contents);
 		let mut next_access = as_next_access(barrier.next_usages.iter().copied(), previous_access);
@@ -522,7 +522,7 @@ impl ImageBarrierAccess {
 	}
 }
 
-impl From<ImageBarrierAccess> for vk::ImageMemoryBarrier2 {
+impl From<ImageBarrierAccess> for vk::ImageMemoryBarrier2<'static> {
 	fn from(barrier: ImageBarrierAccess) -> Self {
 		vk::ImageMemoryBarrier2 {
 			image: barrier.image,
@@ -551,7 +551,7 @@ pub struct GlobalBarrier<'a> {
 	pub next_usages: &'a [UsageType],
 }
 
-impl From<GlobalBarrier<'_>> for vk::MemoryBarrier2 {
+impl From<GlobalBarrier<'_>> for vk::MemoryBarrier2<'static> {
 	fn from(barrier: GlobalBarrier<'_>) -> Self {
 		let previous_access = as_previous_access(barrier.previous_usages.iter().copied(), false);
 		let mut next_access = as_next_access(barrier.next_usages.iter().copied(), previous_access);
@@ -580,7 +580,7 @@ pub struct GlobalBarrierAccess {
 	pub next_access: AccessInfo,
 }
 
-impl From<GlobalBarrierAccess> for vk::MemoryBarrier2 {
+impl From<GlobalBarrierAccess> for vk::MemoryBarrier2<'static> {
 	fn from(barrier: GlobalBarrierAccess) -> Self {
 		vk::MemoryBarrier2 {
 			src_stage_mask: barrier.previous_access.stage_mask,
@@ -592,12 +592,12 @@ impl From<GlobalBarrierAccess> for vk::MemoryBarrier2 {
 	}
 }
 
-pub fn get_image_barrier(image_barrier: &ImageBarrier) -> vk::ImageMemoryBarrier2 { (*image_barrier).into() }
+pub fn get_image_barrier(image_barrier: &ImageBarrier) -> vk::ImageMemoryBarrier2<'static> { (*image_barrier).into() }
 pub fn get_image_barrier_access(image_barrier: &ImageBarrierAccess) -> vk::ImageMemoryBarrier2 {
 	(*image_barrier).into()
 }
 
-pub fn get_global_barrier(global_barrier: &GlobalBarrier) -> vk::MemoryBarrier2 { (*global_barrier).into() }
+pub fn get_global_barrier(global_barrier: &GlobalBarrier) -> vk::MemoryBarrier2<'static> { (*global_barrier).into() }
 pub fn get_global_barrier_access(global_barrier: &GlobalBarrierAccess) -> vk::MemoryBarrier2 {
 	(*global_barrier).into()
 }

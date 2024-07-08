@@ -4,7 +4,8 @@ use radiance_passes::mesh::visbuffer::Camera;
 use vek::{num_traits::FloatConst, Mat4, Vec2, Vec3, Vec4};
 use winit::{
 	dpi::PhysicalPosition,
-	event::{ElementState, MouseScrollDelta, VirtualKeyCode, WindowEvent},
+	event::{ElementState, MouseScrollDelta, WindowEvent},
+	keyboard::{KeyCode, PhysicalKey},
 	window::CursorGrabMode,
 };
 
@@ -109,23 +110,21 @@ impl CameraController {
 				self.pitch = self.pitch.clamp(-f32::FRAC_PI_2(), f32::FRAC_PI_2());
 			},
 			WindowEvent::KeyboardInput {
-				input,
+				event,
 				is_synthetic: false,
 				..
 			} => {
-				if let Some(key) = input.virtual_keycode {
-					let offset = match key {
-						VirtualKeyCode::W => 0,
-						VirtualKeyCode::S => 1,
-						VirtualKeyCode::D => 2,
-						VirtualKeyCode::A => 3,
-						VirtualKeyCode::E => 4,
-						VirtualKeyCode::Q => 5,
-						_ => return,
-					};
+				let offset = match event.physical_key {
+					PhysicalKey::Code(KeyCode::KeyW) => 0,
+					PhysicalKey::Code(KeyCode::KeyS) => 1,
+					PhysicalKey::Code(KeyCode::KeyD) => 2,
+					PhysicalKey::Code(KeyCode::KeyA) => 3,
+					PhysicalKey::Code(KeyCode::KeyE) => 4,
+					PhysicalKey::Code(KeyCode::KeyQ) => 5,
+					_ => return,
+				};
 
-					self.states[offset] = input.state == ElementState::Pressed;
-				}
+				self.states[offset] = event.state == ElementState::Pressed;
 			},
 			WindowEvent::MouseWheel { delta, .. } => {
 				let delta = match delta {

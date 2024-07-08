@@ -12,6 +12,7 @@ use egui::{
 	TextureFilter,
 	TextureId,
 	TextureOptions,
+	TextureWrapMode,
 	TexturesDelta,
 };
 use radiance_graph::{
@@ -87,10 +88,10 @@ struct PushConstantsDynamic {
 }
 
 impl Renderer {
-	pub fn new(device: &Device, output_format: vk::Format) -> Result<Self> {
+	pub fn new(device: &Device) -> Result<Self> {
 		let (layout, pipeline) = unsafe {
 			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::builder()
+				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
 					.push_constant_ranges(&[
 						vk::PushConstantRange {
@@ -113,7 +114,7 @@ impl Renderer {
 					device.shader(c_str!("radiance-egui/vertex"), vk::ShaderStageFlags::VERTEX, None),
 					device.shader(c_str!("radiance-egui/pixel"), vk::ShaderStageFlags::FRAGMENT, None),
 				],
-				color_attachments: &[output_format],
+				color_attachments: &[vk::Format::B8G8R8A8_UNORM],
 				blend: &simple_blend(&[default_blend()]),
 				raster: &no_cull(),
 				..Default::default()
@@ -127,7 +128,7 @@ impl Renderer {
 			samplers: FxHashMap::default(),
 			layout,
 			pipeline,
-			format: output_format,
+			format: vk::Format::B8G8R8A8_UNORM,
 			vertex_size: VERTEX_BUFFER_START_CAPACITY,
 			index_size: INDEX_BUFFER_START_CAPACITY,
 		})
@@ -141,7 +142,7 @@ impl Renderer {
 	{
 		let imgs = self.generate_images(frame, delta);
 		let img_usage = ImageUsage {
-			format: vk::Format::UNDEFINED,
+			format: vk::Format::R8G8B8A8_UNORM,
 			usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
 			view_type: Some(vk::ImageViewType::TYPE_2D),
 			subresource: Subresource::default(),
@@ -194,7 +195,7 @@ impl Renderer {
 		let out = pass.resource(
 			out,
 			ImageUsage {
-				format: self.format,
+				format: vk::Format::B8G8R8A8_UNORM,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource::default(),
@@ -244,19 +245,16 @@ impl Renderer {
 
 		pass.device.device().cmd_begin_rendering(
 			pass.buf,
-			&vk::RenderingInfo::builder()
+			&vk::RenderingInfo::default()
 				.render_area(
-					vk::Rect2D::builder()
-						.extent(
-							vk::Extent2D::builder()
-								.width(screen.physical_size.x)
-								.height(screen.physical_size.y)
-								.build(),
-						)
-						.build(),
+					vk::Rect2D::default().extent(
+						vk::Extent2D::default()
+							.width(screen.physical_size.x)
+							.height(screen.physical_size.y),
+					),
 				)
 				.layer_count(1)
-				.color_attachments(&[vk::RenderingAttachmentInfo::builder()
+				.color_attachments(&[vk::RenderingAttachmentInfo::default()
 					.image_view(out.view)
 					.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
 					.load_op(vk::AttachmentLoadOp::CLEAR)
@@ -265,8 +263,7 @@ impl Renderer {
 							float32: [0.0, 0.0, 0.0, 1.0],
 						},
 					})
-					.store_op(vk::AttachmentStoreOp::STORE)
-					.build()]),
+					.store_op(vk::AttachmentStoreOp::STORE)]),
 		);
 		pass.device.device().cmd_set_viewport(
 			pass.buf,
@@ -338,6 +335,7 @@ impl Renderer {
 							let sampler = self.samplers[&TextureOptions {
 								magnification: TextureFilter::Linear,
 								minification: TextureFilter::Linear,
+								wrap_mode: TextureWrapMode::Repeat,
 							}]
 								.1;
 							(image.id.unwrap(), sampler)
@@ -411,13 +409,13 @@ impl Renderer {
 						frame.device(),
 						ImageDesc {
 							name: "egui image",
-							format: vk::Format::R8G8B8A8_SRGB,
+							format: vk::Format::R8G8B8A8_UNORM,
 							size: extent,
 							levels: 1,
 							layers: 1,
 							samples: vk::SampleCountFlags::TYPE_1,
 							usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-							flags: vk::ImageCreateFlags::empty(),
+							flags: vk::ImageCreateFlags::MUTABLE_FORMAT,
 						},
 					)
 					.unwrap();
@@ -429,7 +427,7 @@ impl Renderer {
 							image: image.handle(),
 							size: extent,
 							view_type: vk::ImageViewType::TYPE_2D,
-							format: vk::Format::R8G8B8A8_SRGB,
+							format: vk::Format::R8G8B8A8_UNORM,
 							usage: ImageViewUsage::Sampled,
 							subresource: Subresource::default(),
 						},
@@ -443,14 +441,25 @@ impl Renderer {
 						}
 					}
 
+					fn map_repeat(repeat: TextureWrapMode) -> vk::SamplerAddressMode {
+						match repeat {
+							TextureWrapMode::ClampToEdge => vk::SamplerAddressMode::CLAMP_TO_EDGE,
+							TextureWrapMode::Repeat => vk::SamplerAddressMode::REPEAT,
+							TextureWrapMode::MirroredRepeat => vk::SamplerAddressMode::MIRRORED_REPEAT,
+						}
+					}
+
 					let (_, id) = self.samplers.entry(data.options).or_insert_with(|| unsafe {
 						let sampler = frame
 							.device()
 							.device()
 							.create_sampler(
-								&vk::SamplerCreateInfo::builder()
+								&vk::SamplerCreateInfo::default()
 									.mag_filter(map_filter(data.options.magnification))
 									.min_filter(map_filter(data.options.minification))
+									.address_mode_u(map_repeat(data.options.wrap_mode))
+									.address_mode_v(map_repeat(data.options.wrap_mode))
+									.address_mode_w(map_repeat(data.options.wrap_mode))
 									.mipmap_mode(vk::SamplerMipmapMode::LINEAR),
 								None,
 							)

@@ -6,10 +6,7 @@ use std::{
 	sync::{Mutex, MutexGuard},
 };
 
-use ash::{
-	extensions::{ext, khr},
-	vk,
-};
+use ash::{ext, khr, vk};
 pub use gpu_allocator::vulkan as alloc;
 use gpu_allocator::vulkan::Allocator;
 use radiance_shader_compiler::runtime::ShaderRuntime;
@@ -38,13 +35,12 @@ mod queue;
 /// Has everything you need to do Vulkan stuff.
 pub struct Device {
 	arena: Arena,
-	debug_messenger: vk::DebugUtilsMessengerEXT, // Can be null.
 	physical_device: vk::PhysicalDevice,
 	device: ash::Device,
-	as_ext: khr::AccelerationStructure,
-	rt_ext: khr::RayTracingPipeline,
-	surface_ext: Option<khr::Surface>,
-	debug_utils_ext: Option<ext::DebugUtils>,
+	as_ext: khr::acceleration_structure::Device,
+	rt_ext: khr::ray_tracing_pipeline::Device,
+	surface_ext: Option<khr::surface::Instance>,
+	debug_utils_ext: Option<ext::debug_utils::Device>,
 	queues: Queues<QueueData>,
 	allocator: ManuallyDrop<Mutex<Allocator>>,
 	shaders: ManuallyDrop<ShaderRuntime>,
@@ -60,7 +56,7 @@ impl Device {
 
 	pub fn shader<'a>(
 		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
-	) -> vk::PipelineShaderStageCreateInfoBuilder {
+	) -> vk::PipelineShaderStageCreateInfo {
 		self.shaders.shader(name, stage, specialization)
 	}
 
@@ -72,13 +68,13 @@ impl Device {
 
 	pub fn physical_device(&self) -> vk::PhysicalDevice { self.physical_device }
 
-	pub fn as_ext(&self) -> &khr::AccelerationStructure { &self.as_ext }
+	pub fn as_ext(&self) -> &khr::acceleration_structure::Device { &self.as_ext }
 
-	pub fn rt_ext(&self) -> &khr::RayTracingPipeline { &self.rt_ext }
+	pub fn rt_ext(&self) -> &khr::ray_tracing_pipeline::Device { &self.rt_ext }
 
-	pub fn surface_ext(&self) -> Option<&khr::Surface> { self.surface_ext.as_ref() }
+	pub fn surface_ext(&self) -> Option<&khr::surface::Instance> { self.surface_ext.as_ref() }
 
-	pub fn debug_utils_ext(&self) -> Option<&ext::DebugUtils> { self.debug_utils_ext.as_ref() }
+	pub fn debug_utils_ext(&self) -> Option<&ext::debug_utils::Device> { self.debug_utils_ext.as_ref() }
 
 	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.allocator.lock().unwrap() }
 
@@ -110,9 +106,6 @@ impl Drop for Device {
 
 			self.device.destroy_device(None);
 
-			if let Some(utils) = self.debug_utils_ext.as_ref() {
-				utils.destroy_debug_utils_messenger(self.debug_messenger, None);
-			}
 			self.instance.destroy_instance(None);
 		}
 	}

@@ -1,28 +1,30 @@
+use std::marker::PhantomData;
+
 use ash::vk::{self, TaggedStructure};
 
 use crate::{device::Device, Result};
 
-pub fn reverse_depth() -> vk::PipelineDepthStencilStateCreateInfoBuilder<'static> {
-	vk::PipelineDepthStencilStateCreateInfo::builder()
+pub fn reverse_depth() -> vk::PipelineDepthStencilStateCreateInfo<'static> {
+	vk::PipelineDepthStencilStateCreateInfo::default()
 		.depth_test_enable(true)
 		.depth_write_enable(true)
 		.depth_compare_op(vk::CompareOp::GREATER)
 }
 
-pub fn no_cull() -> vk::PipelineRasterizationStateCreateInfoBuilder<'static> {
-	vk::PipelineRasterizationStateCreateInfo::builder()
+pub fn no_cull() -> vk::PipelineRasterizationStateCreateInfo<'static> {
+	vk::PipelineRasterizationStateCreateInfo::default()
 		.polygon_mode(vk::PolygonMode::FILL)
 		.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
 		.cull_mode(vk::CullModeFlags::NONE)
 		.line_width(1.0)
 }
 
-pub fn simple_blend(states: &[vk::PipelineColorBlendAttachmentState]) -> vk::PipelineColorBlendStateCreateInfoBuilder {
-	vk::PipelineColorBlendStateCreateInfo::builder().attachments(states)
+pub fn simple_blend(states: &[vk::PipelineColorBlendAttachmentState]) -> vk::PipelineColorBlendStateCreateInfo {
+	vk::PipelineColorBlendStateCreateInfo::default().attachments(states)
 }
 
 pub fn no_blend() -> vk::PipelineColorBlendAttachmentState {
-	vk::PipelineColorBlendAttachmentState::builder()
+	vk::PipelineColorBlendAttachmentState::default()
 		.color_write_mask(
 			vk::ColorComponentFlags::R
 				| vk::ColorComponentFlags::G
@@ -30,11 +32,10 @@ pub fn no_blend() -> vk::PipelineColorBlendAttachmentState {
 				| vk::ColorComponentFlags::A,
 		)
 		.blend_enable(false)
-		.build()
 }
 
 pub fn default_blend() -> vk::PipelineColorBlendAttachmentState {
-	vk::PipelineColorBlendAttachmentState::builder()
+	vk::PipelineColorBlendAttachmentState::default()
 		.color_write_mask(
 			vk::ColorComponentFlags::R
 				| vk::ColorComponentFlags::G
@@ -48,15 +49,14 @@ pub fn default_blend() -> vk::PipelineColorBlendAttachmentState {
 		.src_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_DST_ALPHA)
 		.dst_alpha_blend_factor(vk::BlendFactor::ONE)
 		.alpha_blend_op(vk::BlendOp::ADD)
-		.build()
 }
 
 pub struct GraphicsPipelineDesc<'a> {
-	pub shaders: &'a [vk::PipelineShaderStageCreateInfoBuilder<'a>],
-	pub raster: &'a vk::PipelineRasterizationStateCreateInfo,
-	pub depth: &'a vk::PipelineDepthStencilStateCreateInfo,
-	pub multisample: &'a vk::PipelineMultisampleStateCreateInfo,
-	pub blend: &'a vk::PipelineColorBlendStateCreateInfo,
+	pub shaders: &'a [vk::PipelineShaderStageCreateInfo<'a>],
+	pub raster: &'a vk::PipelineRasterizationStateCreateInfo<'static>,
+	pub depth: &'a vk::PipelineDepthStencilStateCreateInfo<'static>,
+	pub multisample: &'a vk::PipelineMultisampleStateCreateInfo<'static>,
+	pub blend: &'a vk::PipelineColorBlendStateCreateInfo<'a>,
 	pub dynamic: &'a [vk::DynamicState],
 	pub layout: vk::PipelineLayout,
 	pub color_attachments: &'a [vk::Format],
@@ -75,6 +75,7 @@ impl Default for GraphicsPipelineDesc<'_> {
 			attachment_count: 0,
 			p_attachments: std::ptr::null(),
 			blend_constants: [0.0, 0.0, 0.0, 0.0],
+			_marker: PhantomData,
 		};
 
 		const RASTER: vk::PipelineRasterizationStateCreateInfo = vk::PipelineRasterizationStateCreateInfo {
@@ -91,6 +92,7 @@ impl Default for GraphicsPipelineDesc<'_> {
 			depth_bias_clamp: 0.0,
 			depth_bias_slope_factor: 0.0,
 			line_width: 1.0,
+			_marker: PhantomData,
 		};
 
 		const STENCIL: vk::StencilOpState = vk::StencilOpState {
@@ -116,6 +118,7 @@ impl Default for GraphicsPipelineDesc<'_> {
 			back: STENCIL,
 			min_depth_bounds: 0.0,
 			max_depth_bounds: 1.0,
+			_marker: PhantomData,
 		};
 
 		const MULTISAMPLE: vk::PipelineMultisampleStateCreateInfo = vk::PipelineMultisampleStateCreateInfo {
@@ -128,6 +131,7 @@ impl Default for GraphicsPipelineDesc<'_> {
 			p_sample_mask: std::ptr::null(),
 			alpha_to_coverage_enable: 0,
 			alpha_to_one_enable: 0,
+			_marker: PhantomData,
 		};
 
 		Self {
@@ -153,31 +157,30 @@ impl Device {
 				.device()
 				.create_graphics_pipelines(
 					vk::PipelineCache::null(),
-					&[vk::GraphicsPipelineCreateInfo::builder()
+					&[vk::GraphicsPipelineCreateInfo::default()
 						.stages(std::mem::transmute(desc.shaders))
-						.vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::builder())
+						.vertex_input_state(&vk::PipelineVertexInputStateCreateInfo::default())
 						.input_assembly_state(
-							&vk::PipelineInputAssemblyStateCreateInfo::builder()
+							&vk::PipelineInputAssemblyStateCreateInfo::default()
 								.topology(vk::PrimitiveTopology::TRIANGLE_LIST),
 						)
 						.viewport_state(
-							&vk::PipelineViewportStateCreateInfo::builder()
-								.viewports(&[vk::Viewport::builder().build()])
-								.scissors(&[vk::Rect2D::builder().build()]),
+							&vk::PipelineViewportStateCreateInfo::default()
+								.viewports(&[vk::Viewport::default()])
+								.scissors(&[vk::Rect2D::default()]),
 						)
 						.rasterization_state(desc.raster)
 						.depth_stencil_state(desc.depth)
 						.multisample_state(desc.multisample)
 						.color_blend_state(desc.blend)
-						.dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(desc.dynamic))
+						.dynamic_state(&vk::PipelineDynamicStateCreateInfo::default().dynamic_states(desc.dynamic))
 						.layout(desc.layout)
 						.push_next(
-							&mut vk::PipelineRenderingCreateInfo::builder()
+							&mut vk::PipelineRenderingCreateInfo::default()
 								.color_attachment_formats(desc.color_attachments)
 								.depth_attachment_format(desc.depth_attachment)
 								.stencil_attachment_format(desc.stencil_attachment),
-						)
-						.build()],
+						)],
 					None,
 				)
 				.map_err(|x| x.1)?[0];
@@ -187,17 +190,14 @@ impl Device {
 	}
 
 	pub fn compute_pipeline(
-		&self, layout: vk::PipelineLayout, shader: vk::PipelineShaderStageCreateInfoBuilder,
+		&self, layout: vk::PipelineLayout, shader: vk::PipelineShaderStageCreateInfo,
 	) -> Result<vk::Pipeline> {
 		unsafe {
 			let pipeline = self
 				.device()
 				.create_compute_pipelines(
 					vk::PipelineCache::null(),
-					&[vk::ComputePipelineCreateInfo::builder()
-						.layout(layout)
-						.stage(shader.build())
-						.build()],
+					&[vk::ComputePipelineCreateInfo::default().layout(layout).stage(shader)],
 					None,
 				)
 				.map_err(|x| x.1)?[0];

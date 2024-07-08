@@ -7,16 +7,20 @@ edition = "2021"
 radiance-shader-compiler = { path = "../shader-compiler", features = ["build-script"] }
 
 [dependencies]
-radiance-asset-runtime = { path = "../asset-runtime" }
+radiance-asset = { path = "../asset" }
 radiance-graph = { path = "../graph", features = ["bytemuck"] }
 radiance-shader-compiler = { path = "../shader-compiler", features = ["runtime"] }
 
 ash = { workspace = true }
-crossbeam-channel = { workspace = true }
 bytemuck = { workspace = true }
+crossbeam-channel = { workspace = true }
 half = { workspace = true }
-rayon = { workspace = true }
-tracing = { workspace = true }
-vek = { workspace = true }
+parry3d = { workspace = true }
 rand = { workspace = true, features = ["small_rng"] }
+rayon = { workspace = true }
+rustc-hash = { workspace = true }
+static_assertions = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+vek = { workspace = true }
 

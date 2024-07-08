@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use egui::{
 	epaint,
+	Color32,
 	FontData,
 	FontDefinitions,
 	FontFamily,
@@ -99,10 +100,12 @@ impl Widget for TextButton {
 
 			ui.painter().add(epaint::TextShape {
 				pos,
-				galley: text_galley.galley,
+				galley: text_galley,
 				override_text_color: Some(response_color),
 				underline: Stroke::NONE,
 				angle: 0.0,
+				fallback_color: Color32::default(),
+				opacity_factor: 0.0,
 			});
 		}
 

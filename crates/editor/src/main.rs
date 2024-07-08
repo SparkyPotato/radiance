@@ -1,12 +1,12 @@
 use std::mem::ManuallyDrop;
 
-use ash::{extensions::ext, vk};
+use ash::{ext, vk};
 use radiance_graph::{device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 use winit::{
 	dpi::LogicalSize,
 	event::{Event, StartCause, WindowEvent},
-	event_loop::{ControlFlow, EventLoop},
+	event_loop::EventLoop,
 	window::WindowBuilder,
 };
 
@@ -21,36 +21,30 @@ mod window;
 
 fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Result<(Device, vk::SurfaceKHR)> {
 	unsafe {
+		// TODO: Move features somewhere else.
 		Device::builder()
 			.validation(cfg!(debug_assertions))
 			.window(window, event_loop)
-			.device_extensions(&[ext::MeshShader::name()])
+			.device_extensions(&[ext::mesh_shader::NAME])
 			.features(
-				vk::PhysicalDeviceFeatures2::builder()
+				vk::PhysicalDeviceFeatures2::default()
 					.features(
-						vk::PhysicalDeviceFeatures::builder()
+						vk::PhysicalDeviceFeatures::default()
 							.sampler_anisotropy(true)
 							.geometry_shader(true)
 							.multi_draw_indirect(true)
-							.draw_indirect_first_instance(true)
-							.build(),
+							.draw_indirect_first_instance(true),
 					)
+					.push_next(&mut vk::PhysicalDeviceVulkan12Features::default().draw_indirect_count(true))
 					.push_next(
-						&mut vk::PhysicalDeviceVulkan12Features::builder()
-							.draw_indirect_count(true)
-							.build(),
-					)
-					.push_next(
-						&mut vk::PhysicalDeviceVulkan13Features::builder()
+						&mut vk::PhysicalDeviceVulkan13Features::default()
 							.dynamic_rendering(true)
-							.shader_demote_to_helper_invocation(true)
-							.build(),
+							.shader_demote_to_helper_invocation(true),
 					)
 					.push_next(
-						&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::builder()
+						&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::default()
 							.task_shader(true)
-							.mesh_shader(true)
-							.build(),
+							.mesh_shader(true),
 					),
 			)
 			.shaders(&[radiance_egui::SHADERS, radiance_passes::SHADERS])
@@ -109,7 +103,7 @@ fn main() {
 			.with(tracy::tracing::TracyLayer),
 	);
 
-	let event_loop = EventLoop::new();
+	let event_loop = EventLoop::new().unwrap();
 	let window = WindowBuilder::new()
 		.with_title("radiance-editor")
 		.with_inner_size(LogicalSize::new(1280, 720))
@@ -119,31 +113,34 @@ fn main() {
 
 	let mut state = State::new(&event_loop, window).unwrap();
 
-	event_loop.run(move |event, _, flow| match event {
-		Event::NewEvents(StartCause::Init) => state.window.window.set_visible(true),
-		Event::MainEventsCleared => state.window.request_redraw(),
-		Event::RedrawRequested(_) => {
-			let arena_size = state.device.arena().memory_usage();
-			state.device.reset_arena();
-			let mut frame = state.graph.frame(&state.device);
+	event_loop
+		.run(move |event, t| match event {
+			Event::NewEvents(StartCause::Init) => state.window.window.set_visible(true),
+			Event::AboutToWait => state.window.request_redraw(),
 
-			state.ui.begin_frame(&state.window);
-			state.state.render(&mut frame, &state.ui.ctx, &state.window, arena_size);
-			let id = state.ui.run(&mut frame, &state.window).unwrap();
+			Event::WindowEvent { event, .. } => {
+				match event {
+					WindowEvent::RedrawRequested => {
+						let arena_size = state.device.arena().memory_usage();
+						state.device.reset_arena();
+						let mut frame = state.graph.frame(&state.device);
 
-			frame.run().unwrap();
-			state.window.present(&state.device, id).unwrap();
-			tracy::frame!();
-		},
-		Event::WindowEvent { event, .. } => {
-			state.state.on_window_event(&state.window, &event);
-			state.ui.on_event(&event);
-			match event {
-				WindowEvent::CloseRequested => *flow = ControlFlow::Exit,
-				WindowEvent::Resized(_) => state.window.resize(&state.device).unwrap(),
-				_ => {},
-			}
-		},
-		_ => {},
-	})
+						state.ui.begin_frame(&state.window);
+						state.state.render(&mut frame, &state.ui.ctx, &state.window, arena_size);
+						let id = state.ui.run(&mut frame, &mut state.window).unwrap();
+
+						frame.run().unwrap();
+						state.window.present(&state.device, id).unwrap();
+						tracy::frame!();
+					},
+					WindowEvent::CloseRequested => t.exit(),
+					WindowEvent::Resized(_) => state.window.resize(&state.device).unwrap(),
+					_ => {},
+				}
+				state.state.on_window_event(&state.window, &event);
+				state.ui.on_event(&state.window, &event);
+			},
+			_ => {},
+		})
+		.unwrap()
 }

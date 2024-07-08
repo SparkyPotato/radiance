@@ -208,7 +208,7 @@ mod tests {
 			unsafe fn destroy(self, _: &Device) {}
 		}
 
-		let (device, _) = Device::builder().build().unwrap();
+		let (device, _) = Device::default().build().unwrap();
 		let mut list = ResourceList::<Resource>::new();
 
 		list.get_or_create(&device, ResourceDesc).unwrap();

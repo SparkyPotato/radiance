@@ -1,4 +1,4 @@
-use ash::{extensions::khr, vk};
+use ash::{khr, vk};
 use radiance_graph::{
 	device::{Device, Graphics, SyncPoint},
 	graph::{SwapchainImage, FRAMES_IN_FLIGHT},
@@ -13,11 +13,11 @@ struct OldSwapchain {
 pub struct Window {
 	pub window: winit::window::Window,
 	surface: vk::SurfaceKHR,
-	swapchain_ext: khr::Swapchain,
+	swapchain_ext: khr::swapchain::Device,
 	old_swapchain: OldSwapchain,
 	swapchain: vk::SwapchainKHR,
 	images: Vec<vk::Image>,
-	semas: [(vk::Semaphore, vk::Semaphore); FRAMES_IN_FLIGHT],
+	semas: [(vk::Semaphore, vk::Semaphore); FRAMES_IN_FLIGHT + 1],
 	curr_frame: usize,
 	format: vk::Format,
 	size: vk::Extent2D,
@@ -25,7 +25,7 @@ pub struct Window {
 
 impl Window {
 	pub fn new(device: &Device, window: winit::window::Window, surface: vk::SurfaceKHR) -> Result<Self> {
-		let swapchain_ext = khr::Swapchain::new(device.instance(), device.device());
+		let swapchain_ext = khr::swapchain::Device::new(device.instance(), device.device());
 		let mut this = Self {
 			window,
 			surface,
@@ -39,6 +39,7 @@ impl Window {
 			semas: [
 				(semaphore(device)?, semaphore(device)?),
 				(semaphore(device)?, semaphore(device)?),
+				(semaphore(device)?, semaphore(device)?),
 			],
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
@@ -50,8 +51,9 @@ impl Window {
 
 	pub fn request_redraw(&self) { self.window.request_redraw(); }
 
-	pub fn acquire(&self) -> Result<(SwapchainImage, u32)> {
+	pub fn acquire(&mut self) -> Result<(SwapchainImage, u32)> {
 		unsafe {
+			self.curr_frame = (self.curr_frame + 1) % 3;
 			let (available, rendered) = self.semas[self.curr_frame];
 			let (id, _) =
 				self.swapchain_ext
@@ -78,13 +80,11 @@ impl Window {
 			let (_, rendered) = self.semas[self.curr_frame];
 			self.swapchain_ext.queue_present(
 				*device.queue::<Graphics>(),
-				&vk::PresentInfoKHR::builder()
+				&vk::PresentInfoKHR::default()
 					.wait_semaphores(&[rendered])
 					.swapchains(&[self.swapchain])
-					.image_indices(&[id])
-					.build(),
+					.image_indices(&[id]),
 			)?;
-			self.curr_frame ^= 1;
 
 			Ok(())
 		}
@@ -99,10 +99,10 @@ impl Window {
 			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			self.swapchain_ext.destroy_swapchain(self.swapchain, None);
 			device.surface_ext().unwrap().destroy_surface(self.surface, None);
-			device.device().destroy_semaphore(self.semas[0].0, None);
-			device.device().destroy_semaphore(self.semas[0].1, None);
-			device.device().destroy_semaphore(self.semas[1].0, None);
-			device.device().destroy_semaphore(self.semas[1].1, None);
+			for (available, rendered) in self.semas {
+				device.device().destroy_semaphore(available, None);
+				device.device().destroy_semaphore(rendered, None);
+			}
 		}
 	}
 
@@ -133,7 +133,7 @@ impl Window {
 			let (format, color_space) = formats
 				.iter()
 				.find(|format| {
-					format.format == vk::Format::B8G8R8A8_SRGB
+					format.format == vk::Format::B8G8R8A8_UNORM
 						&& format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
 				})
 				.map(|format| (format.format, format.color_space))
@@ -150,7 +150,7 @@ impl Window {
 			self.swapchain = self
 				.swapchain_ext
 				.create_swapchain(
-					&vk::SwapchainCreateInfoKHR::builder()
+					&vk::SwapchainCreateInfoKHR::default()
 						.surface(self.surface)
 						.min_image_count(if (capabilities.min_image_count..=capabilities.max_image_count).contains(&2) { 2 } else { capabilities.min_image_count })
 						.image_format(format)
@@ -186,7 +186,7 @@ pub fn semaphore(device: &Device) -> Result<vk::Semaphore> {
 	unsafe {
 		device
 			.device()
-			.create_semaphore(&vk::SemaphoreCreateInfo::builder().build(), None)
+			.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
 			.map_err(Into::into)
 	}
 }

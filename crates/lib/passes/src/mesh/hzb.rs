@@ -35,9 +35,9 @@ impl HzbGen {
 	pub fn new(device: &CoreDevice, core: &RenderCore) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::builder()
+				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::builder()
+					.push_constant_ranges(&[vk::PushConstantRange::default()
 						.stage_flags(vk::ShaderStageFlags::FRAGMENT)
 						.size(std::mem::size_of::<PushConstants>() as u32)
 						.build()]),
@@ -184,7 +184,7 @@ impl HzbGen {
 				io.size.y /= 2
 			}
 
-			let area = vk::Rect2D::builder()
+			let area = vk::Rect2D::default()
 				.extent(vk::Extent2D {
 					width: io.size.x,
 					height: io.size.y,
@@ -192,11 +192,11 @@ impl HzbGen {
 				.build();
 			dev.cmd_begin_rendering(
 				buf,
-				&vk::RenderingInfo::builder()
+				&vk::RenderingInfo::default()
 					.render_area(area)
 					.layer_count(1)
 					.depth_attachment(
-						&vk::RenderingAttachmentInfo::builder()
+						&vk::RenderingAttachmentInfo::default()
 							.image_view(write.view)
 							.image_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
 							.load_op(vk::AttachmentLoadOp::CLEAR)

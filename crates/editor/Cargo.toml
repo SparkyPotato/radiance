@@ -8,7 +8,6 @@ radiance-shader-compiler = { path = "../lib/shader-compiler", features = ["build
 
 [dependencies]
 radiance-asset = { path = "../lib/asset", features = ["fs", "import"] }
-radiance-asset-runtime = { path = "../lib/asset-runtime" }
 radiance-egui = { path = "../lib/egui" }
 radiance-graph = { path = "../lib/graph", features = ["bytemuck"] }
 radiance-passes = { path = "../lib/passes" }

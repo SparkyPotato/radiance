@@ -6,7 +6,7 @@ use static_assertions::const_assert_eq;
 use uuid::Uuid;
 use vek::{Vec3, Vec4};
 
-use crate::{
+use crate::asset::{
 	image::Image,
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
@@ -45,22 +45,28 @@ impl RuntimeAsset for Material {
 	fn into_resources(self, queue: Sender<DelRes>) { queue.send(DelRes::Material(self.index)).unwrap(); }
 }
 
-impl AssetRuntime {
-	pub(crate) fn load_material_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, S>, material: Uuid,
-	) -> LResult<Material, S> {
-		let Asset::Material(m) = loader.sys.load(material)? else {
+impl<S: AssetSource> Loader<'_, S> {
+	pub fn load_material(&mut self, uuid: Uuid) -> LResult<Material, S> {
+		match AssetRuntime::get_cache(&mut self.runtime.materials, uuid) {
+			Some(x) => Ok(x),
+			None => {
+				let m = self.load_material_from_disk(uuid)?;
+				self.runtime.materials.insert(uuid, m.downgrade());
+				Ok(m)
+			},
+		}
+	}
+
+	fn load_material_from_disk(&mut self, material: Uuid) -> LResult<Material, S> {
+		let Asset::Material(m) = self.sys.load(material)? else {
 			unreachable!("Material asset is not a material");
 		};
 
-		let base_color = m.base_color.map(|x| self.load_image(loader, x, true)).transpose()?;
-		let metallic_roughness = m
-			.metallic_roughness
-			.map(|x| self.load_image(loader, x, false))
-			.transpose()?;
-		let normal = m.normal.map(|x| self.load_image(loader, x, false)).transpose()?;
-		let occlusion = m.occlusion.map(|x| self.load_image(loader, x, false)).transpose()?;
-		let emissive = m.emissive.map(|x| self.load_image(loader, x, false)).transpose()?;
+		let base_color = m.base_color.map(|x| self.load_image(x, true)).transpose()?;
+		let metallic_roughness = m.metallic_roughness.map(|x| self.load_image(x, false)).transpose()?;
+		let normal = m.normal.map(|x| self.load_image(x, false)).transpose()?;
+		let occlusion = m.occlusion.map(|x| self.load_image(x, false)).transpose()?;
+		let emissive = m.emissive.map(|x| self.load_image(x, false)).transpose()?;
 		let mat = GpuMaterial {
 			base_color_factor: m.base_color_factor,
 			base_color: base_color.as_ref().map(|x| x.view.id.unwrap()),
@@ -84,7 +90,7 @@ impl AssetRuntime {
 				occlusion,
 				emissive,
 			},
-			loader.deleter.clone(),
+			self.runtime.deleter.clone(),
 		))
 	}
 }

@@ -12,7 +12,7 @@ impl CommandPool {
 	pub fn new(device: &Device, queue: u32) -> Result<Self> {
 		let pool = unsafe {
 			device.device().create_command_pool(
-				&vk::CommandPoolCreateInfo::builder()
+				&vk::CommandPoolCreateInfo::default()
 					.queue_family_index(queue)
 					.flags(vk::CommandPoolCreateFlags::TRANSIENT),
 				None,
@@ -46,7 +46,7 @@ impl CommandPool {
 		} else {
 			let buf = unsafe {
 				device.device().allocate_command_buffers(
-					&vk::CommandBufferAllocateInfo::builder()
+					&vk::CommandBufferAllocateInfo::default()
 						.command_pool(self.pool)
 						.level(vk::CommandBufferLevel::PRIMARY)
 						.command_buffer_count(1),

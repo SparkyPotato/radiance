@@ -367,7 +367,9 @@ impl VirtualResourceDesc for ExternalImage {
 	) -> VirtualResourceType<'graph> {
 		assert!(
 			compatible_formats(self.desc.format, write_usage.format),
-			"External image format is invalid"
+			"External image format is invalid: is {:?}, pass expected {:?}",
+			self.desc.format,
+			write_usage.format,
 		);
 		VirtualResourceType::Image(ImageData {
 			desc: self.desc,
@@ -437,8 +439,7 @@ impl VirtualResourceDesc for Res<ImageView> {
 }
 
 pub fn compatible_formats(a: vk::Format, b: vk::Format) -> bool {
-	// get_format_block(a) == get_format_block(b)  TODO: fix
-	a == b || a == vk::Format::UNDEFINED || b == vk::Format::UNDEFINED
+	get_format_block(a) == get_format_block(b) || a == vk::Format::UNDEFINED || b == vk::Format::UNDEFINED // a == b
 }
 
 fn get_format_block(f: vk::Format) -> i32 {

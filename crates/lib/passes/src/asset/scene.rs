@@ -11,14 +11,15 @@ use parry3d::{
 use radiance_asset::{scene, util::SliceWriter, Asset, AssetSource};
 use radiance_graph::{
 	device::descriptor::{ASId, BufferId},
-	resource::{ASDesc, Buffer, BufferDesc, Resource, AS},
+	graph::Resource,
+	resource::{ASDesc, Buffer, BufferDesc, Resource as _, AS},
 };
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::Uuid;
 use vek::{Aabb, Mat4, Ray, Vec3, Vec4};
 
-use crate::{
+use crate::asset::{
 	mesh::{Intersection, Mesh},
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
@@ -79,14 +80,6 @@ pub struct VkAccelerationStructureInstanceKHR {
 }
 
 unsafe impl NoUninit for VkAccelerationStructureInstanceKHR {}
-
-impl RuntimeAsset for Scene {
-	fn into_resources(self, _: Sender<DelRes>) {
-		// queue.send(self.instance_buffer.into_resource().into()).unwrap();
-		// queue.send(self.meshlet_pointer_buffer.into_resource().into()).unwrap();
-		// queue.send(self.acceleration_structure.into_resource().into()).unwrap();
-	}
-}
 
 impl Scene {
 	pub fn instances(&self) -> BufferId { self.instance_buffer.id().unwrap() }
@@ -166,17 +159,36 @@ impl Scene {
 	}
 }
 
-impl AssetRuntime {
-	pub fn load_scene_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, S>, scene: Uuid,
-	) -> LResult<Scene, S> {
-		let Asset::Scene(s) = loader.sys.load(scene)? else {
+impl RuntimeAsset for Scene {
+	fn into_resources(self, queue: Sender<DelRes>) {
+		queue.send(Resource::Buffer(self.instance_buffer).into()).unwrap();
+		queue
+			.send(Resource::Buffer(self.meshlet_pointer_buffer).into())
+			.unwrap();
+		queue.send(Resource::AS(self.acceleration_structure).into()).unwrap();
+	}
+}
+
+impl<S: AssetSource> Loader<'_, S> {
+	pub fn load_scene(&mut self, uuid: Uuid) -> LResult<Scene, S> {
+		match AssetRuntime::get_cache(&mut self.runtime.scenes, uuid) {
+			Some(x) => Ok(x),
+			None => {
+				let s = self.load_scene_from_disk(uuid)?;
+				self.runtime.scenes.insert(uuid, s.downgrade());
+				Ok(s)
+			},
+		}
+	}
+
+	fn load_scene_from_disk(&mut self, scene: Uuid) -> LResult<Scene, S> {
+		let Asset::Scene(s) = self.sys.load(scene)? else {
 			unreachable!("Scene asset is not a scene");
 		};
 
 		let size = (std::mem::size_of::<GpuInstance>() * s.nodes.len()) as u64;
 		let instance_buffer = Buffer::create(
-			loader.device,
+			self.device,
 			BufferDesc {
 				name: "test",
 				size,
@@ -191,7 +203,7 @@ impl AssetRuntime {
 		let mut writer = SliceWriter::new(unsafe { instance_buffer.data().as_mut() });
 
 		let temp_build_buffer = Buffer::create(
-			loader.device,
+			self.device,
 			BufferDesc {
 				name: "test",
 				size: (std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() * s.nodes.len()) as u64,
@@ -207,7 +219,7 @@ impl AssetRuntime {
 			.into_iter()
 			.enumerate()
 			.map(|(i, n)| {
-				let mesh = self.load_mesh(loader, n.model)?;
+				let mesh = self.load_mesh(n.model)?;
 				writer
 					.write(GpuInstance {
 						transform: n.transform.cols.map(|x| x.xyz()),
@@ -229,8 +241,8 @@ impl AssetRuntime {
 						instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(0, 0),
 						acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
 							device_handle: unsafe {
-								loader.device.as_ext().get_acceleration_structure_device_address(
-									&vk::AccelerationStructureDeviceAddressInfoKHR::builder()
+								self.device.as_ext().get_acceleration_structure_device_address(
+									&vk::AccelerationStructureDeviceAddressInfoKHR::default()
 										.acceleration_structure(mesh.acceleration_structure.handle()),
 								)
 							},
@@ -250,7 +262,7 @@ impl AssetRuntime {
 		let meshlet_pointer_count: u32 = nodes.iter().map(|n| n.mesh.meshlet_count).sum();
 		let size = std::mem::size_of::<GpuMeshletPointer>() as u64 * meshlet_pointer_count as u64;
 		let meshlet_pointer_buffer = Buffer::create(
-			loader.device,
+			self.device,
 			BufferDesc {
 				name: "test",
 				size,
@@ -276,35 +288,35 @@ impl AssetRuntime {
 		}
 
 		let acceleration_structure = unsafe {
-			let ext = loader.device.as_ext();
+			let ext = self.device.as_ext();
 
-			let geo = [vk::AccelerationStructureGeometryKHR::builder()
+			let geo = [vk::AccelerationStructureGeometryKHR::default()
 				.geometry_type(vk::GeometryTypeKHR::INSTANCES)
 				.geometry(vk::AccelerationStructureGeometryDataKHR {
-					instances: vk::AccelerationStructureGeometryInstancesDataKHR::builder()
+					instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
 						.array_of_pointers(false)
 						.data(vk::DeviceOrHostAddressConstKHR {
 							device_address: temp_build_buffer.addr(),
-						})
-						.build(),
+						}),
 				})
-				.flags(vk::GeometryFlagsKHR::OPAQUE)
-				.build()];
-			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+				.flags(vk::GeometryFlagsKHR::OPAQUE)];
+			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
 				.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
 				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
 				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
 				.geometries(&geo);
 
 			let count = nodes.len() as u32;
-			let size = ext.get_acceleration_structure_build_sizes(
+			let mut size = Default::default();
+			ext.get_acceleration_structure_build_sizes(
 				vk::AccelerationStructureBuildTypeKHR::DEVICE,
 				&info,
 				&[count],
+				&mut size,
 			);
 
 			let as_ = AS::create(
-				loader.device,
+				self.device,
 				ASDesc {
 					name: "test",
 					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
@@ -315,7 +327,7 @@ impl AssetRuntime {
 			.map_err(LoadError::Vulkan)?;
 
 			let scratch = Buffer::create(
-				loader.device,
+				self.device,
 				BufferDesc {
 					name: "test",
 					size: size.build_scratch_size,
@@ -337,7 +349,7 @@ impl AssetRuntime {
 			//
 			// loader.device.device().cmd_pipeline_barrier2(
 			// 	buf,
-			// 	&vk::DependencyInfo::builder().memory_barriers(&[get_global_barrier(&GlobalBarrier {
+			// 	&vk::DependencyInfo::default().memory_barriers(&[get_global_barrier(&GlobalBarrier {
 			// 		previous_usages: &[UsageType::AccelerationStructureBuildWrite],
 			// 		next_usages: &[UsageType::AccelerationStructureBuildRead],
 			// 	})]),
@@ -345,7 +357,7 @@ impl AssetRuntime {
 			// ext.cmd_build_acceleration_structures(
 			// 	buf,
 			// 	&[info.build()],
-			// 	&[&[vk::AccelerationStructureBuildRangeInfoKHR::builder()
+			// 	&[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
 			// 		.primitive_count(count)
 			// 		.build()]],
 			// );
@@ -395,7 +407,7 @@ impl AssetRuntime {
 				cameras: s.cameras,
 				bvh,
 			},
-			loader.deleter.clone(),
+			self.runtime.deleter.clone(),
 		))
 	}
 }

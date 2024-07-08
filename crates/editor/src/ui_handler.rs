@@ -21,6 +21,7 @@ impl UiHandler {
 		ctx.set_fonts(defs);
 
 		let platform_state = egui_winit::State::new(
+			ctx.clone(),
 			ViewportId::default(),
 			event_loop,
 			Some(window.window.scale_factor() as _),
@@ -30,7 +31,7 @@ impl UiHandler {
 		Ok(Self {
 			ctx,
 			platform_state,
-			renderer: radiance_egui::Renderer::new(device, window.format())?,
+			renderer: radiance_egui::Renderer::new(device)?,
 			fonts,
 		})
 	}
@@ -42,21 +43,16 @@ impl UiHandler {
 			.begin_frame(self.platform_state.take_egui_input(&window.window));
 	}
 
-	pub fn run<'pass, 'graph>(&'pass mut self, frame: &mut Frame<'pass, 'graph>, window: &Window) -> Result<u32>
+	pub fn run<'pass, 'graph>(&'pass mut self, frame: &mut Frame<'pass, 'graph>, window: &mut Window) -> Result<u32>
 	where
 		'graph: 'pass,
 	{
-		let (image, id) = {
-			tracy::zone!("swapchain acquire");
-			window.acquire()?
-		};
-
 		let output = self.ctx.end_frame();
 
 		{
 			tracy::zone!("handle window output");
 			self.platform_state
-				.handle_platform_output(&window.window, &self.ctx, output.platform_output);
+				.handle_platform_output(&window.window, output.platform_output);
 		}
 
 		let tris = {
@@ -65,6 +61,10 @@ impl UiHandler {
 				.tessellate(output.shapes, pixels_per_point(&self.ctx, &window.window))
 		};
 
+		let (image, id) = {
+			tracy::zone!("swapchain acquire");
+			window.acquire()?
+		};
 		self.renderer.run(
 			frame,
 			tris,
@@ -75,11 +75,12 @@ impl UiHandler {
 			},
 			image,
 		);
-
 		Ok(id)
 	}
 
-	pub fn on_event(&mut self, event: &WindowEvent) { let _ = self.platform_state.on_window_event(&self.ctx, event); }
+	pub fn on_event(&mut self, window: &Window, event: &WindowEvent) {
+		let _ = self.platform_state.on_window_event(&window.window, event);
+	}
 
 	pub unsafe fn destroy(self, device: &Device) { self.renderer.destroy(device); }
 }

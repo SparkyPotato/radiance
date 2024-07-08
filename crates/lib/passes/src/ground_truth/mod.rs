@@ -2,10 +2,6 @@ use std::io::Write;
 
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
-use radiance_asset_runtime::{
-	rref::{RRef, RWeak},
-	scene::Scene,
-};
 use radiance_graph::{
 	device::{
 		descriptor::{ASId, BufferId, SamplerId, StorageImageId},
@@ -30,7 +26,13 @@ use radiance_graph::{
 use radiance_shader_compiler::c_str;
 use vek::{Mat4, Vec2};
 
-use crate::mesh::visbuffer::Camera;
+use crate::{
+	asset::{
+		rref::{RRef, RWeak},
+		scene::Scene,
+	},
+	mesh::visbuffer::Camera,
+};
 
 #[derive(Clone)]
 pub struct RenderInfo {
@@ -88,92 +90,81 @@ impl GroundTruth {
 	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::builder()
+				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::builder()
+					.push_constant_ranges(&[vk::PushConstantRange::default()
 						.stage_flags(
 							vk::ShaderStageFlags::RAYGEN_KHR
 								| vk::ShaderStageFlags::MISS_KHR
 								| vk::ShaderStageFlags::CLOSEST_HIT_KHR,
 						)
-						.size(std::mem::size_of::<PushConstants>() as u32)
-						.build()]),
+						.size(std::mem::size_of::<PushConstants>() as u32)]),
 				None,
 			)?;
 
-			let pipeline = device.rt_ext().create_ray_tracing_pipelines(
-				vk::DeferredOperationKHR::null(),
-				vk::PipelineCache::null(),
-				&[vk::RayTracingPipelineCreateInfoKHR::builder()
-					.flags(vk::PipelineCreateFlags::empty())
-					.stages(&[
-						device
-							.shader(
+			let pipeline = device
+				.rt_ext()
+				.create_ray_tracing_pipelines(
+					vk::DeferredOperationKHR::null(),
+					vk::PipelineCache::null(),
+					&[vk::RayTracingPipelineCreateInfoKHR::default()
+						.flags(vk::PipelineCreateFlags::empty())
+						.stages(&[
+							device.shader(
 								c_str!("radiance-passes/ground_truth/gen"),
 								vk::ShaderStageFlags::RAYGEN_KHR,
 								None,
-							)
-							.build(),
-						device
-							.shader(
+							),
+							device.shader(
 								c_str!("radiance-passes/ground_truth/miss"),
 								vk::ShaderStageFlags::MISS_KHR,
 								None,
-							)
-							.build(),
-						device
-							.shader(
+							),
+							device.shader(
 								c_str!("radiance-passes/ground_truth/shadow"),
 								vk::ShaderStageFlags::MISS_KHR,
 								None,
-							)
-							.build(),
-						device
-							.shader(
+							),
+							device.shader(
 								c_str!("radiance-passes/ground_truth/hit"),
 								vk::ShaderStageFlags::CLOSEST_HIT_KHR,
 								None,
-							)
-							.build(),
-					])
-					.groups(&[
-						vk::RayTracingShaderGroupCreateInfoKHR::builder()
-							.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
-							.general_shader(0)
-							.closest_hit_shader(vk::SHADER_UNUSED_KHR)
-							.any_hit_shader(vk::SHADER_UNUSED_KHR)
-							.intersection_shader(vk::SHADER_UNUSED_KHR)
-							.build(),
-						vk::RayTracingShaderGroupCreateInfoKHR::builder()
-							.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
-							.general_shader(1)
-							.closest_hit_shader(vk::SHADER_UNUSED_KHR)
-							.any_hit_shader(vk::SHADER_UNUSED_KHR)
-							.intersection_shader(vk::SHADER_UNUSED_KHR)
-							.build(),
-						vk::RayTracingShaderGroupCreateInfoKHR::builder()
-							.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
-							.general_shader(2)
-							.closest_hit_shader(vk::SHADER_UNUSED_KHR)
-							.any_hit_shader(vk::SHADER_UNUSED_KHR)
-							.intersection_shader(vk::SHADER_UNUSED_KHR)
-							.build(),
-						vk::RayTracingShaderGroupCreateInfoKHR::builder()
-							.ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
-							.general_shader(vk::SHADER_UNUSED_KHR)
-							.closest_hit_shader(3)
-							.any_hit_shader(vk::SHADER_UNUSED_KHR)
-							.intersection_shader(vk::SHADER_UNUSED_KHR)
-							.build(),
-					])
-					.max_pipeline_ray_recursion_depth(2)
-					.layout(layout)
-					.build()],
-				None,
-			)?[0];
+							),
+						])
+						.groups(&[
+							vk::RayTracingShaderGroupCreateInfoKHR::default()
+								.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+								.general_shader(0)
+								.closest_hit_shader(vk::SHADER_UNUSED_KHR)
+								.any_hit_shader(vk::SHADER_UNUSED_KHR)
+								.intersection_shader(vk::SHADER_UNUSED_KHR),
+							vk::RayTracingShaderGroupCreateInfoKHR::default()
+								.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+								.general_shader(1)
+								.closest_hit_shader(vk::SHADER_UNUSED_KHR)
+								.any_hit_shader(vk::SHADER_UNUSED_KHR)
+								.intersection_shader(vk::SHADER_UNUSED_KHR),
+							vk::RayTracingShaderGroupCreateInfoKHR::default()
+								.ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+								.general_shader(2)
+								.closest_hit_shader(vk::SHADER_UNUSED_KHR)
+								.any_hit_shader(vk::SHADER_UNUSED_KHR)
+								.intersection_shader(vk::SHADER_UNUSED_KHR),
+							vk::RayTracingShaderGroupCreateInfoKHR::default()
+								.ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
+								.general_shader(vk::SHADER_UNUSED_KHR)
+								.closest_hit_shader(3)
+								.any_hit_shader(vk::SHADER_UNUSED_KHR)
+								.intersection_shader(vk::SHADER_UNUSED_KHR),
+						])
+						.max_pipeline_ray_recursion_depth(2)
+						.layout(layout)],
+					None,
+				)
+				.map_err(|(_, x)| x)?[0];
 
 			let sampler = device.device().create_sampler(
-				&vk::SamplerCreateInfo::builder()
+				&vk::SamplerCreateInfo::default()
 					.mag_filter(vk::Filter::LINEAR)
 					.min_filter(vk::Filter::LINEAR)
 					.mipmap_mode(vk::SamplerMipmapMode::LINEAR)
@@ -187,7 +178,7 @@ impl GroundTruth {
 			let mut hit = vk::StridedDeviceAddressRegionKHR::default();
 
 			let mut props = vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
-			let mut p = vk::PhysicalDeviceProperties2::builder().push_next(&mut props);
+			let mut p = vk::PhysicalDeviceProperties2::default().push_next(&mut props);
 			device
 				.instance()
 				.get_physical_device_properties2(device.physical_device(), &mut p);
@@ -328,20 +319,6 @@ impl GroundTruth {
 				subresource: Subresource::default(),
 			},
 		);
-		// let (read, write) = pass.output(
-		// ImageDesc {
-		// size,
-		// levels: 1,
-		// layers: 1,
-		// samples: vk::SampleCountFlags::TYPE_1,
-		// },
-		// ImageUsage {
-		// format: vk::Format::R8G8B8A8_UNORM,
-		// usages: &[ImageUsageType::ShaderStorageWrite(Shader::RayTracing)],
-		// view_type: vk::ImageViewType::TYPE_2D,
-		// aspect: vk::ImageAspectFlags::COLOR,
-		// },
-		// );
 
 		let camera = pass.resource(
 			graph::BufferDesc {

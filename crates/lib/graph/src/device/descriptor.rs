@@ -89,17 +89,15 @@ impl Descriptors {
 		let index = inner.storage_buffers.get_index();
 		unsafe {
 			device.device().update_descriptor_sets(
-				&[vk::WriteDescriptorSet::builder()
+				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
 					.dst_binding(0)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-					.buffer_info(&[vk::DescriptorBufferInfo::builder()
+					.buffer_info(&[vk::DescriptorBufferInfo::default()
 						.buffer(buffer)
 						.offset(0)
-						.range(vk::WHOLE_SIZE)
-						.build()])
-					.build()],
+						.range(vk::WHOLE_SIZE)])],
 				&[],
 			);
 		}
@@ -113,16 +111,14 @@ impl Descriptors {
 		let index = inner.sampled_images.get_index();
 		unsafe {
 			device.device().update_descriptor_sets(
-				&[vk::WriteDescriptorSet::builder()
+				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
 					.dst_binding(1)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-					.image_info(&[vk::DescriptorImageInfo::builder()
+					.image_info(&[vk::DescriptorImageInfo::default()
 						.image_layout(vk::ImageLayout::READ_ONLY_OPTIMAL)
-						.image_view(image)
-						.build()])
-					.build()],
+						.image_view(image)])],
 				&[],
 			);
 		}
@@ -136,16 +132,14 @@ impl Descriptors {
 		let index = inner.storage_images.get_index();
 		unsafe {
 			device.device().update_descriptor_sets(
-				&[vk::WriteDescriptorSet::builder()
+				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
 					.dst_binding(2)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-					.image_info(&[vk::DescriptorImageInfo::builder()
+					.image_info(&[vk::DescriptorImageInfo::default()
 						.image_layout(vk::ImageLayout::GENERAL)
-						.image_view(image)
-						.build()])
-					.build()],
+						.image_view(image)])],
 				&[],
 			);
 		}
@@ -159,13 +153,12 @@ impl Descriptors {
 		let index = inner.samplers.get_index();
 		unsafe {
 			device.device().update_descriptor_sets(
-				&[vk::WriteDescriptorSet::builder()
+				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
 					.dst_binding(3)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::SAMPLER)
-					.image_info(&[vk::DescriptorImageInfo::builder().sampler(sampler).build()])
-					.build()],
+					.image_info(&[vk::DescriptorImageInfo::default().sampler(sampler)])],
 				&[],
 			);
 		}
@@ -178,7 +171,7 @@ impl Descriptors {
 
 		let index = inner.ases.get_index();
 		unsafe {
-			let mut ds = vk::WriteDescriptorSet::builder();
+			let mut ds = vk::WriteDescriptorSet::default();
 			ds.descriptor_count = 1;
 			device.device().update_descriptor_sets(
 				&[ds.dst_set(self.set)
@@ -186,9 +179,8 @@ impl Descriptors {
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
 					.push_next(
-						&mut vk::WriteDescriptorSetAccelerationStructureKHR::builder().acceleration_structures(&[as_]),
-					)
-					.build()],
+						&mut vk::WriteDescriptorSetAccelerationStructureKHR::default().acceleration_structures(&[as_]),
+					)],
 				&[],
 			);
 		}
@@ -233,44 +225,39 @@ impl Descriptors {
 			| vk::DescriptorBindingFlags::UPDATE_UNUSED_WHILE_PENDING;
 
 		let set_layout = [
-			vk::DescriptorSetLayoutBinding::builder()
+			vk::DescriptorSetLayoutBinding::default()
 				.binding(0)
 				.descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
 				.descriptor_count(storage_buffer_count)
-				.stage_flags(vk::ShaderStageFlags::ALL)
-				.build(),
-			vk::DescriptorSetLayoutBinding::builder()
+				.stage_flags(vk::ShaderStageFlags::ALL),
+			vk::DescriptorSetLayoutBinding::default()
 				.binding(1)
 				.descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
 				.descriptor_count(sampled_image_count)
-				.stage_flags(vk::ShaderStageFlags::ALL)
-				.build(),
-			vk::DescriptorSetLayoutBinding::builder()
+				.stage_flags(vk::ShaderStageFlags::ALL),
+			vk::DescriptorSetLayoutBinding::default()
 				.binding(2)
 				.descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
 				.descriptor_count(storage_image_count)
-				.stage_flags(vk::ShaderStageFlags::ALL)
-				.build(),
-			vk::DescriptorSetLayoutBinding::builder()
+				.stage_flags(vk::ShaderStageFlags::ALL),
+			vk::DescriptorSetLayoutBinding::default()
 				.binding(3)
 				.descriptor_type(vk::DescriptorType::SAMPLER)
 				.descriptor_count(sampler_count)
-				.stage_flags(vk::ShaderStageFlags::ALL)
-				.build(),
-			vk::DescriptorSetLayoutBinding::builder()
+				.stage_flags(vk::ShaderStageFlags::ALL),
+			vk::DescriptorSetLayoutBinding::default()
 				.binding(4)
 				.descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
 				.descriptor_count(as_count)
-				.stage_flags(vk::ShaderStageFlags::ALL)
-				.build(),
+				.stage_flags(vk::ShaderStageFlags::ALL),
 		];
 		let layout = unsafe {
 			device.create_descriptor_set_layout(
-				&vk::DescriptorSetLayoutCreateInfo::builder()
+				&vk::DescriptorSetLayoutCreateInfo::default()
 					.bindings(&set_layout)
 					.flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
 					.push_next(
-						&mut vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&[
+						&mut vk::DescriptorSetLayoutBindingFlagsCreateInfo::default().binding_flags(&[
 							binding_flags,
 							binding_flags,
 							binding_flags,
@@ -284,29 +271,24 @@ impl Descriptors {
 
 		let pool = unsafe {
 			device.create_descriptor_pool(
-				&vk::DescriptorPoolCreateInfo::builder()
+				&vk::DescriptorPoolCreateInfo::default()
 					.max_sets(1)
 					.pool_sizes(&[
-						vk::DescriptorPoolSize::builder()
+						vk::DescriptorPoolSize::default()
 							.ty(vk::DescriptorType::STORAGE_BUFFER)
-							.descriptor_count(storage_buffer_count)
-							.build(),
-						vk::DescriptorPoolSize::builder()
+							.descriptor_count(storage_buffer_count),
+						vk::DescriptorPoolSize::default()
 							.ty(vk::DescriptorType::SAMPLED_IMAGE)
-							.descriptor_count(sampled_image_count)
-							.build(),
-						vk::DescriptorPoolSize::builder()
+							.descriptor_count(sampled_image_count),
+						vk::DescriptorPoolSize::default()
 							.ty(vk::DescriptorType::STORAGE_IMAGE)
-							.descriptor_count(storage_image_count)
-							.build(),
-						vk::DescriptorPoolSize::builder()
+							.descriptor_count(storage_image_count),
+						vk::DescriptorPoolSize::default()
 							.ty(vk::DescriptorType::SAMPLER)
-							.descriptor_count(sampler_count)
-							.build(),
-						vk::DescriptorPoolSize::builder()
+							.descriptor_count(sampler_count),
+						vk::DescriptorPoolSize::default()
 							.ty(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
-							.descriptor_count(as_count)
-							.build(),
+							.descriptor_count(as_count),
 					])
 					.flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND),
 				None,
@@ -315,7 +297,7 @@ impl Descriptors {
 
 		let set = unsafe {
 			device.allocate_descriptor_sets(
-				&vk::DescriptorSetAllocateInfo::builder()
+				&vk::DescriptorSetAllocateInfo::default()
 					.descriptor_pool(pool)
 					.set_layouts(&[layout]),
 			)?[0]

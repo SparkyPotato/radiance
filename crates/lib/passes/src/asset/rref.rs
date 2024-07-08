@@ -5,9 +5,16 @@ use std::{
 };
 
 use crossbeam_channel::Sender;
+use radiance_graph::graph::Resource;
 
-use crate::DelRes;
+pub enum DelRes {
+	Resource(Resource),
+	Material(u32),
+}
 
+impl From<Resource> for DelRes {
+	fn from(value: Resource) -> Self { Self::Resource(value) }
+}
 pub trait RuntimeAsset {
 	fn into_resources(self, queue: Sender<DelRes>);
 }
@@ -81,4 +88,3 @@ impl<T: RuntimeAsset> Drop for Control<T> {
 		}
 	}
 }
-

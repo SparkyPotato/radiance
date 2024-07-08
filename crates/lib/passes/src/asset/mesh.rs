@@ -18,7 +18,7 @@ use tracing::{span, Level};
 use uuid::Uuid;
 use vek::{Ray, Vec2, Vec3, Vec4};
 
-use crate::{
+use crate::asset::{
 	material::Material,
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
@@ -134,18 +134,25 @@ impl Mesh {
 
 impl RuntimeAsset for Mesh {
 	fn into_resources(self, queue: Sender<DelRes>) {
-		queue.send(DelRes::Resource(Resource::Buffer(self.buffer))).unwrap();
-		queue
-			.send(DelRes::Resource(Resource::AS(self.acceleration_structure)))
-			.unwrap();
+		queue.send(Resource::Buffer(self.buffer).into()).unwrap();
+		queue.send(Resource::AS(self.acceleration_structure).into()).unwrap();
 	}
 }
 
-impl AssetRuntime {
-	pub(crate) fn load_mesh_from_disk<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, S>, mesh: Uuid,
-	) -> LResult<Mesh, S> {
-		let Asset::Mesh(m) = loader.sys.load(mesh)? else {
+impl<S: AssetSource> Loader<'_, S> {
+	pub fn load_mesh(&mut self, uuid: Uuid) -> LResult<Mesh, S> {
+		match AssetRuntime::get_cache(&mut self.runtime.meshes, uuid) {
+			Some(x) => Ok(x),
+			None => {
+				let m = self.load_mesh_from_disk(uuid)?;
+				self.runtime.meshes.insert(uuid, m.downgrade());
+				Ok(m)
+			},
+		}
+	}
+
+	fn load_mesh_from_disk(&mut self, mesh: Uuid) -> LResult<Mesh, S> {
+		let Asset::Mesh(m) = self.sys.load(mesh)? else {
 			unreachable!("Mesh asset is not a mesh");
 		};
 
@@ -160,9 +167,9 @@ impl AssetRuntime {
 		let size = index_byte_offset + index_byte_len;
 		let meshlet_count = m.meshlets.len() as u32;
 
-		let name = loader.sys.human_name(mesh).unwrap_or("unnamed mesh".to_string());
+		let name = self.sys.human_name(mesh).unwrap_or("unnamed mesh".to_string());
 		let buffer = Buffer::create(
-			loader.device,
+			self.device,
 			BufferDesc {
 				name: &name,
 				size,
@@ -185,7 +192,7 @@ impl AssetRuntime {
 			.submeshes
 			.iter()
 			.map(|x| {
-				let material = self.load_material(loader, x.material)?;
+				let material = self.load_material(x.material)?;
 				writer
 					.write(GpuSubMesh {
 						material: material.index,
@@ -218,7 +225,7 @@ impl AssetRuntime {
 		let mesh = TriMesh::new(vertices, indices);
 
 		let raw_mesh = Buffer::create(
-			loader.device,
+			self.device,
 			BufferDesc {
 				name: "AS build scratch mesh",
 				size: (std::mem::size_of::<u16>() * m.indices.len()) as u64,
@@ -243,10 +250,10 @@ impl AssetRuntime {
 
 				let stride = std::mem::size_of::<GpuVertex>() as u64;
 				geo.push(
-					vk::AccelerationStructureGeometryKHR::builder()
+					vk::AccelerationStructureGeometryKHR::default()
 						.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
 						.geometry(vk::AccelerationStructureGeometryDataKHR {
-							triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::builder()
+							triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
 								.vertex_format(vk::Format::R32G32B32_SFLOAT)
 								.vertex_data(vk::DeviceOrHostAddressConstKHR {
 									device_address: buffer.addr() + vertex_byte_offset,
@@ -257,18 +264,12 @@ impl AssetRuntime {
 								.index_data(vk::DeviceOrHostAddressConstKHR {
 									device_address: raw_mesh.addr()
 										+ me.index_offset as u64 * std::mem::size_of::<u16>() as u64,
-								})
-								.build(),
+								}),
 						})
-						.flags(vk::GeometryFlagsKHR::OPAQUE)
-						.build(),
+						.flags(vk::GeometryFlagsKHR::OPAQUE),
 				);
 				counts.push(me.tri_count as u32);
-				ranges.push(
-					vk::AccelerationStructureBuildRangeInfoKHR::builder()
-						.primitive_count(me.tri_count as u32)
-						.build(),
-				);
+				ranges.push(vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(me.tri_count as u32));
 
 				writer
 					.write(GpuMeshlet {
@@ -294,22 +295,24 @@ impl AssetRuntime {
 		}
 
 		let acceleration_structure = unsafe {
-			let ext = loader.device.as_ext();
+			let ext = self.device.as_ext();
 
-			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
 				.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
 				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
 				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
 				.geometries(&geo);
 
-			let size = ext.get_acceleration_structure_build_sizes(
+			let mut size = Default::default();
+			ext.get_acceleration_structure_build_sizes(
 				vk::AccelerationStructureBuildTypeKHR::DEVICE,
 				&info,
 				&counts,
+				&mut size,
 			);
 
 			let as_ = AS::create(
-				loader.device,
+				self.device,
 				ASDesc {
 					name: &name,
 					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
@@ -320,7 +323,7 @@ impl AssetRuntime {
 			.map_err(LoadError::Vulkan)?;
 
 			let scratch = Buffer::create(
-				loader.device,
+				self.device,
 				BufferDesc {
 					name: "AS build scratch",
 					size: size.build_scratch_size,
@@ -360,7 +363,7 @@ impl AssetRuntime {
 				vertices: m.vertices,
 				mesh,
 			},
-			loader.deleter.clone(),
+			self.runtime.deleter.clone(),
 		))
 	}
 }

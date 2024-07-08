@@ -181,7 +181,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 					if let Some(debug) = device.debug_utils_ext() {
 						debug.cmd_begin_debug_utils_label(
 							buf,
-							&vk::DebugUtilsLabelEXT::builder()
+							&vk::DebugUtilsLabelEXT::default()
 								.label_name(std::ffi::CStr::from_bytes_with_nul_unchecked(&pass.name)),
 						);
 					}

@@ -259,7 +259,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 				self.buf = self.data.pool.next(device)?;
 				device.device().begin_command_buffer(
 					self.buf,
-					&vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+					&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
 				)?;
 			}
 
@@ -273,8 +273,8 @@ fn extend_dep_info(ex: &mut DependencyInfo, other: DependencyInfo) {
 	ex.image_barriers.extend(other.image_barriers);
 }
 
-fn dependency_info<'a>(info: &'a DependencyInfo) -> vk::DependencyInfoBuilder<'a> {
-	vk::DependencyInfo::builder()
+fn dependency_info<'a>(info: &'a DependencyInfo) -> vk::DependencyInfo<'a> {
+	vk::DependencyInfo::default()
 		.memory_barriers(&info.barriers)
 		.image_memory_barriers(&info.image_barriers)
 }
@@ -305,10 +305,7 @@ fn emit_event_sets(device: &Device, buf: vk::CommandBuffer, events: &[EventInfo]
 
 fn emit_event_waits(device: &Device, arena: &Arena, buf: vk::CommandBuffer, events: &[EventInfo]) {
 	if !events.is_empty() {
-		let infos: Vec<_, _> = events
-			.iter()
-			.map(|e| dependency_info(&e.info).build())
-			.collect_in(arena);
+		let infos: Vec<_, _> = events.iter().map(|e| dependency_info(&e.info)).collect_in(arena);
 		let events: Vec<_, _> = events.iter().map(|e| e.event).collect_in(arena);
 
 		unsafe {

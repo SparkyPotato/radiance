@@ -1,9 +1,9 @@
 use egui::{CentralPanel, Context, PointerButton, RichText, Ui};
 use radiance_asset::{AssetSource, AssetSystem, Uuid};
-use radiance_asset_runtime::{rref::RRef, scene, AssetRuntime};
 use radiance_egui::to_texture_id;
 use radiance_graph::{device::Device, graph::Frame, Result};
 use radiance_passes::{
+	asset::{rref::RRef, scene, AssetRuntime},
 	cpu_path::{self, CpuPath},
 	debug::meshlet::DebugMeshlets,
 	ground_truth::{self, GroundTruth},
@@ -86,7 +86,7 @@ impl Renderer {
 		};
 		let scene = match self.scene {
 			Scene::None => return Some(true),
-			Scene::Unloaded(s) => match self.runtime.load(frame.device(), system, |r, l| r.load_scene(l, s)) {
+			Scene::Unloaded(s) => match self.runtime.load(frame.device(), system, |l| l.load_scene(s)) {
 				Ok(s) => {
 					self.scene = Scene::Loaded(s.clone());
 					s

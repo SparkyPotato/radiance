@@ -1,7 +1,3 @@
-#![feature(allocator_api)]
-
-//! Bridge between raw assets and cached assets on the GPU or CPU.
-
 use std::{collections::hash_map::Entry, fmt::Debug};
 
 use ash::vk;
@@ -10,27 +6,20 @@ use material::GpuMaterial;
 use radiance_asset::{AssetError, AssetSource, AssetSystem};
 use radiance_graph::{
 	device::{descriptor::BufferId, Device},
-	graph::{Frame, Resource},
-	resource::{Buffer, BufferDesc, Resource as _},
+	graph::Frame,
+	resource::{Buffer, BufferDesc, Resource},
 };
 use rref::{RRef, RWeak, RuntimeAsset};
 use rustc_hash::FxHashMap;
 use uuid::Uuid;
+
+use crate::asset::rref::DelRes;
 
 pub mod image;
 pub mod material;
 pub mod mesh;
 pub mod rref;
 pub mod scene;
-
-pub enum DelRes {
-	Resource(Resource),
-	Material(u32),
-}
-
-impl From<Resource> for DelRes {
-	fn from(value: Resource) -> Self { Self::Resource(value) }
-}
 
 pub struct AssetRuntime {
 	deleter: Sender<DelRes>,
@@ -114,62 +103,14 @@ impl AssetRuntime {
 
 	pub fn load<S: AssetSource, R>(
 		&mut self, device: &Device, sys: &AssetSystem<S>,
-		exec: impl FnOnce(&mut Self, &mut Loader<'_, S>) -> Result<R, LoadError<S>>,
+		exec: impl FnOnce(&mut Loader<'_, S>) -> Result<R, LoadError<S>>,
 	) -> Result<R, LoadError<S>> {
 		let mut loader = Loader {
+			runtime: self,
 			device,
 			sys,
-			deleter: self.deleter.clone(),
 		};
-		exec(self, &mut loader)
-	}
-
-	pub fn load_scene<S: AssetSource>(&mut self, loader: &mut Loader<'_, S>, uuid: Uuid) -> LResult<scene::Scene, S> {
-		match Self::get_cache(&mut self.scenes, uuid) {
-			Some(x) => Ok(x),
-			None => {
-				let s = self.load_scene_from_disk(loader, uuid)?;
-				self.scenes.insert(uuid, s.downgrade());
-				Ok(s)
-			},
-		}
-	}
-
-	pub fn load_image<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, S>, uuid: Uuid, srgb: bool,
-	) -> LResult<image::Image, S> {
-		match Self::get_cache(&mut self.images, uuid) {
-			Some(x) => Ok(x),
-			None => {
-				let i = self.load_image_from_disk(loader, uuid, srgb)?;
-				self.images.insert(uuid, i.downgrade());
-				Ok(i)
-			},
-		}
-	}
-
-	pub fn load_material<S: AssetSource>(
-		&mut self, loader: &mut Loader<'_, S>, uuid: Uuid,
-	) -> LResult<material::Material, S> {
-		match Self::get_cache(&mut self.materials, uuid) {
-			Some(x) => Ok(x),
-			None => {
-				let m = self.load_material_from_disk(loader, uuid)?;
-				self.materials.insert(uuid, m.downgrade());
-				Ok(m)
-			},
-		}
-	}
-
-	pub fn load_mesh<S: AssetSource>(&mut self, loader: &mut Loader<'_, S>, uuid: Uuid) -> LResult<mesh::Mesh, S> {
-		match Self::get_cache(&mut self.meshes, uuid) {
-			Some(x) => Ok(x),
-			None => {
-				let m = self.load_mesh_from_disk(loader, uuid)?;
-				self.meshes.insert(uuid, m.downgrade());
-				Ok(m)
-			},
-		}
+		exec(&mut loader)
 	}
 
 	pub fn get_cache<T: RuntimeAsset>(map: &mut FxHashMap<Uuid, RWeak<T>>, uuid: Uuid) -> Option<RRef<T>> {
@@ -190,9 +131,11 @@ pub enum LoadError<S: AssetSource> {
 	Vulkan(radiance_graph::Error),
 	Asset(AssetError<S>),
 }
+
 impl<S: AssetSource> From<AssetError<S>> for LoadError<S> {
 	fn from(value: AssetError<S>) -> Self { Self::Asset(value) }
 }
+
 impl<S: AssetSource> Debug for LoadError<S> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
@@ -205,7 +148,7 @@ impl<S: AssetSource> Debug for LoadError<S> {
 type LResult<T, S> = Result<RRef<T>, LoadError<S>>;
 
 pub struct Loader<'a, S> {
+	runtime: &'a mut AssetRuntime,
 	device: &'a Device,
 	sys: &'a AssetSystem<S>,
-	deleter: Sender<DelRes>,
 }
