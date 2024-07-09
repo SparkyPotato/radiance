@@ -1,7 +1,11 @@
 use egui::{CentralPanel, Context, PointerButton, RichText, Ui};
 use radiance_asset::{AssetSource, AssetSystem, Uuid};
 use radiance_egui::to_texture_id;
-use radiance_graph::{device::Device, graph::Frame, Result};
+use radiance_graph::{
+	device::{Device, QueueSyncs},
+	graph::Frame,
+	Result,
+};
 use radiance_passes::{
 	asset::{rref::RRef, scene, AssetRuntime},
 	cpu_path::{self, CpuPath},
@@ -27,7 +31,7 @@ mod camera;
 enum Scene {
 	None,
 	Unloaded(Uuid),
-	Loaded(RRef<scene::Scene>),
+	Loaded((RRef<scene::Scene>, QueueSyncs)),
 }
 
 pub struct Renderer {
@@ -84,17 +88,22 @@ impl Renderer {
 		let Some(system) = system else {
 			return Some(true);
 		};
-		let scene = match self.scene {
+		let (scene, wait) = match self.scene {
 			Scene::None => return Some(true),
-			Scene::Unloaded(s) => match self.runtime.load(frame.device(), system, |l| l.load_scene(s)) {
-				Ok(s) => {
-					self.scene = Scene::Loaded(s.clone());
-					s
-				},
-				Err(e) => {
-					event!(Level::ERROR, "error loading scene: {:?}", e);
-					return None;
-				},
+			Scene::Unloaded(s) => {
+				match self
+					.runtime
+					.load(frame.device(), system, frame.async_exec().unwrap(), |l| l.load_scene(s))
+				{
+					Ok(s) => {
+						self.scene = Scene::Loaded(s.clone());
+						s
+					},
+					Err(e) => {
+						event!(Level::ERROR, "error loading scene: {:?}", e);
+						return None;
+					},
+				}
 			},
 			Scene::Loaded(ref s) => s.clone(),
 		};
@@ -158,7 +167,7 @@ impl Renderer {
 	pub fn draw_camera_menu(&mut self, ui: &mut Ui) {
 		match self.scene {
 			Scene::Loaded(ref scene) => {
-				for c in scene.cameras.iter() {
+				for c in scene.0.cameras.iter() {
 					if ui.button(&c.name).clicked() {
 						self.camera.set(c);
 					}

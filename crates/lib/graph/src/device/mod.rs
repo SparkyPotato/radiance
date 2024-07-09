@@ -14,6 +14,7 @@ use radiance_shader_compiler::runtime::ShaderRuntime;
 pub use crate::device::queue::{
 	Compute,
 	Graphics,
+	QueueSyncs,
 	QueueType,
 	QueueWait,
 	QueueWaitOwned,

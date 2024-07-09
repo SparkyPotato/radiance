@@ -2,8 +2,20 @@ use ash::vk;
 use crossbeam_channel::Sender;
 use radiance_asset::{image::Format, Asset, AssetSource};
 use radiance_graph::{
+	device::Transfer,
 	graph::Resource,
-	resource::{Image as GImage, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource as _, Subresource},
+	resource::{
+		Buffer,
+		BufferDesc,
+		Image as GImage,
+		ImageDesc,
+		ImageView,
+		ImageViewDesc,
+		ImageViewUsage,
+		Resource as _,
+		Subresource,
+	},
+	sync::{get_image_barrier, ImageBarrier, UsageType},
 };
 use uuid::Uuid;
 
@@ -103,7 +115,58 @@ impl<S: AssetSource> Loader<'_, S> {
 			},
 		)
 		.map_err(LoadError::Vulkan)?;
-		// TODO: Write data
+
+		let staging = Buffer::create(
+			self.device,
+			BufferDesc {
+				name: &format!("{name} staging buffer"),
+				size: i.data.len() as _,
+				usage: vk::BufferUsageFlags::TRANSFER_SRC,
+				on_cpu: true,
+			},
+		)
+		.map_err(LoadError::Vulkan)?;
+		unsafe {
+			staging.data().as_mut().copy_from_slice(&i.data);
+			let buf = self.ctx.get_buf::<Transfer>();
+			self.device.device().cmd_pipeline_barrier2(
+				buf,
+				&vk::DependencyInfo::default().image_memory_barriers(&[get_image_barrier(&ImageBarrier {
+					previous_usages: &[],
+					next_usages: &[UsageType::TransferWrite],
+					discard_contents: true,
+					src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+					dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+					image: img.handle(),
+					range: vk::ImageSubresourceRange {
+						aspect_mask: vk::ImageAspectFlags::COLOR,
+						base_mip_level: 0,
+						level_count: 1,
+						base_array_layer: 0,
+						layer_count: 1,
+					},
+				})]),
+			);
+			self.device.device().cmd_copy_buffer_to_image2(
+				buf,
+				&vk::CopyBufferToImageInfo2::default()
+					.src_buffer(staging.handle().buffer)
+					.dst_image(img.handle())
+					.dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+					.regions(&[vk::BufferImageCopy2::default()
+						.buffer_offset(0)
+						.buffer_row_length(0)
+						.buffer_image_height(0)
+						.image_subresource(vk::ImageSubresourceLayers {
+							aspect_mask: vk::ImageAspectFlags::COLOR,
+							mip_level: 0,
+							base_array_layer: 0,
+							layer_count: 1,
+						})
+						.image_extent(size)]),
+			);
+			self.ctx.delete::<Transfer>(staging);
+		}
 
 		Ok(RRef::new(Image { image: img, view }, self.runtime.deleter.clone()))
 	}

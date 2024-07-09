@@ -10,6 +10,7 @@ use parry3d::{
 };
 use radiance_asset::{mesh::Vertex, util::SliceWriter, Asset, AssetSource};
 use radiance_graph::{
+	device::Compute,
 	graph::Resource,
 	resource::{ASDesc, Buffer, BufferDesc, Resource as _, AS},
 };
@@ -224,18 +225,18 @@ impl<S: AssetSource> Loader<'_, S> {
 			.collect::<Result<_, LoadError<S>>>()?;
 		let mesh = TriMesh::new(vertices, indices);
 
-		// let raw_mesh = Buffer::create(
-		// 	self.device,
-		// 	BufferDesc {
-		// 		name: "AS build scratch mesh",
-		// 		size: (std::mem::size_of::<u16>() * m.indices.len()) as u64,
-		// 		usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
-		// 			| vk::BufferUsageFlags::STORAGE_BUFFER,
-		// 		on_cpu: false,
-		// 	},
-		// )
-		// .map_err(LoadError::Vulkan)?;
-		// let mut iwriter = SliceWriter::new(unsafe { raw_mesh.data().as_mut() });
+		let raw_mesh = Buffer::create(
+			self.device,
+			BufferDesc {
+				name: "AS build scratch mesh",
+				size: (std::mem::size_of::<u16>() * m.indices.len()) as u64,
+				usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+					| vk::BufferUsageFlags::STORAGE_BUFFER,
+				on_cpu: false,
+			},
+		)
+		.map_err(LoadError::Vulkan)?;
+		let mut iwriter = SliceWriter::new(unsafe { raw_mesh.data().as_mut() });
 		let mut geo = Vec::with_capacity(m.submeshes.len());
 		let mut counts = Vec::with_capacity(m.submeshes.len());
 		let mut ranges = Vec::with_capacity(m.submeshes.len());
@@ -243,32 +244,32 @@ impl<S: AssetSource> Loader<'_, S> {
 		for (s, sub) in m.submeshes.iter().enumerate() {
 			for me in sub.meshlets.clone().map(|i| &m.meshlets[i as usize]) {
 				let aabb_extent = me.aabb.max - me.aabb.min;
-				// let off = me.index_offset as usize;
-				// for &i in m.indices[off..off + me.tri_count as usize * 3].iter() {
-				// 	iwriter.write(i as u16).unwrap();
-				// }
+				let off = me.index_offset as usize;
+				for &i in m.indices[off..off + me.tri_count as usize * 3].iter() {
+					iwriter.write(i as u16).unwrap();
+				}
 
-				// let stride = std::mem::size_of::<GpuVertex>() as u64;
-				// geo.push(
-				// 	vk::AccelerationStructureGeometryKHR::default()
-				// 		.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
-				// 		.geometry(vk::AccelerationStructureGeometryDataKHR {
-				// 			triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
-				// 				.vertex_format(vk::Format::R32G32B32_SFLOAT)
-				// 				.vertex_data(vk::DeviceOrHostAddressConstKHR {
-				// 					device_address: buffer.addr() + vertex_byte_offset,
-				// 				})
-				// 				.vertex_stride(stride)
-				// 				.max_vertex(me.tri_count as u32 - 1)
-				// 				.index_type(vk::IndexType::UINT16)
-				// 				.index_data(vk::DeviceOrHostAddressConstKHR {
-				// 					device_address: raw_mesh.addr()
-				// 						+ me.index_offset as u64 * std::mem::size_of::<u16>() as u64,
-				// 				}),
-				// 		})
-				// 		.flags(vk::GeometryFlagsKHR::OPAQUE),
-				// );
-				// counts.push(me.tri_count as u32);
+				let stride = std::mem::size_of::<GpuVertex>() as u64;
+				geo.push(
+					vk::AccelerationStructureGeometryKHR::default()
+						.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+						.geometry(vk::AccelerationStructureGeometryDataKHR {
+							triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
+								.vertex_format(vk::Format::R32G32B32_SFLOAT)
+								.vertex_data(vk::DeviceOrHostAddressConstKHR {
+									device_address: buffer.addr() + vertex_byte_offset,
+								})
+								.vertex_stride(stride)
+								.max_vertex(me.tri_count as u32 - 1)
+								.index_type(vk::IndexType::UINT16)
+								.index_data(vk::DeviceOrHostAddressConstKHR {
+									device_address: raw_mesh.addr()
+										+ me.index_offset as u64 * std::mem::size_of::<u16>() as u64,
+								}),
+						})
+						.flags(vk::GeometryFlagsKHR::OPAQUE),
+				);
+				counts.push(me.tri_count as u32);
 				ranges.push(vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(me.tri_count as u32));
 
 				writer
@@ -322,34 +323,28 @@ impl<S: AssetSource> Loader<'_, S> {
 			)
 			.map_err(LoadError::Vulkan)?;
 
-			// let scratch = Buffer::create(
-			// 	self.device,
-			// 	BufferDesc {
-			// 		name: "AS build scratch",
-			// 		size: size.build_scratch_size,
-			// 		usage: vk::BufferUsageFlags::STORAGE_BUFFER
-			// 			| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
-			// 		on_cpu: false,
-			// 	},
-			// )
-			// .map_err(LoadError::Vulkan)?;
-			//
-			// info.dst_acceleration_structure = as_.handle();
-			// info.scratch_data = vk::DeviceOrHostAddressKHR {
-			// 	device_address: scratch.addr(),
-			// };
+			let scratch = Buffer::create(
+				self.device,
+				BufferDesc {
+					name: "AS build scratch",
+					size: size.build_scratch_size,
+					usage: vk::BufferUsageFlags::STORAGE_BUFFER
+						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
+					on_cpu: false,
+				},
+			)
+			.map_err(LoadError::Vulkan)?;
 
-			// ext.cmd_build_acceleration_structures(
-			// 	loader
-			// 		.ctx
-			// 		.execute_before(QueueType::Compute)
-			// 		.map_err(StageError::Vulkan)?,
-			// 	&[info.build()],
-			// 	&[&ranges],
-			// );
-			//
-			// loader.queue.delete(scratch);
-			// loader.queue.delete(raw_mesh);
+			info.dst_acceleration_structure = as_.handle();
+			info.scratch_data = vk::DeviceOrHostAddressKHR {
+				device_address: scratch.addr(),
+			};
+
+			let buf = self.ctx.get_buf::<Compute>();
+			ext.cmd_build_acceleration_structures(buf, &[info], &[&ranges]);
+
+			self.ctx.delete::<Compute>(scratch);
+			self.ctx.delete::<Compute>(raw_mesh);
 
 			as_
 		};

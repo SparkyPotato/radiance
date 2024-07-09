@@ -1,7 +1,7 @@
 use std::{io, path::PathBuf, sync::Arc, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender};
-use egui::{Align, Context, Label, Layout, RichText, ScrollArea, Ui};
+use egui::{Align, Context, Label, Layout, ProgressBar, RichText, ScrollArea, Ui};
 use egui_extras::Size;
 use egui_grid::GridBuilder;
 use radiance_asset::{
@@ -35,7 +35,7 @@ impl Notification for ImportNotif {
 				ui.label("discovering");
 			},
 			Progress::Update { done, total } => {
-				ui.label(format!("importing: {:.2}%", done.as_percentage(*total)));
+				ui.add(ProgressBar::new(done.as_percentage(*total)).show_percentage());
 			},
 			Progress::Finished => {
 				if self.finished.is_none() {
@@ -96,7 +96,7 @@ fn import_thread(recv: Receiver<ThreadMsg>, send: Sender<ThreadRecv>) {
 			ThreadMsg::Import(req) => {
 				if let Some(ref sys) = sys {
 					if let Err(err) = sys.import(&req.from, &req.to, |x, y| {
-						event!(Level::INFO, "{:.2}%", x.as_percentage(y));
+						event!(Level::INFO, "{:.2}%", x.as_percentage(y) * 100.0);
 						let _ = req.progress.send(Progress::Update { done: x, total: y });
 					}) {
 						event!(Level::ERROR, "failed to import {:?}: {:?}", req.from, err);
@@ -293,4 +293,3 @@ impl AssetManager {
 			});
 	}
 }
-

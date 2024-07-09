@@ -2,7 +2,7 @@ use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
 	device::{descriptor::ImageId, Device},
-	graph::{Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
+	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{ImageView, Subresource},
 	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
 	Result,
@@ -63,10 +63,14 @@ impl AcesTonemap {
 				subresource: Subresource::default(),
 			},
 		);
+		let desc = pass.desc(hdr);
 		let output = pass.resource(
-			hdr,
+			ImageDesc {
+				format: vk::Format::R8G8B8A8_SRGB,
+				..desc
+			},
 			ImageUsage {
-				format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
+				format: vk::Format::UNDEFINED,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource::default(),

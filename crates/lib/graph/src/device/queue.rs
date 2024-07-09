@@ -92,6 +92,7 @@ impl<TY: QueueType> SyncPoint<TY> {
 	pub fn later(self, other: Self) -> Self { Self(self.0.max(other.0), PhantomData) }
 }
 
+#[derive(Default)]
 pub struct Queues<T> {
 	pub graphics: T, // Also supports presentation.
 	pub compute: T,
@@ -131,22 +132,7 @@ impl<T> Queues<T> {
 		}
 	}
 
-	pub fn map_mut<U>(&mut self, mut f: impl FnMut(&mut T) -> U) -> Queues<U> {
-		let Queues {
-			graphics,
-			compute,
-			transfer,
-		} = self;
-		Queues {
-			graphics: f(graphics),
-			compute: f(compute),
-			transfer: f(transfer),
-		}
-	}
-
-	pub fn try_map_ref<U, E>(
-		&self, mut f: impl FnMut(&T) -> std::result::Result<U, E>,
-	) -> std::result::Result<Queues<U>, E> {
+	pub fn try_map<U, E>(self, mut f: impl FnMut(T) -> std::result::Result<U, E>) -> std::result::Result<Queues<U>, E> {
 		let Queues {
 			graphics,
 			compute,
@@ -159,7 +145,9 @@ impl<T> Queues<T> {
 		})
 	}
 
-	pub fn try_map<U, E>(self, mut f: impl FnMut(T) -> std::result::Result<U, E>) -> std::result::Result<Queues<U>, E> {
+	pub fn try_map_mut<U, E>(
+		&mut self, mut f: impl FnMut(&mut T) -> std::result::Result<U, E>,
+	) -> std::result::Result<Queues<U>, E> {
 		let Queues {
 			graphics,
 			compute,
@@ -198,6 +186,30 @@ impl SyncStage<vk::Semaphore> {
 		vk::SemaphoreSubmitInfo::default()
 			.semaphore(self.point)
 			.stage_mask(self.stage)
+	}
+}
+
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
+pub struct QueueSyncs {
+	pub graphics: Option<SyncPoint<Graphics>>,
+	pub compute: Option<SyncPoint<Compute>>,
+	pub transfer: Option<SyncPoint<Transfer>>,
+}
+
+impl QueueSyncs {
+	pub fn merge(&mut self, other: Self) {
+		self.graphics = match self.graphics {
+			Some(g) => other.graphics.map(|x| g.later(x)).or(self.graphics),
+			None => other.graphics,
+		};
+		self.compute = match self.compute {
+			Some(g) => other.compute.map(|x| g.later(x)).or(self.compute),
+			None => other.compute,
+		};
+		self.transfer = match self.transfer {
+			Some(g) => other.transfer.map(|x| g.later(x)).or(self.transfer),
+			None => other.transfer,
+		};
 	}
 }
 

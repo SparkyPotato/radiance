@@ -5,9 +5,10 @@ use crossbeam_channel::{Receiver, Sender};
 use material::GpuMaterial;
 use radiance_asset::{AssetError, AssetSource, AssetSystem};
 use radiance_graph::{
-	device::{descriptor::BufferId, Device},
+	device::{descriptor::BufferId, Device, QueueSyncs},
 	graph::Frame,
 	resource::{Buffer, BufferDesc, Resource},
+	util::async_exec::AsyncCtx,
 };
 use rref::{RRef, RWeak, RuntimeAsset};
 use rustc_hash::FxHashMap;
@@ -102,15 +103,18 @@ impl AssetRuntime {
 	pub fn materials(&self) -> BufferId { self.material_buffer.id().unwrap() }
 
 	pub fn load<S: AssetSource, R>(
-		&mut self, device: &Device, sys: &AssetSystem<S>,
+		&mut self, device: &Device, sys: &AssetSystem<S>, ctx: AsyncCtx,
 		exec: impl FnOnce(&mut Loader<'_, S>) -> Result<R, LoadError<S>>,
-	) -> Result<R, LoadError<S>> {
+	) -> Result<(R, QueueSyncs), LoadError<S>> {
 		let mut loader = Loader {
 			runtime: self,
 			device,
 			sys,
+			ctx,
 		};
-		exec(&mut loader)
+		let ret = exec(&mut loader)?;
+		let sync = loader.ctx.finish(device).map_err(LoadError::Vulkan)?;
+		Ok((ret, sync))
 	}
 
 	pub fn get_cache<T: RuntimeAsset>(map: &mut FxHashMap<Uuid, RWeak<T>>, uuid: Uuid) -> Option<RRef<T>> {
@@ -151,4 +155,5 @@ pub struct Loader<'a, S> {
 	runtime: &'a mut AssetRuntime,
 	device: &'a Device,
 	sys: &'a AssetSystem<S>,
+	ctx: AsyncCtx<'a>,
 }

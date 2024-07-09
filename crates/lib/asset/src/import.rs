@@ -48,7 +48,7 @@ impl ImportProgress {
 	pub fn as_percentage(self, total: Self) -> f32 {
 		let total = total.images + total.meshes + total.materials + total.scenes;
 		let self_ = self.images + self.meshes + self.materials + self.scenes;
-		(self_ as f32 / total as f32) * 100.0
+		self_ as f32 / total as f32
 	}
 }
 

@@ -312,7 +312,7 @@ impl<'a> DeviceBuilder<'a> {
 	)> {
 		let extensions = Self::get_device_extensions(surface.is_some(), extensions);
 		trace!("using device extensions: {:?}", extensions);
-		let mut extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
+		let extensions: Vec<_> = extensions.into_iter().map(|extension| extension.as_ptr()).collect();
 
 		for (physical_device, queues, name) in Self::get_physical_devices(instance, surface)? {
 			let props = unsafe { instance.get_physical_device_properties(physical_device) };

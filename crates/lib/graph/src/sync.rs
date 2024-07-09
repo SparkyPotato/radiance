@@ -106,12 +106,6 @@ gen_usage_enums! {
 		ColorAttachmentWrite,
 		/// Written as a depth/stencil attachment during rendering, or via a subpass store op.
 		DepthStencilAttachmentWrite,
-		/// Written as a depth aspect of a depth/stencil attachment during rendering, whilst the
-		/// stencil aspect is read-only.
-		DepthAttachmentWriteStencilReadOnly,
-		/// Written as a stencil aspect of a depth/stencil attachment during rendering, whilst the
-		/// depth aspect is read-only.
-		StencilAttachmentWriteDepthReadOnly,
 	};
 
 	pub enum CommonUsage {
@@ -147,7 +141,9 @@ impl BitOr for AccessInfo {
 			access_mask: self.access_mask | rhs.access_mask,
 			image_layout: {
 				debug_assert!(
-					self.image_layout == rhs.image_layout,
+					self.image_layout == rhs.image_layout
+						|| self.image_layout == vk::ImageLayout::UNDEFINED
+						|| rhs.image_layout == vk::ImageLayout::UNDEFINED,
 					"Cannot merge `AccessInfo`s with different layouts ({:?} and {:?})",
 					self.image_layout,
 					rhs.image_layout,
@@ -195,8 +191,6 @@ impl From<ImageUsage> for vk::ImageUsageFlags {
 			ImageUsage::Present => vk::ImageUsageFlags::empty(),
 			ImageUsage::ColorAttachmentWrite => vk::ImageUsageFlags::COLOR_ATTACHMENT,
 			ImageUsage::DepthStencilAttachmentWrite => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-			ImageUsage::DepthAttachmentWriteStencilReadOnly => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-			ImageUsage::StencilAttachmentWriteDepthReadOnly => vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
 			ImageUsage::Nothing => vk::ImageUsageFlags::empty(),
 			ImageUsage::ShaderStorageRead(_) => vk::ImageUsageFlags::STORAGE,
 			ImageUsage::TransferRead => vk::ImageUsageFlags::TRANSFER_SRC,
@@ -213,43 +207,43 @@ impl From<UsageType> for AccessInfo {
 			UsageType::Nothing => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::NONE,
 				access_mask: vk::AccessFlags2::NONE,
-				image_layout: vk::ImageLayout::GENERAL,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::IndirectBuffer => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::DRAW_INDIRECT,
 				access_mask: vk::AccessFlags2::INDIRECT_COMMAND_READ,
-				image_layout: vk::ImageLayout::GENERAL,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::IndexBuffer => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::INDEX_INPUT,
 				access_mask: vk::AccessFlags2::INDEX_READ,
-				image_layout: vk::ImageLayout::GENERAL,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::VertexBuffer => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::VERTEX_ATTRIBUTE_INPUT,
 				access_mask: vk::AccessFlags2::VERTEX_ATTRIBUTE_READ,
-				image_layout: vk::ImageLayout::GENERAL,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::ShaderReadUniformBuffer(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
 				access_mask: vk::AccessFlags2::UNIFORM_READ,
-				image_layout: vk::ImageLayout::GENERAL,
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::ShaderReadSampledImage(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
 				access_mask: vk::AccessFlags2::SHADER_SAMPLED_READ,
-				image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+				image_layout: vk::ImageLayout::READ_ONLY_OPTIMAL,
 			},
 			UsageType::ColorAttachmentRead => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
 				access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_READ,
-				image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+				image_layout: vk::ImageLayout::READ_ONLY_OPTIMAL,
 			},
 			UsageType::DepthStencilAttachmentRead => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
 					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
 				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
-				image_layout: vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+				image_layout: vk::ImageLayout::READ_ONLY_OPTIMAL,
 			},
 			UsageType::ShaderStorageRead(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),
@@ -279,27 +273,13 @@ impl From<UsageType> for AccessInfo {
 			UsageType::ColorAttachmentWrite => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
 				access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-				image_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+				image_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
 			},
 			UsageType::DepthStencilAttachmentWrite => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
 					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
 				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE,
-				image_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-			},
-			UsageType::DepthAttachmentWriteStencilReadOnly => AccessInfo {
-				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
-					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
-					| vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
-				image_layout: vk::ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
-			},
-			UsageType::StencilAttachmentWriteDepthReadOnly => AccessInfo {
-				stage_mask: vk::PipelineStageFlags2::EARLY_FRAGMENT_TESTS
-					| vk::PipelineStageFlags2::LATE_FRAGMENT_TESTS,
-				access_mask: vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_WRITE
-					| vk::AccessFlags2::DEPTH_STENCIL_ATTACHMENT_READ,
-				image_layout: vk::ImageLayout::DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,
+				image_layout: vk::ImageLayout::ATTACHMENT_OPTIMAL,
 			},
 			UsageType::TransferWrite => AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::TRANSFER,
@@ -368,8 +348,6 @@ pub fn is_write_access(usage: UsageType) -> bool {
 		UsageType::ShaderStorageWrite(_)
 			| UsageType::ColorAttachmentWrite
 			| UsageType::DepthStencilAttachmentWrite
-			| UsageType::DepthAttachmentWriteStencilReadOnly
-			| UsageType::StencilAttachmentWriteDepthReadOnly
 			| UsageType::TransferWrite
 			| UsageType::HostWrite
 			| UsageType::General

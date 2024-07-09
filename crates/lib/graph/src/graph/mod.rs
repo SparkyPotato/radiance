@@ -12,7 +12,7 @@ use rustc_hash::FxHasher;
 use tracing::{span, Level};
 
 pub use crate::graph::{
-	frame_data::Resource,
+	frame_data::{Deletable, Resource},
 	virtual_resource::{
 		BufferDesc,
 		BufferUsage,
@@ -35,10 +35,11 @@ use crate::{
 	graph::{
 		cache::{ResourceCache, ResourceList, UniqueCache},
 		compile::{CompiledFrame, DataState, ResourceMap},
-		frame_data::{Deletable, FrameData, Submitter},
+		frame_data::{FrameData, Submitter},
 		virtual_resource::{ResourceLifetime, VirtualResourceData},
 	},
 	resource::{Buffer, Event, Image, ImageView},
+	util::async_exec::{AsyncCtx, AsyncExecutor},
 	Result,
 };
 
@@ -52,6 +53,7 @@ pub const FRAMES_IN_FLIGHT: usize = 2;
 
 /// The render graph.
 pub struct RenderGraph {
+	async_exec: AsyncExecutor,
 	frame_data: [FrameData; FRAMES_IN_FLIGHT],
 	caches: Caches,
 	curr_frame: usize,
@@ -80,6 +82,7 @@ impl RenderGraph {
 		};
 
 		Ok(Self {
+			async_exec: AsyncExecutor::new(device)?,
 			frame_data,
 			caches,
 			curr_frame: 0,
@@ -98,9 +101,11 @@ impl RenderGraph {
 
 	pub fn destroy(self, device: &Device) {
 		unsafe {
+			let _ = device.device().device_wait_idle();
 			for frame_data in self.frame_data {
 				frame_data.destroy(device);
 			}
+			self.async_exec.destroy(device);
 			for cache in self.caches.upload_buffers {
 				cache.destroy(device);
 			}
@@ -127,6 +132,8 @@ pub struct Frame<'pass, 'graph> {
 impl<'pass, 'graph> Frame<'pass, 'graph> {
 	pub fn graph(&self) -> &RenderGraph { self.graph }
 
+	pub fn async_exec(&mut self) -> Result<AsyncCtx> { self.graph.async_exec.start(self.device) }
+
 	pub fn device(&self) -> &'graph Device { &self.device }
 
 	pub fn arena(&self) -> &'graph Arena { self.device.arena() }
@@ -150,6 +157,7 @@ impl Frame<'_, '_> {
 		let arena = device.arena();
 		let data = &mut self.graph.frame_data[self.graph.curr_frame];
 		data.reset(device)?;
+		self.graph.async_exec.tick(device)?;
 		unsafe {
 			self.graph.caches.upload_buffers[self.graph.curr_frame].reset(device);
 			self.graph.caches.buffers.reset(device);
