@@ -133,7 +133,6 @@ where
 
 	fn asset(&mut self, name: &str, header: AssetHeader) -> Result<Self::Sink, Self::Error> {
 		let inter = match header.ty {
-			AssetType::Image => "images",
 			AssetType::Mesh => "meshes",
 			AssetType::Material => "materials",
 			AssetType::Scene => "scenes",

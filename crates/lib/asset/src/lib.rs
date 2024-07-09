@@ -6,7 +6,6 @@ use std::{fmt::Debug, hash::BuildHasherDefault};
 
 use bincode::{Decode, Encode};
 use dashmap::DashMap;
-use image::Image;
 use material::Material;
 use rustc_hash::FxHasher;
 use tracing::{event, Level};
@@ -20,7 +19,6 @@ use crate::{
 
 #[cfg(feature = "fs")]
 pub mod fs;
-pub mod image;
 #[cfg(feature = "import")]
 pub mod import;
 pub mod material;
@@ -36,7 +34,6 @@ const CONTAINER_VERSION: u32 = 1;
 /// The type of an asset.
 #[repr(u32)]
 pub enum AssetType {
-	Image = 0,
 	Mesh = 1,
 	Material = 2,
 	Scene = 3,
@@ -47,7 +44,6 @@ impl TryFrom<u32> for AssetType {
 
 	fn try_from(x: u32) -> Result<Self, ()> {
 		Ok(match x {
-			0 => Self::Image,
 			1 => Self::Mesh,
 			2 => Self::Material,
 			3 => Self::Scene,
@@ -63,7 +59,6 @@ impl From<AssetType> for u32 {
 /// An asset.
 #[derive(Encode, Decode)]
 pub enum Asset {
-	Image(Image),
 	Mesh(Mesh),
 	Material(Material),
 	Scene(Scene),
@@ -72,7 +67,6 @@ pub enum Asset {
 impl Asset {
 	fn ty(&self) -> AssetType {
 		match self {
-			Self::Image(_) => AssetType::Image,
 			Self::Mesh(_) => AssetType::Mesh,
 			Self::Material(_) => AssetType::Material,
 			Self::Scene(_) => AssetType::Scene,
@@ -86,7 +80,6 @@ impl Asset {
 			.with_little_endian()
 			.with_fixed_int_encoding();
 		match self {
-			Asset::Image(i) => bincode::encode_into_std_write(i, &mut enc, config),
 			Asset::Mesh(m) => bincode::encode_into_std_write(m, &mut enc, config),
 			Asset::Material(m) => bincode::encode_into_std_write(m, &mut enc, config),
 			Asset::Scene(s) => bincode::encode_into_std_write(s, &mut enc, config),
@@ -308,9 +301,6 @@ impl<S: AssetSource> AssetSystem<S> {
 			.with_little_endian()
 			.with_fixed_int_encoding();
 		match meta.header.ty {
-			AssetType::Image => Ok(Asset::Image(
-				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
-			)),
 			AssetType::Mesh => Ok(Asset::Mesh(
 				bincode::decode_from_std_read(&mut dec, config).map_err(|_| AssetError::InvalidAsset)?,
 			)),

@@ -16,7 +16,6 @@ use uuid::Uuid;
 
 use crate::asset::rref::DelRes;
 
-pub mod image;
 pub mod material;
 pub mod mesh;
 pub mod rref;
@@ -26,7 +25,6 @@ pub struct AssetRuntime {
 	deleter: Sender<DelRes>,
 	delete_recv: Receiver<DelRes>,
 	scenes: FxHashMap<Uuid, RWeak<scene::Scene>>,
-	images: FxHashMap<Uuid, RWeak<image::Image>>,
 	materials: FxHashMap<Uuid, RWeak<material::Material>>,
 	meshes: FxHashMap<Uuid, RWeak<mesh::Mesh>>,
 	material_buffer: Buffer,
@@ -39,7 +37,6 @@ impl AssetRuntime {
 			deleter: send,
 			delete_recv: recv,
 			scenes: FxHashMap::default(),
-			images: FxHashMap::default(),
 			materials: FxHashMap::default(),
 			meshes: FxHashMap::default(),
 			material_buffer: Buffer::create(
@@ -59,12 +56,6 @@ impl AssetRuntime {
 			assert!(
 				s.upgrade().is_none(),
 				"Cannot destroy `AssetRuntime` with scene still alive"
-			)
-		}
-		for (_, i) in self.images {
-			assert!(
-				i.upgrade().is_none(),
-				"Cannot destroy `AssetRuntime` with images still alive"
 			)
 		}
 		for (_, m) in self.materials {

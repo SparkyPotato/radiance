@@ -65,14 +65,9 @@ struct Meshlet {
 
 struct Material {
     f32 base_color_factor[4];
-    OTex2D<NonUniform> base_color;
     f32 metallic_factor;
     f32 roughness_factor;
-    OTex2D<NonUniform> metallic_roughness;
-    OTex2D<NonUniform> normal;
-    OTex2D<NonUniform> occlusion;
     f32 emissive_factor[3];
-    OTex2D<NonUniform> emissive;
 };
 
 #define CULL_CAMERA 0

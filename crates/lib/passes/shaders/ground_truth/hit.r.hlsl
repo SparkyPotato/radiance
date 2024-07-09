@@ -70,16 +70,15 @@ MatInput EvalMaterial(Hit hit) {
 	float2 uv = hit.uv;
 	Material mat = Constants.materials.load(hit.mat);
 	MatInput ret;
-	ret.base_color = float4(mat.base_color_factor) * mat.base_color.sample_mip(s, uv, 0.f, 1.f);
-	float3 normal = mat.normal.sample_mip(s, uv, 0.f, float4(0.5f, 0.5f, 1.f, 0.f)).xzy;
+	ret.base_color = float4(mat.base_color_factor);
+	float3 normal = float3(0.5f, 1.f, 0.5f);
 	normal = normal * 2.f - 1.f;
 	normal = normalize(mul(hit.basis, normal));
 	hit.basis._m01_m11_m21 = normal; 
 	ret.basis = hit.basis;
-	ret.emissive = float3(mat.emissive_factor) * mat.emissive.sample_mip(s, uv, 0.f, 1.f).rgb;
-	float3 mr = mat.metallic_roughness.sample_mip(s, uv, 0.f, 1.f).rgb;
-	ret.metallic = mat.metallic_factor * mr.g;
-	f32 roughness = max(mat.roughness_factor * mr.b, 0.045f);
+	ret.emissive = float3(mat.emissive_factor);
+	ret.metallic = mat.metallic_factor;
+	f32 roughness = max(mat.roughness_factor, 0.045f);
 	ret.alpha = roughness * roughness;
 	return ret;
 }

@@ -23,7 +23,6 @@ use uuid::Uuid;
 use vek::{Aabb, Mat4, Vec2, Vec3, Vec4};
 
 use crate::{
-	image::{Format, Image},
 	material::{AlphaMode, Material},
 	mesh::{Mesh, Meshlet, SubMesh, Vertex},
 	scene,
@@ -38,7 +37,6 @@ use crate::{
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub struct ImportProgress {
-	images: usize,
 	meshes: usize,
 	materials: usize,
 	scenes: usize,
@@ -46,8 +44,8 @@ pub struct ImportProgress {
 
 impl ImportProgress {
 	pub fn as_percentage(self, total: Self) -> f32 {
-		let total = total.images + total.meshes + total.materials + total.scenes;
-		let self_ = self.images + self.meshes + self.materials + self.scenes;
+		let total = total.meshes + total.materials + total.scenes;
+		let self_ = self.meshes + self.materials + self.scenes;
 		self_ as f32 / total as f32
 	}
 }
@@ -117,58 +115,11 @@ where
 		};
 
 		let total = ImportProgress {
-			images: imp.gltf.images().count(),
 			meshes: imp.gltf.meshes().count(),
 			materials: imp.gltf.materials().count(),
 			scenes: imp.gltf.scenes().count(),
 		};
 		c.progress(ImportProgress::default(), total);
-
-		// Images.
-		let progress = AtomicUsize::new(0);
-		let images: Vec<_> = imp
-			.gltf
-			.images()
-			.map(|image| {
-				let uuid = Uuid::new_v4();
-				let name = image.name().unwrap_or("unnamed image");
-				let header = AssetHeader {
-					uuid,
-					ty: AssetType::Image,
-				};
-				let sink = c.asset(name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
-
-				Ok::<_, Error<S, I>>((header, image, sink))
-			})
-			.collect();
-		let images: Vec<_> = images
-			.into_par_iter()
-			.map(|res| {
-				let (header, image, sink) = res?;
-				let image = imp.image(image).map_err(|x| x.map_ignore())?;
-				sink.write_data(&Asset::Image(image).to_bytes())
-					.map_err(|x| ImportError::Sink(x))?;
-
-				let old = progress.fetch_add(1, Ordering::Relaxed);
-				c.progress(
-					ImportProgress {
-						images: old + 1,
-						materials: 0,
-						meshes: 0,
-						scenes: 0,
-					},
-					total,
-				);
-				Ok::<_, Error<S, I>>((header, sink))
-			})
-			.collect::<Result<_, _>>()?;
-		let images: Vec<_> = images
-			.into_iter()
-			.map(|(header, sink)| {
-				self.assets.insert(header.uuid, AssetMetadata { header, source: sink });
-				header.uuid
-			})
-			.collect();
 
 		// Materials
 		let progress = AtomicUsize::new(0);
@@ -184,7 +135,7 @@ where
 				};
 				let sink = c.asset(&name, header).map_err(|x| Error::<S, I>::Ctx(x))?;
 
-				let material = imp.material(material, &images).map_err(|x| x.map_ignore())?;
+				let material = imp.material(material).map_err(|x| x.map_ignore())?;
 				sink.write_data(&Asset::Material(material).to_bytes())
 					.map_err(|x| ImportError::Sink(x))?;
 				self.assets.insert(uuid, AssetMetadata { header, source: sink });
@@ -192,7 +143,6 @@ where
 				let old = progress.fetch_add(1, Ordering::Relaxed);
 				c.progress(
 					ImportProgress {
-						images: total.images,
 						materials: old + 1,
 						meshes: 0,
 						scenes: 0,
@@ -232,7 +182,6 @@ where
 				let old = progress.fetch_add(1, Ordering::Relaxed);
 				ctx.progress(
 					ImportProgress {
-						images: total.images,
 						meshes: old + 1,
 						materials: total.materials,
 						scenes: 0,
@@ -273,7 +222,6 @@ where
 			self.assets.insert(header.uuid, AssetMetadata { header, source: sink });
 			ctx.progress(
 				ImportProgress {
-					images: total.images,
 					meshes: total.meshes,
 					materials: total.materials,
 					scenes: i + 1,
@@ -313,45 +261,7 @@ impl<'a> Importer<'a> {
 		Ok(Self { base, gltf, buffers })
 	}
 
-	fn image(&self, image: gltf::Image) -> ImportResult<Image> {
-		let name = image.name().unwrap_or("unnamed image");
-
-		let s = span!(Level::INFO, "importing image", name = name);
-		let _e = s.enter();
-
-		let mut image = image::Data::from_source(image.source(), Some(self.base), &self.buffers)?;
-		let format = match image.format {
-			image::Format::R8 => Format::R8,
-			image::Format::R8G8 => Format::R8G8,
-			image::Format::R8G8B8 => {
-				let p = image.pixels;
-				image.pixels = Vec::with_capacity(p.len() / 3 * 4);
-				for i in 0..(p.len() / 3) {
-					image.pixels.push(p[i * 3]);
-					image.pixels.push(p[i * 3 + 1]);
-					image.pixels.push(p[i * 3 + 2]);
-					image.pixels.push(255);
-				}
-				Format::R8G8B8A8
-			},
-			image::Format::R8G8B8A8 => Format::R8G8B8A8,
-			image::Format::R16 => Format::R16,
-			image::Format::R16G16 => Format::R16G16,
-			image::Format::R16G16B16 => Format::R16G16B16,
-			image::Format::R16G16B16A16 => Format::R16G16B16A16,
-			image::Format::R32G32B32FLOAT => Format::R32G32B32FLOAT,
-			image::Format::R32G32B32A32FLOAT => Format::R32G32B32A32FLOAT,
-		};
-
-		Ok(Image {
-			width: image.width,
-			height: image.height,
-			format,
-			data: image.pixels,
-		})
-	}
-
-	fn material(&self, material: gltf::Material, images: &[Uuid]) -> ImportResult<Material> {
+	fn material(&self, material: gltf::Material) -> ImportResult<Material> {
 		let name = material.name().unwrap_or("unnamed material");
 
 		let s = span!(Level::INFO, "importing material", name = name);
@@ -366,20 +276,9 @@ impl<'a> Importer<'a> {
 
 		let pbr = material.pbr_metallic_roughness();
 		let base_color_factor = pbr.base_color_factor();
-		let base_color = pbr.base_color_texture().map(|x| images[x.texture().source().index()]);
 		let metallic_factor = pbr.metallic_factor();
 		let roughness_factor = pbr.roughness_factor();
-		let metallic_roughness = pbr
-			.metallic_roughness_texture()
-			.map(|x| images[x.texture().source().index()]);
-		let normal = material.normal_texture().map(|x| images[x.texture().source().index()]);
-		let occlusion = material
-			.occlusion_texture()
-			.map(|x| images[x.texture().source().index()]);
 		let emissive_factor = material.emissive_factor();
-		let emissive = material
-			.emissive_texture()
-			.map(|x| images[x.texture().source().index()]);
 
 		Ok(Material {
 			alpha_cutoff,
@@ -390,19 +289,13 @@ impl<'a> Importer<'a> {
 				z: base_color_factor[2],
 				w: base_color_factor[3],
 			},
-			base_color,
 			metallic_factor,
 			roughness_factor,
-			metallic_roughness,
-			normal,
-			occlusion,
 			emissive_factor: Vec3 {
 				x: emissive_factor[0],
 				y: emissive_factor[1],
 				z: emissive_factor[2],
 			},
-
-			emissive,
 		})
 	}
 
