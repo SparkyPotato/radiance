@@ -22,24 +22,8 @@ struct Frustum {
     }
 };
 
-bool frustum_cull(float4x4 mvp, Aabb aabb) {
-    Frustum frustum = Frustum::from_matrix(mvp);
-
-    float3 half_extent = aabb.extent.xyz * 0.5f;
-    float3 center = aabb.min.xyz + half_extent;
-
-    for (u32 i = 0; i < 5; i++) {
-        float4 p = frustum.planes[i];
-        float3 plane = frustum.planes[i].xyz;
-        float3 abs_plane = abs(plane);
-
-        float d = dot(center, plane);
-        float r = dot(half_extent, abs_plane);
-
-        if (d + r > -p.w) {
-            return false;
-        }
-    }
-
-    return true;
+float4 transform_sphere(float4x4 mvp, float4 sphere) {
+    float scale = max(max(length(mvp._m00_m10_m20), length(mvp._m01_m11_m21)), length(mvp._m02_m12_m22));
+    float4 center = mul(mvp, float4(sphere.xyz, 1.f));
+    return float4(center.xyz, sphere.w * scale * 0.5f);
 }

@@ -67,11 +67,9 @@ pub struct GpuInstance {
 	pub transform: Vec4<Vec3<f32>>,
 	/// Mesh buffer containing meshlets + meshlet data.
 	pub mesh: BufferId,
-	pub meshlet_count: u32,
-	pub submesh_count: u32,
 }
 
-const_assert_eq!(std::mem::size_of::<GpuInstance>(), 60);
+const_assert_eq!(std::mem::size_of::<GpuInstance>(), 52);
 const_assert_eq!(std::mem::align_of::<GpuInstance>(), 4);
 
 #[repr(C)]
@@ -104,7 +102,7 @@ impl Scene {
 			scene: &'a Scene,
 		}
 		impl<'a> SimdBestFirstVisitor<u32, SimdAabb> for Visitor<'a> {
-			type Result = Intersection<'a>;
+			type Result = Intersection;
 
 			fn visit(
 				&mut self, tmax: f32, bv: &SimdAabb, data: Option<[Option<&u32>; 4]>,
@@ -233,8 +231,6 @@ impl<S: AssetSource> Loader<'_, S> {
 					.write(GpuInstance {
 						transform: n.transform.cols.map(|x| x.xyz()),
 						mesh: mesh.buffer.id().unwrap(),
-						meshlet_count: mesh.meshlet_count,
-						submesh_count: mesh.submeshes.len() as u32,
 					})
 					.unwrap();
 				awriter
@@ -280,11 +276,7 @@ impl<S: AssetSource> Loader<'_, S> {
 			},
 		)
 		.map_err(LoadError::Vulkan)?;
-		// meshlet_pointer_buffer
-		// 	.alloc_size(loader.ctx, loader.queue, size)
-		// 	.map_err(LoadError::Vulkan)?;
 		let mut writer = SliceWriter::new(unsafe { meshlet_pointer_buffer.data().as_mut() });
-
 		for (instance, node) in nodes.iter().enumerate() {
 			for meshlet in 0..node.mesh.meshlet_count {
 				writer

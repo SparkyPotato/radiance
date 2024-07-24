@@ -29,6 +29,7 @@ gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", fe
 half = { version = "2.4.1", features = ["bytemuck", "num-traits"] }
 hassle-rs = { version = "0.11.0" }
 hashbrown = { version = "0.14.3", features = ["nightly"] }
+metis = "0.2.1"
 meshopt = { git = "https://github.com/gwihlidal/meshopt-rs" }
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
 parry3d = "0.15.1"
@@ -44,7 +45,7 @@ serde_json = { version = "1.0.114" }
 static_assertions = "1.1.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracy = { package = "tracy_full", version = "1.7.1", features = ["tracing"] }
+tracy = { package = "tracy_full", version = "1.7.1", features = ["tracing", "enable"] }
 uuid = { version = "1.7.0", features = ["v4", "fast-rng", "serde"] }
 vek = { version = "0.16.1", features = ["bytemuck", "serde"] }
 walkdir = "2.5.0"

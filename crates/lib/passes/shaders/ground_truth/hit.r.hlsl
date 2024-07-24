@@ -20,9 +20,7 @@ Hit EvalHit(BuiltInTriangleIntersectionAttributes attrs) {
 	};
 	float3 bary = float3(1.0 - attrs.barycentrics.x - attrs.barycentrics.y, attrs.barycentrics.x, attrs.barycentrics.y);
 	u32 meshlet_index = GeometryIndex();
-	Meshlet meshlet = instance.mesh.load<Meshlet>(sizeof(Submesh) * instance.submesh_count, meshlet_index);
-
-	hit.mat = instance.mesh.load<Submesh>(0, meshlet.submesh).mat_index;
+	Meshlet meshlet = instance.mesh.load<Meshlet>(0, meshlet_index);
 
 	u32 prim = PrimitiveIndex();
 	u32 indices = instance.mesh.load<u32>(meshlet.index_offset, prim);

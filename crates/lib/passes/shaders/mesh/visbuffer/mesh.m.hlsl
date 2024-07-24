@@ -6,7 +6,7 @@ PUSH PushConstants Constants;
 [outputtopology("triangle")]
 [numthreads(64, 1, 1)]
 void main(
-    u32 gid: SV_GroupID, u32 gtid: SV_GroupThreadID,
+    u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex,
     in payload MeshPayload payload,
     out vertices VertexOutput vertices[64],
     out indices uint3 triangles[124],
@@ -17,7 +17,7 @@ void main(
     u32 id = pointer_id.id;
 
     Instance instance = Constants.instances.load(pointer.instance);
-    Meshlet meshlet = instance.mesh.load<Meshlet>(sizeof(Submesh) * instance.submesh_count, pointer.meshlet);
+    Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);
     Camera camera = Constants.camera.load(DRAW_CAMERA);
 
     u32 vert_count = (meshlet.vert_and_tri_count >> 0) & 0xff;
@@ -26,7 +26,6 @@ void main(
 
     float4x4 transform = instance.get_transform();
     float4x4 mvp = mul(camera.view_proj, transform);
-    Aabb aabb = meshlet.get_mesh_aabb();
 
     // 64 threads per group and upto 64 vertices per meshlet.
     if (gtid < vert_count) {

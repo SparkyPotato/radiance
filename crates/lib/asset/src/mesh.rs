@@ -4,7 +4,7 @@ use bincode::{Decode, Encode};
 use bytemuck::{Pod, Zeroable};
 use static_assertions::const_assert_eq;
 use uuid::Uuid;
-use vek::{Aabb, Vec2, Vec3, Vec4};
+use vek::{Sphere, Vec2, Vec3, Vec4};
 
 #[derive(Pod, Zeroable, Copy, Clone, Default, Encode, Decode)]
 #[repr(C)]
@@ -24,30 +24,34 @@ const_assert_eq!(std::mem::align_of::<Vertex>(), 4);
 
 #[derive(Encode, Decode)]
 pub struct Meshlet {
-	/// AABB of the meshlet relative to the mesh origin.
-	#[bincode(with_serde)]
-	pub aabb: Aabb<f32>,
-	/// Offset of the meshlet index buffer relative to the parent mesh index buffer.
-	pub index_offset: u32,
 	/// Offset of the meshlet vertex buffer relative to the parent mesh vertex buffer.
 	pub vertex_offset: u32,
-	/// Number of triangles in the meshlet. The number of indices will be 3 times this.
-	pub tri_count: u8,
+	/// Offset of the meshlet index buffer relative to the parent mesh index buffer.
+	pub index_offset: u32,
 	/// Number of vertices in the meshlet.
 	pub vert_count: u8,
+	/// Number of triangles in the meshlet. The number of indices will be 3 times this.
+	pub tri_count: u8,
+	/// The materials assigned to triangles in this meshlet.
+	pub material_ranges: Range<u32>,
+	/// The bounding sphere of the meshlet.
+	#[bincode(with_serde)]
+	pub bounding: Sphere<f32, f32>,
+	/// The bounding sphere of the meshlet group, used for LOD decision.
+	#[bincode(with_serde)]
+	pub group_bounding: Sphere<f32, f32>,
+	/// The bounding sphere of the parent meshlet group, used for LOD decision.
+	#[bincode(with_serde)]
+	pub parent_group_bounding: Sphere<f32, f32>,
 }
 
-/// A part of mesh with a material assigned to it.
 #[derive(Encode, Decode)]
-pub struct SubMesh {
-	/// Meshlets of the submesh.
-	pub meshlets: Range<u32>,
-	/// AABB of the submesh.
-	#[bincode(with_serde)]
-	pub aabb: Aabb<f32>,
-	/// Material of the submesh.
+pub struct MaterialRange {
+	/// The material referenced.
 	#[bincode(with_serde)]
 	pub material: Uuid,
+	/// The vertices that the material is applied to.
+	pub vertices: Range<u8>,
 }
 
 /// A mesh consisting of multiple submeshes, each with a material assigned to it.
@@ -59,9 +63,6 @@ pub struct Mesh {
 	pub indices: Vec<u8>,
 	/// Meshlets of the mesh.
 	pub meshlets: Vec<Meshlet>,
-	/// Submeshes making up the mesh.
-	pub submeshes: Vec<SubMesh>,
-	#[bincode(with_serde)]
-	pub aabb: Aabb<f32>,
+	/// Ranges of materials in each meshlet.
+	pub material_ranges: Vec<MaterialRange>,
 }
-

@@ -5,9 +5,9 @@ edition = "2021"
 
 [features]
 # Support importing.
-import = ["dep:gltf"]
+import = ["dep:gltf", "dep:metis", "dep:meshopt"]
 # Support file-based asset systems.
-fs = []
+fs = ["dep:walkdir"]
 
 [dependencies]
 bytemuck = { workspace = true }
@@ -16,11 +16,12 @@ static_assertions = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 vek = { workspace = true }
-walkdir = { workspace = true }
+walkdir = { workspace = true, optional = true }
 bincode = { workspace = true }
 dashmap = { workspace = true }
 gltf = { workspace = true, optional = true }
-meshopt = { workspace = true }
+metis = { workspace = true, optional = true }
+meshopt = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 rayon = { workspace = true }
 zstd = { workspace = true }

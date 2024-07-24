@@ -282,7 +282,8 @@ impl Resource for Image {
 					.array_layers(desc.layers)
 					.samples(desc.samples)
 					.usage(desc.usage)
-					.sharing_mode(vk::SharingMode::EXCLUSIVE)
+					.sharing_mode(vk::SharingMode::EXCLUSIVE) // TODO: exclusive for attachments,
+					// concurrent for others.
 					.initial_layout(vk::ImageLayout::UNDEFINED),
 				None,
 			)?;

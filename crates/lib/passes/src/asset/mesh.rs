@@ -20,7 +20,6 @@ use uuid::Uuid;
 use vek::{Ray, Vec2, Vec3, Vec4};
 
 use crate::asset::{
-	material::Material,
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
 	DelRes,
@@ -33,36 +32,29 @@ pub type GpuVertex = Vertex;
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
+pub struct Sphere {
+	center: Vec3<f32>,
+	radius: f32,
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
 pub struct GpuMeshlet {
-	pub aabb_min: Vec3<f32>,
-	pub aabb_extent: Vec3<f32>,
 	pub vertex_byte_offset: u32,
 	pub index_byte_offset: u32,
 	pub vertex_count: u8,
 	pub triangle_count: u8,
-	pub submesh: u16,
+	pub _pad: u16,
+	pub bounding: Sphere,
+	pub group_error: Sphere,
+	pub parent_error: Sphere,
 }
 
-const_assert_eq!(std::mem::size_of::<GpuMeshlet>(), 36);
+const_assert_eq!(std::mem::size_of::<GpuMeshlet>(), 60);
 const_assert_eq!(std::mem::align_of::<GpuMeshlet>(), 4);
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-pub struct GpuSubMesh {
-	pub material: u32,
-}
-
-const_assert_eq!(std::mem::size_of::<GpuSubMesh>(), 4);
-const_assert_eq!(std::mem::align_of::<GpuSubMesh>(), 4);
-
-pub struct SubMesh {
-	material: RRef<Material>,
-	tris: Range<u32>,
-}
 
 pub struct Mesh {
 	pub(super) buffer: Buffer,
-	pub(super) submeshes: Vec<SubMesh>,
 	pub(super) acceleration_structure: AS,
 	pub(super) meshlet_count: u32,
 	pub(super) vertices: Vec<Vertex>,
@@ -70,13 +62,12 @@ pub struct Mesh {
 }
 
 #[derive(Copy, Clone)]
-pub struct Intersection<'a> {
+pub struct Intersection {
 	pub t: f32,
 	pub position: Vec3<f32>,
 	pub normal: Vec3<f32>,
 	pub tangent: Vec4<f32>,
 	pub uv: Vec2<f32>,
-	pub material: &'a Material,
 }
 
 impl Mesh {
@@ -119,15 +110,12 @@ impl Mesh {
 			let tangent = v0.tangent * u + v1.tangent * v + v2.tangent * w;
 			let uv = v0.uv * u + v1.uv * v + v2.uv * w;
 
-			let material = &*self.submeshes.iter().find(|s| s.tris.contains(&trii)).unwrap().material;
-
 			Intersection {
 				t,
 				position: Vec3::new(position.x, position.y, position.z),
 				normal,
 				tangent,
 				uv,
-				material,
 			}
 		})
 	}
@@ -157,9 +145,7 @@ impl<S: AssetSource> Loader<'_, S> {
 			unreachable!("Mesh asset is not a mesh");
 		};
 
-		let submesh_byte_offset = 0;
-		let submesh_byte_len = (m.submeshes.len() * std::mem::size_of::<GpuSubMesh>()) as u64;
-		let meshlet_byte_offset = submesh_byte_offset + submesh_byte_len;
+		let meshlet_byte_offset = 0;
 		let meshlet_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshlet>()) as u64;
 		let vertex_byte_offset = meshlet_byte_offset + meshlet_byte_len;
 		let vertex_byte_len = (m.vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
@@ -188,41 +174,24 @@ impl<S: AssetSource> Loader<'_, S> {
 			.collect();
 
 		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
-		let mut indices = Vec::new();
-		let submeshes = m
-			.submeshes
+		let indices = m
+			.meshlets
 			.iter()
-			.map(|x| {
-				let material = self.load_material(x.material)?;
-				writer
-					.write(GpuSubMesh {
-						material: material.index,
-					})
-					.unwrap();
-
-				let start = indices.len() as u32;
-				indices.extend(x.meshlets.clone().flat_map(|me| {
-					let me = &m.meshlets[me as usize];
-					let tc = me.tri_count as usize;
-					(0..tc).map(|t| {
-						let i0 = me.index_offset as usize + t * 3;
-						let i1 = i0 + 1;
-						let i2 = i1 + 1;
-						[
-							m.indices[i0] as u32 + me.vertex_offset,
-							m.indices[i1] as u32 + me.vertex_offset,
-							m.indices[i2] as u32 + me.vertex_offset,
-						]
-					})
-				}));
-				let end = indices.len() as u32;
-
-				Ok(SubMesh {
-					material,
-					tris: start..end,
+			.flat_map(|me| {
+				let tc = me.tri_count as usize;
+				(0..tc).map(|t| {
+					let i0 = me.index_offset as usize + t * 3;
+					let i1 = i0 + 1;
+					let i2 = i1 + 1;
+					[
+						m.indices[i0] as u32 + me.vertex_offset,
+						m.indices[i1] as u32 + me.vertex_offset,
+						m.indices[i2] as u32 + me.vertex_offset,
+					]
 				})
 			})
-			.collect::<Result<_, LoadError<S>>>()?;
+			.collect();
+
 		let mesh = TriMesh::new(vertices, indices);
 
 		let raw_mesh = Buffer::create(
@@ -237,55 +206,62 @@ impl<S: AssetSource> Loader<'_, S> {
 		)
 		.map_err(LoadError::Vulkan)?;
 		let mut iwriter = SliceWriter::new(unsafe { raw_mesh.data().as_mut() });
-		let mut geo = Vec::with_capacity(m.submeshes.len());
-		let mut counts = Vec::with_capacity(m.submeshes.len());
-		let mut ranges = Vec::with_capacity(m.submeshes.len());
+		let mut geo = Vec::new();
+		let mut counts = Vec::new();
+		let mut ranges = Vec::new();
 
-		for (s, sub) in m.submeshes.iter().enumerate() {
-			for me in sub.meshlets.clone().map(|i| &m.meshlets[i as usize]) {
-				let aabb_extent = me.aabb.max - me.aabb.min;
-				let off = me.index_offset as usize;
-				for &i in m.indices[off..off + me.tri_count as usize * 3].iter() {
-					iwriter.write(i as u16).unwrap();
-				}
-
-				let stride = std::mem::size_of::<GpuVertex>() as u64;
-				geo.push(
-					vk::AccelerationStructureGeometryKHR::default()
-						.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
-						.geometry(vk::AccelerationStructureGeometryDataKHR {
-							triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
-								.vertex_format(vk::Format::R32G32B32_SFLOAT)
-								.vertex_data(vk::DeviceOrHostAddressConstKHR {
-									device_address: buffer.addr() + vertex_byte_offset,
-								})
-								.vertex_stride(stride)
-								.max_vertex(me.tri_count as u32 - 1)
-								.index_type(vk::IndexType::UINT16)
-								.index_data(vk::DeviceOrHostAddressConstKHR {
-									device_address: raw_mesh.addr()
-										+ me.index_offset as u64 * std::mem::size_of::<u16>() as u64,
-								}),
-						})
-						.flags(vk::GeometryFlagsKHR::OPAQUE),
-				);
-				counts.push(me.tri_count as u32);
-				ranges.push(vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(me.tri_count as u32));
-
-				writer
-					.write(GpuMeshlet {
-						aabb_min: me.aabb.min,
-						aabb_extent,
-						vertex_byte_offset: vertex_byte_offset as u32
-							+ (me.vertex_offset * std::mem::size_of::<GpuVertex>() as u32),
-						index_byte_offset: index_byte_offset as u32
-							+ (me.index_offset / 3 * std::mem::size_of::<u32>() as u32),
-						vertex_count: me.vert_count,
-						triangle_count: me.tri_count,
-						submesh: s as u16,
-					})
-					.unwrap();
+		for me in m.meshlets.iter() {
+			let off = me.index_offset as usize;
+			for &i in m.indices[off..off + me.tri_count as usize * 3].iter() {
+				iwriter.write(i as u16).unwrap();
 			}
+
+			let stride = std::mem::size_of::<GpuVertex>() as u64;
+			geo.push(
+				vk::AccelerationStructureGeometryKHR::default()
+					.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+					.geometry(vk::AccelerationStructureGeometryDataKHR {
+						triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
+							.vertex_format(vk::Format::R32G32B32_SFLOAT)
+							.vertex_data(vk::DeviceOrHostAddressConstKHR {
+								device_address: buffer.addr() + vertex_byte_offset,
+							})
+							.vertex_stride(stride)
+							.max_vertex(me.tri_count as u32 - 1)
+							.index_type(vk::IndexType::UINT16)
+							.index_data(vk::DeviceOrHostAddressConstKHR {
+								device_address: raw_mesh.addr()
+									+ me.index_offset as u64 * std::mem::size_of::<u16>() as u64,
+							}),
+					})
+					.flags(vk::GeometryFlagsKHR::OPAQUE),
+			);
+			counts.push(me.tri_count as u32);
+			ranges.push(vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(me.tri_count as u32));
+
+			writer
+				.write(GpuMeshlet {
+					vertex_byte_offset: vertex_byte_offset as u32
+						+ (me.vertex_offset * std::mem::size_of::<GpuVertex>() as u32),
+					index_byte_offset: index_byte_offset as u32
+						+ (me.index_offset / 3 * std::mem::size_of::<u32>() as u32),
+					vertex_count: me.vert_count,
+					triangle_count: me.tri_count,
+					_pad: 0,
+					bounding: Sphere {
+						center: me.bounding.center,
+						radius: me.bounding.radius,
+					},
+					group_error: Sphere {
+						center: me.group_bounding.center,
+						radius: me.group_bounding.radius,
+					},
+					parent_error: Sphere {
+						center: me.parent_group_bounding.center,
+						radius: me.parent_group_bounding.radius,
+					},
+				})
+				.unwrap();
 		}
 
 		writer.write_slice(&m.vertices).unwrap();
@@ -352,7 +328,6 @@ impl<S: AssetSource> Loader<'_, S> {
 		Ok(RRef::new(
 			Mesh {
 				buffer,
-				submeshes,
 				meshlet_count,
 				acceleration_structure,
 				vertices: m.vertices,
