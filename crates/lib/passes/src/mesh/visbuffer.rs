@@ -21,7 +21,7 @@ use radiance_graph::{
 	Result,
 };
 use radiance_shader_compiler::c_str;
-use vek::{Mat4, Vec2};
+use vek::{Mat4, Vec2, Vec4};
 
 use crate::asset::{rref::RRef, scene::Scene};
 
@@ -38,7 +38,6 @@ pub struct Camera {
 pub struct RenderInfo {
 	pub scene: RRef<Scene>,
 	pub camera: Camera,
-	pub cull_camera: Option<Camera>,
 	pub size: Vec2<u32>,
 }
 
@@ -52,7 +51,6 @@ pub struct VisBuffer {
 #[derive(Copy, Clone, NoUninit)]
 struct CameraData {
 	view: Mat4<f32>,
-	proj: Mat4<f32>,
 	view_proj: Mat4<f32>,
 	cot_fov: f32,
 	_pad: [f32; 15],
@@ -66,7 +64,6 @@ impl CameraData {
 
 		Self {
 			view,
-			proj,
 			view_proj,
 			cot_fov: (camera.fov / 2.0).tan().recip(),
 			_pad: [0.0; 15],
@@ -87,8 +84,7 @@ struct PushConstants {
 struct PassIO {
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	cull_camera: CameraData,
-	draw_camera: CameraData,
+	camera_data: CameraData,
 	meshlet_count: u32,
 	resolution: u32,
 	camera: Res<BufferHandle>,
@@ -148,15 +144,11 @@ impl VisBuffer {
 		let mut pass = frame.pass("visbuffer");
 
 		let aspect = info.size.x as f32 / info.size.y as f32;
-		let draw_camera = CameraData::new(aspect, info.camera);
-		let cull_camera = info
-			.cull_camera
-			.map(|c| CameraData::new(aspect, c))
-			.unwrap_or(draw_camera);
+		let camera = CameraData::new(aspect, info.camera);
 
 		let c = pass.resource(
 			graph::BufferDesc {
-				size: (std::mem::size_of::<CameraData>() * 2) as _,
+				size: std::mem::size_of::<CameraData>() as _,
 				upload: true,
 			},
 			BufferUsage {
@@ -209,8 +201,7 @@ impl VisBuffer {
 				PassIO {
 					instances: info.scene.instances(),
 					meshlet_pointers: info.scene.meshlet_pointers(),
-					cull_camera,
-					draw_camera,
+					camera_data: camera,
 					meshlet_count: info.scene.meshlet_pointer_count(),
 					resolution: info.size.x.max(info.size.y),
 					camera: c,
@@ -233,8 +224,7 @@ impl VisBuffer {
 
 		unsafe {
 			let mut writer = camera.data.as_mut();
-			writer.write(bytes_of(&io.cull_camera)).unwrap();
-			writer.write(bytes_of(&io.draw_camera)).unwrap();
+			writer.write(bytes_of(&io.camera_data)).unwrap();
 
 			let area = vk::Rect2D::default().extent(vk::Extent2D {
 				width: visbuffer.size.width,

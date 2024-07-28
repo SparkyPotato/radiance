@@ -129,7 +129,6 @@ impl Renderer {
 					RenderInfo {
 						scene,
 						camera: self.camera.get(),
-						cull_camera: debug.cull_camera(),
 						size: s,
 					},
 				);

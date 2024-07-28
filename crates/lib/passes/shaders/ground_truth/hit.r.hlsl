@@ -40,20 +40,12 @@ Hit EvalHit(BuiltInTriangleIntersectionAttributes attrs) {
 	float3 n2 = float3(v2.normal);
 	float3 normal = normalize(mul(tmat, float4(bary.x * n0 + bary.y * n1 + bary.z * n2, 0.f))).xyz;
 
-	float4 t0 = float4(v0.tangent);
-	float4 t1 = float4(v1.tangent);
-	float4 t2 = float4(v2.tangent);
-	float4 gen = bary.x * t0 + bary.y * t1 + bary.z * t2;
-	float4 tangent = float4(normalize(mul(tmat, float4(gen.xyz, 0.f))).xyz, gen.w);
-
-	float3 binormal = cross(normal, tangent.xyz) * tangent.w;
-
-	float3x3 basis = {
-		tangent.x, normal.x, binormal.x,
-		tangent.y, normal.y, binormal.y,
-		tangent.z, normal.z, binormal.z
-	};
-	hit.basis = basis;
+	// float3x3 basis = {
+	//	tangent.x, normal.x, binormal.x,
+	//	tangent.y, normal.y, binormal.y,
+	//	tangent.z, normal.z, binormal.z
+	// };
+	hit.basis = 0.f;
 
 	float2 u0 = float2(v0.uv);
 	float2 u1 = float2(v1.uv);

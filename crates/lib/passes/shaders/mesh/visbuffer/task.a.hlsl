@@ -26,7 +26,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
         MeshletPointer pointer = Constants.meshlet_pointers.load(id);
         Instance instance = Constants.instances.load(pointer.instance);
         Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);
-        Camera camera = Constants.camera.load(CULL_CAMERA);
+        Camera camera = Constants.camera.load(0);
 
         float4x4 transform = instance.get_transform();
         float4x4 mv = mul(camera.view, transform);
@@ -34,6 +34,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
 
         // Culling.
         bool visible = decide_lod(mv, camera.cot_fov, float4(meshlet.group_error), float4(meshlet.parent_error));
+        visible = visible && frustum_cull(mvp, float4(meshlet.bounding));
         if (visible) {
             u32 index;
             InterlockedAdd(MeshletEmitCount, 1, index);

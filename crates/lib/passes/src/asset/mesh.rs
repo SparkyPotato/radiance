@@ -66,7 +66,6 @@ pub struct Intersection {
 	pub t: f32,
 	pub position: Vec3<f32>,
 	pub normal: Vec3<f32>,
-	pub tangent: Vec4<f32>,
 	pub uv: Vec2<f32>,
 }
 
@@ -107,14 +106,12 @@ impl Mesh {
 			let v2 = self.vertices[i[2] as usize];
 
 			let normal = v0.normal * u + v1.normal * v + v2.normal * w;
-			let tangent = v0.tangent * u + v1.tangent * v + v2.tangent * w;
 			let uv = v0.uv * u + v1.uv * v + v2.uv * w;
 
 			Intersection {
 				t,
 				position: Vec3::new(position.x, position.y, position.z),
 				normal,
-				tangent,
 				uv,
 			}
 		})

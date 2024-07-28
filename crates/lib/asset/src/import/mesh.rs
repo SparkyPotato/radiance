@@ -314,13 +314,6 @@ impl Importer<'_> {
 			}
 			let normals = normals.map(|n| *from_bytes::<Vec3<f32>>(n));
 
-			let tangents = prim.get(&gltf::Semantic::Tangents).ok_or(ImportError::InvalidGltf)?;
-			let (tangents, ty, comp) = self.accessor(tangents)?;
-			if comp != Dimensions::Vec4 || ty != DataType::F32 {
-				return Err(ImportError::InvalidGltf);
-			}
-			let tangents = tangents.map(|n| *from_bytes::<Vec4<f32>>(n));
-
 			let uv = prim.get(&gltf::Semantic::TexCoords(0));
 			let mut uv = uv
 				.map(|uv| {
@@ -359,7 +352,6 @@ impl Importer<'_> {
 			out.vertices.extend(
 				positions
 					.zip(normals)
-					.zip(tangents)
 					.zip(std::iter::from_fn(move || {
 						if let Some(ref mut uv) = uv {
 							uv.next()
@@ -367,12 +359,7 @@ impl Importer<'_> {
 							Some(Vec2::new(0.0, 0.0))
 						}
 					}))
-					.map(|(((position, normal), tangent), uv)| Vertex {
-						position,
-						normal,
-						tangent,
-						uv,
-					}),
+					.map(|((position, normal), uv)| Vertex { position, normal, uv }),
 			);
 
 			out.material_ranges.push(FullMaterialRange {

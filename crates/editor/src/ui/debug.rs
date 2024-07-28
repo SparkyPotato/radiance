@@ -1,6 +1,5 @@
 use egui::{ComboBox, Context, Window};
 use radiance_graph::{alloc::AllocatorVisualizer, device::Device};
-use radiance_passes::mesh::visbuffer::Camera;
 
 #[derive(Copy, Clone)]
 pub enum RenderMode {
@@ -12,8 +11,6 @@ pub enum RenderMode {
 pub struct Debug {
 	pub enabled: bool,
 	render_mode: RenderMode,
-	culling: bool,
-	cull_camera: Option<Camera>,
 	alloc: AllocatorVisualizer,
 	alloc_breakdown: bool,
 	alloc_block: bool,
@@ -25,8 +22,6 @@ impl Debug {
 		Self {
 			enabled: false,
 			render_mode: RenderMode::Realtime,
-			culling: false,
-			cull_camera: None,
 			alloc: AllocatorVisualizer::new(),
 			alloc_breakdown: false,
 			alloc_block: false,
@@ -59,16 +54,6 @@ impl Debug {
 			));
 		});
 
-		Window::new("culling").open(&mut self.culling).show(ctx, |ui| {
-			let mut locked = self.cull_camera.is_some();
-			ui.checkbox(&mut locked, "lock culling");
-			if self.cull_camera.is_none() && locked {
-				// self.cull_camera = Some(camera.get());
-			} else if !locked {
-				self.cull_camera = None;
-			}
-		});
-
 		let alloc = device.allocator();
 		self.alloc
 			.render_breakdown_window(ctx, &alloc, &mut self.alloc_breakdown);
@@ -81,6 +66,4 @@ impl Debug {
 	pub fn set_arena_size(&mut self, size: usize) { self.arena_size = size; }
 
 	pub fn render_mode(&self) -> RenderMode { self.render_mode }
-
-	pub fn cull_camera(&self) -> Option<Camera> { self.cull_camera }
 }

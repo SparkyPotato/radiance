@@ -14,12 +14,10 @@ pub struct Vertex {
 	#[bincode(with_serde)]
 	pub normal: Vec3<f32>,
 	#[bincode(with_serde)]
-	pub tangent: Vec4<f32>,
-	#[bincode(with_serde)]
 	pub uv: Vec2<f32>,
 }
 
-const_assert_eq!(std::mem::size_of::<Vertex>(), 48);
+const_assert_eq!(std::mem::size_of::<Vertex>(), 32);
 const_assert_eq!(std::mem::align_of::<Vertex>(), 4);
 
 #[derive(Encode, Decode)]

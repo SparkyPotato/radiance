@@ -5,7 +5,6 @@
 struct Vertex {
     f32 position[3];
     f32 normal[3];
-    f32 tangent[4];
     f32 uv[2];
 };
 
@@ -51,12 +50,8 @@ struct Material {
     f32 emissive_factor[3];
 };
 
-#define CULL_CAMERA 0
-#define DRAW_CAMERA 1
-
 struct Camera {
     float4x4 view;
-    float4x4 proj;
     float4x4 view_proj;
     f32 cot_fov;
     f32 _pad[15];
