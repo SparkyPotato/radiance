@@ -21,7 +21,7 @@ use radiance_graph::{
 	Result,
 };
 use radiance_shader_compiler::c_str;
-use vek::{Mat4, Vec2, Vec4};
+use vek::{Mat4, Vec2};
 
 use crate::asset::{rref::RRef, scene::Scene};
 

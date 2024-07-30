@@ -87,7 +87,7 @@ impl Mesh {
 
 			let tri = self.mesh.triangle(trii);
 			let position = pray.origin + pray.dir * t;
-			let v0 = tri.a - tri.a;
+			let v0 = tri.b - tri.a;
 			let v1 = tri.c - tri.a;
 			let v2 = position - tri.a;
 			let d00 = v0.dot(&v0);

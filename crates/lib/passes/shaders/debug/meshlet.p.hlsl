@@ -29,7 +29,7 @@ float4 main(VertexOutput input): SV_Target0 {
         discard;
     }
 
-    u32 h = hash(data.meshlet_pointer_id);
+    u32 h = hash(value);
     float3 color = float3(float(h & 255), float((h >> 8) & 255), float((h >> 16) & 255));
     return float4(color / 255.0, 1.0);
 }
