@@ -53,6 +53,8 @@ struct Material {
 struct Camera {
     float4x4 view;
     float4x4 view_proj;
-    f32 cot_fov;
-    f32 _pad[15];
+    f32 w;
+    f32 h;
+    f32 near;
+    f32 _pad[13];
 };

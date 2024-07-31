@@ -1,6 +1,6 @@
 use crate::{
 	device::Device,
-	graph::{self, ExternalBuffer, ExternalImage},
+	graph::{self, Deletable, ExternalBuffer, ExternalImage},
 	resource::{Buffer, BufferDesc, Image, ImageDesc, Resource},
 	Result,
 };
@@ -37,6 +37,14 @@ impl PersistentBuffer {
 	}
 }
 
+impl Deletable for PersistentBuffer {
+	fn into_resources(self, out: &mut Vec<graph::Resource>) {
+		let [r, w] = self.buffers;
+		r.into_resources(out);
+		w.into_resources(out);
+	}
+}
+
 pub struct PersistentImage {
 	images: [Image; 2],
 	current: usize,
@@ -70,5 +78,13 @@ impl PersistentImage {
 		let [r, w] = self.images;
 		r.destroy(device);
 		w.destroy(device);
+	}
+}
+
+impl Deletable for PersistentImage {
+	fn into_resources(self, out: &mut Vec<graph::Resource>) {
+		let [r, w] = self.images;
+		r.into_resources(out);
+		w.into_resources(out);
 	}
 }

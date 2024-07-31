@@ -42,9 +42,9 @@ impl DebugMeshlets {
 						None,
 					),
 				],
-				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
 				raster: &no_cull(),
 				blend: &simple_blend(&[no_blend()]),
+				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
 				..Default::default()
 			})?;
 

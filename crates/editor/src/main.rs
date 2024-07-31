@@ -35,7 +35,11 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 							.multi_draw_indirect(true)
 							.draw_indirect_first_instance(true),
 					)
-					.push_next(&mut vk::PhysicalDeviceVulkan12Features::default().draw_indirect_count(true))
+					.push_next(
+						&mut vk::PhysicalDeviceVulkan12Features::default()
+							.draw_indirect_count(true)
+							.sampler_filter_minmax(true),
+					)
 					.push_next(
 						&mut vk::PhysicalDeviceVulkan13Features::default()
 							.dynamic_rendering(true)

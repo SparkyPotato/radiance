@@ -253,23 +253,22 @@ impl<'graph> ResourceAliaser<'graph> {
 	}
 
 	fn try_merge_buffer(&mut self, data: BufferData<'graph>, lifetime: ResourceLifetime) {
+		// TODO: fix
 		// If the data to be merged is an external resource, don't try to merge it at all.
-		if data.handle.buffer != vk::Buffer::null() {
+		// if data.handle.buffer == vk::Buffer::null() {
+		if false {
 			for &i in self.buffers.iter() {
 				let res = &mut self.resources[i as usize];
+				let res = unsafe { res.buffer_mut() };
 				let res_lifetime = &mut self.lifetimes[i as usize];
-				let buffer = unsafe { res.buffer_mut() };
 				// If the lifetimes aren't overlapping, merge.
-				if !res_lifetime.independent(lifetime) {
-					continue;
+				if res_lifetime.independent(lifetime) {
+					res.desc.size = res.desc.size.max(data.desc.size);
+					res.usages.extend(data.usages);
+					*res_lifetime = res_lifetime.union(lifetime);
+					self.resource_map.push(i);
+					return;
 				}
-
-				buffer.desc.size = buffer.desc.size.max(data.desc.size);
-				buffer.usages.extend(data.usages);
-				*res_lifetime = res_lifetime.union(lifetime);
-				self.resource_map.push(i);
-
-				return;
 			}
 		}
 		self.buffers.push(self.resources.len() as _);
@@ -277,25 +276,24 @@ impl<'graph> ResourceAliaser<'graph> {
 	}
 
 	fn try_merge_image(&mut self, data: ImageData<'graph>, lifetime: ResourceLifetime) {
-		if data.handle != vk::Image::null() {
+		// TODO: fix
+		// if data.handle == vk::Image::null() {
+		if false {
 			for &i in self.images.get(&data.desc).into_iter().flatten() {
 				let res = &mut self.resources[i as usize];
+				let res = unsafe { res.image_mut() };
 				let res_lifetime = &mut self.lifetimes[i as usize];
-				let image = unsafe { res.image_mut() };
 				// If the formats aren't compatible, don't merge.
-				if !res_lifetime.independent(lifetime)
-					|| compatible_formats(
-						image.usages.first_key_value().unwrap().1.format,
+				if res_lifetime.independent(lifetime)
+					&& compatible_formats(
+						res.usages.first_key_value().unwrap().1.format,
 						data.usages.first_key_value().unwrap().1.format,
 					) {
-					continue;
+					res.usages.extend(data.usages);
+					*res_lifetime = res_lifetime.union(lifetime);
+					self.resource_map.push(i);
+					return;
 				}
-
-				image.usages.extend(data.usages);
-				*res_lifetime = res_lifetime.union(lifetime);
-				self.resource_map.push(i);
-
-				return;
 			}
 		}
 		self.images

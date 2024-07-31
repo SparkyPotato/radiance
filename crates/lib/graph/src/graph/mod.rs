@@ -60,13 +60,12 @@ pub struct RenderGraph {
 	resource_base_id: usize,
 }
 
-#[doc(hidden)]
 pub struct Caches {
-	upload_buffers: [ResourceCache<Buffer>; FRAMES_IN_FLIGHT],
-	buffers: ResourceCache<Buffer>,
-	images: ResourceCache<Image>,
-	image_views: UniqueCache<ImageView>,
-	events: ResourceList<Event>,
+	pub upload_buffers: [ResourceCache<Buffer>; FRAMES_IN_FLIGHT],
+	pub buffers: ResourceCache<Buffer>,
+	pub images: ResourceCache<Image>,
+	pub image_views: UniqueCache<ImageView>,
+	pub events: ResourceList<Event>,
 }
 
 impl RenderGraph {
@@ -389,6 +388,8 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 			T::from_res(self.pass, res, self.caches, self.device)
 		}
 	}
+
+	pub fn get_caches(&mut self) -> &mut Caches { self.caches }
 }
 
 /// An ID to write CPU-side data.
