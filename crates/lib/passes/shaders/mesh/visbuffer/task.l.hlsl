@@ -49,8 +49,8 @@ float4 transform_sphere(float4x4 mv, float4 sphere) {
 
 bool occlusion_cull(float4x4 mv, float w, float h, float near, float4 sphere) {
     float4 s = transform_sphere(mv, sphere);
-
     if (s.z < s.w + near) return true;
+
     float3 cr = s.xyz * s.w;
     f32 czr2 = s.z * s.z - s.w * s.w;
     f32 vx = sqrt(s.x * s.x + czr2);
@@ -60,11 +60,10 @@ bool occlusion_cull(float4x4 mv, float w, float h, float near, float4 sphere) {
     f32 miny = (vy * s.y - cr.z) / (vy * s.z + cr.y);
     f32 maxy = (vy * s.y + cr.z) / (vy * s.z - cr.y);
     float4 aabb = float4(minx * w, miny * h, maxx * w, maxy * h);
-    aabb = aabb * 0.5f + 0.5f;
+    aabb = aabb.xwzy * float4(0.5f, -0.5f, 0.5f, -0.5f) + 0.5f;
 
-    uint2 res = uint2(Constants.width, Constants.height) / 2; 
-    f32 width = (aabb.z - aabb.x) * res.x;
-    f32 height = (aabb.w - aabb.y) * res.y;
+    f32 width = (aabb.z - aabb.x) * Constants.width / 2;
+    f32 height = (aabb.w - aabb.y) * Constants.height / 2;
     f32 level = ceil(log2(max(width, height)));
     f32 depth = Constants.hzb.sample_mip(Constants.hzb_sampler, (aabb.xy + aabb.zw) * 0.5f, level).x;
     f32 closest = near / (s.z - s.w);
@@ -83,50 +82,66 @@ bool decide_lod(float4x4 mv, float h, float4 group_error, float4 parent_error) {
     return is_imperceptible(mv, h, group_error) && !is_imperceptible(mv, h, parent_error);
 }
 
-void emit_meshlet(u32 offset, u32 pointer_id) {
-    u32 id = Constants.next_dispatch.atomic_add(offset + 0, 1);
-    if ((id & 63) == 0) {
-        Constants.next_dispatch.atomic_add(offset + 1, 1);
-    }
-    Constants.next_dispatch.store(offset + 4 + id, pointer_id);
-}
-
 [numthreads(64, 1, 1)]
 void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
     if (gtid == 0) { MeshletEmitCount = 0; }
     GroupMemoryBarrierWithGroupSync();
 
-    u32 meshlet_count = Constants.curr_dispatch.load(DISPATCH_OFFSET);
+    u32 meshlet_count = 
+    #ifdef EARLY
+    Constants.meshlet_count;
+    #else
+    Constants.culled.load(0);
+    #endif
     if (id < meshlet_count) {
-        u32 pointer_id = Constants.curr_dispatch.load(DISPATCH_OFFSET + 4 + id);
+        u32 pointer_id =
+        #ifdef EARLY
+        id;
+        #else
+        Constants.culled.load(4 + id);
+        #endif
         MeshletPointer pointer = Constants.meshlet_pointers.load(pointer_id);
         Instance instance = Constants.instances.load(pointer.instance);
         Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);
         Camera camera = Constants.camera.load(0);
+        Camera prev_camera = Constants.camera.load(1);
 
         float4x4 transform = instance.get_transform();
+        float4 sphere = float4(meshlet.bounding);
         float4x4 mv = mul(camera.view, transform);
         float4x4 mvp = mul(camera.view_proj, transform);
-
+        float4x4 pmv = mul(prev_camera.view, transform);
+        float4x4 pmvp = mul(prev_camera.view_proj, transform);
+        
+        #ifdef EARLY
         bool visible = decide_lod(mv, camera.h, float4(meshlet.group_error), float4(meshlet.parent_error));
-        float4 sphere = float4(meshlet.bounding);
         visible = visible && frustum_cull(mvp, sphere);
-
-        #ifdef HZB_CULL
-        if (visible) {
-           visible = occlusion_cull(mv, camera.w, camera.h, camera.near, sphere);
-        }
+        #else
+        bool visible = true;
         #endif
 
-        u32 offset = INVISIBLE_OFFSET;
+        if (visible) {
+            #ifdef EARLY
+            bool visible_last_frame = occlusion_cull(pmv, prev_camera.w, prev_camera.h, prev_camera.near, sphere);
+            if (!visible_last_frame) {
+                u32 did = Constants.culled.atomic_add(0, 1);
+                if ((did & 63) == 0) {
+                    Constants.culled.atomic_add(1, 1);
+                }
+                Constants.culled.store(4 + did, pointer_id);
+            }
+            visible = visible_last_frame;
+            #else
+            visible = occlusion_cull(mv, camera.w, camera.h, camera.near, sphere);
+            #endif
+        }
+
         if (visible) {
             u32 index;
             InterlockedAdd(MeshletEmitCount, 1, index);
             Payload.pointers[index].pointer = pointer;
             Payload.pointers[index].id = pointer_id;
-            offset = VISIBLE_OFFSET;
         }
-        emit_meshlet(offset, pointer_id);
     }
 
     // Emit.

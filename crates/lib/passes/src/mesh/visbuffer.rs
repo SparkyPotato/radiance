@@ -10,9 +10,11 @@ use radiance_graph::{
 	graph::{
 		self,
 		util::ByteReader,
+		BufferDesc,
 		BufferUsage,
 		BufferUsageType,
 		ExternalBuffer,
+		ExternalImage,
 		Frame,
 		ImageDesc,
 		ImageUsage,
@@ -22,18 +24,18 @@ use radiance_graph::{
 		Res,
 		Shader,
 	},
-	resource::{BufferDesc, BufferHandle, ImageView, Subresource},
-	util::{
-		persistent::PersistentBuffer,
-		pipeline::{no_blend, reverse_depth, simple_blend, GraphicsPipelineDesc},
-	},
+	resource::{self, BufferHandle, Image, ImageView, Resource, Subresource},
+	util::pipeline::{no_blend, reverse_depth, simple_blend, GraphicsPipelineDesc},
 	Result,
 };
 use radiance_shader_compiler::c_str;
 use vek::{Mat4, Vec2};
 
 use crate::{
-	asset::{rref::RRef, scene::Scene},
+	asset::{
+		rref::RRef,
+		scene::{GpuMeshletPointer, Scene},
+	},
 	mesh::hzb::HzbGen,
 };
 
@@ -56,15 +58,16 @@ pub struct RenderInfo {
 pub struct VisBuffer {
 	persistent: Option<Persistent>,
 	hzb_gen: HzbGen,
-	pre_cull_pipeline: vk::Pipeline,
-	cull_pipeline: vk::Pipeline,
+	early_pipeline: vk::Pipeline,
+	late_pipeline: vk::Pipeline,
 	layout: vk::PipelineLayout,
 	mesh: ext::mesh_shader::Device,
 }
 
 struct Persistent {
-	dispatches: PersistentBuffer,
 	scene: RRef<Scene>,
+	camera: Camera,
+	hzb: Image,
 }
 
 #[repr(C)]
@@ -109,28 +112,26 @@ struct PushConstants {
 	instances: BufferId,
 	meshlet_pointers: BufferId,
 	camera: BufferId,
-	meshlet_count: u32,
-	width: u32,
-	height: u32,
-	curr_dispatch: BufferId,
-	next_dispatch: BufferId,
 	hzb_sampler: SamplerId,
-	hzb: Option<ImageId>,
+	hzb: ImageId,
+	culled: BufferId,
+	meshlet_count: u32,
+	size: Vec2<u32>,
 }
 
 #[derive(Copy, Clone)]
 struct PassIO {
 	instances: BufferId,
 	meshlet_pointers: BufferId,
-	camera_data: CameraData,
+	camera_data: Camera,
+	prev_camera: Camera,
+	camera: Res<BufferHandle>,
+	hzb: Res<ImageView>,
+	culled: Res<BufferHandle>,
 	meshlet_count: u32,
 	resolution: Vec2<u32>,
-	curr_dispatch: Res<BufferHandle>,
-	next_dispatch: Res<BufferHandle>,
-	camera: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
 	depth: Res<ImageView>,
-	hzb: Option<Res<ImageView>>,
 }
 
 impl VisBuffer {
@@ -139,9 +140,9 @@ impl VisBuffer {
 			shaders: &[
 				device.shader(
 					if pre_cull {
-						c_str!("radiance-passes/mesh/visbuffer/pre_cull")
+						c_str!("radiance-passes/mesh/visbuffer/early")
 					} else {
-						c_str!("radiance-passes/mesh/visbuffer/cull")
+						c_str!("radiance-passes/mesh/visbuffer/late")
 					},
 					vk::ShaderStageFlags::TASK_EXT,
 					None,
@@ -180,8 +181,8 @@ impl VisBuffer {
 			Ok(Self {
 				persistent: None,
 				hzb_gen: HzbGen::new(device)?,
-				pre_cull_pipeline: Self::pipeline(device, layout, true)?,
-				cull_pipeline: Self::pipeline(device, layout, false)?,
+				early_pipeline: Self::pipeline(device, layout, true)?,
+				late_pipeline: Self::pipeline(device, layout, false)?,
 				layout,
 				mesh: ext::mesh_shader::Device::new(device.instance(), device.device()),
 			})
@@ -189,30 +190,12 @@ impl VisBuffer {
 	}
 
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
-		let (curr, next) = self.init_dispatch_buffer(frame, &info.scene);
+		let (hzb, culled, prev_camera) = self.init_persistent(frame, &info);
 
-		let mut pass = frame.pass("visbuffer pre-cull");
-		pass.reference(
-			curr,
-			BufferUsage {
-				usages: &[
-					BufferUsageType::IndirectBuffer,
-					BufferUsageType::ShaderStorageRead(Shader::Task),
-				],
-			},
-		);
-		pass.reference(
-			next,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Task)],
-			},
-		);
-
-		let aspect = info.size.x as f32 / info.size.y as f32;
-		let camera = CameraData::new(aspect, info.camera);
+		let mut pass = frame.pass("visbuffer early");
 		let c = pass.resource(
-			graph::BufferDesc {
-				size: std::mem::size_of::<CameraData>() as _,
+			BufferDesc {
+				size: std::mem::size_of::<CameraData>() as u64 * 2,
 				upload: true,
 			},
 			BufferUsage {
@@ -222,7 +205,12 @@ impl VisBuffer {
 				],
 			},
 		);
-
+		pass.reference(
+			culled,
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Task)],
+			},
+		);
 		let desc = ImageDesc {
 			size: vk::Extent3D {
 				width: info.size.x,
@@ -258,29 +246,53 @@ impl VisBuffer {
 				},
 			},
 		);
+		pass.reference(
+			hzb,
+			ImageUsage {
+				format: vk::Format::R32_SFLOAT,
+				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Task)],
+				view_type: Some(vk::ImageViewType::TYPE_2D),
+				subresource: Subresource::default(),
+			},
+		);
 
-		let mut io = PassIO {
+		let io = PassIO {
 			instances: info.scene.instances(),
 			meshlet_pointers: info.scene.meshlet_pointers(),
-			camera_data: camera,
+			camera_data: info.camera,
+			prev_camera,
+			hzb,
+			culled,
 			meshlet_count: info.scene.meshlet_pointer_count(),
 			resolution: info.size,
-			curr_dispatch: curr,
-			next_dispatch: next,
 			camera: c,
 			visbuffer,
 			depth,
-			hzb: None,
 		};
 		let this: &Self = self;
-		pass.build(move |ctx| this.execute(ctx, io));
+		pass.build(move |ctx| this.execute(ctx, io, true));
 
-		let hzb = this.hzb_gen.run(frame, depth);
+		this.hzb_gen.run(frame, depth, hzb);
 
-		let mut pass = frame.pass("visbuffer cull");
-		pass.reference(curr, BufferUsage { usages: &[] });
-		pass.reference(next, BufferUsage { usages: &[] });
-		pass.reference(c, BufferUsage { usages: &[] });
+		let mut pass = frame.pass("visbuffer late");
+		pass.reference(
+			c,
+			BufferUsage {
+				usages: &[
+					BufferUsageType::ShaderStorageRead(Shader::Task),
+					BufferUsageType::ShaderStorageRead(Shader::Mesh),
+				],
+			},
+		);
+		pass.reference(
+			culled,
+			BufferUsage {
+				usages: &[
+					BufferUsageType::IndirectBuffer,
+					BufferUsageType::ShaderStorageRead(Shader::Task),
+				],
+			},
+		);
 		pass.reference(
 			visbuffer,
 			ImageUsage {
@@ -311,109 +323,150 @@ impl VisBuffer {
 				subresource: Subresource::default(),
 			},
 		);
-		io.hzb = Some(hzb);
-		pass.build(move |ctx| this.execute(ctx, io));
+		pass.build(move |ctx| this.execute(ctx, io, false));
+
+		this.hzb_gen.run(frame, depth, hzb);
+
+		let mut pass = frame.pass("hzb layout transition");
+		pass.reference(
+			hzb,
+			ImageUsage {
+				format: vk::Format::UNDEFINED,
+				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Task)],
+				view_type: None,
+				subresource: Subresource::default(),
+			},
+		);
+		pass.build(|_| {});
 
 		visbuffer
 	}
 
-	fn init_dispatch_buffer(&mut self, frame: &mut Frame, s: &RRef<Scene>) -> (Res<BufferHandle>, Res<BufferHandle>) {
-		match &mut self.persistent {
-			Some(Persistent { dispatches, scene }) => {
-				if scene.ptr_eq(s) {
-					let (curr, next) = dispatches.next();
-					let mut pass = frame.pass("clear visbuffer dispatch");
-					let curr = pass.resource(curr, BufferUsage { usages: &[] });
-					let next = Self::zero_next(pass, s, next);
-					(curr, next)
+	fn init_persistent(&mut self, frame: &mut Frame, info: &RenderInfo) -> (Res<ImageView>, Res<BufferHandle>, Camera) {
+		let needs_clear = match &mut self.persistent {
+			Some(Persistent { scene, hzb, .. }) => {
+				if hzb.desc().size.width != info.size.x / 2 || hzb.desc().size.height != info.size.y / 2 {
+					frame.delete(self.persistent.take().unwrap().hzb);
+					self.persistent = Some(Persistent {
+						scene: info.scene.clone(),
+						camera: info.camera,
+						hzb: Self::make_hzb(frame.device(), info.size / 2),
+					});
+					true
 				} else {
-					let (b, curr, next) = Self::init_inner(frame, s);
-					frame.delete(std::mem::replace(dispatches, b));
-					*scene = s.clone();
-					(curr, next)
+					!scene.ptr_eq(&info.scene)
 				}
 			},
 			None => {
-				let (dispatches, curr, next) = Self::init_inner(frame, s);
 				self.persistent = Some(Persistent {
-					dispatches,
-					scene: s.clone(),
+					scene: info.scene.clone(),
+					camera: info.camera,
+					hzb: Self::make_hzb(frame.device(), info.size),
 				});
-				(curr, next)
+				true
 			},
-		}
-	}
+		};
 
-	fn init_inner(frame: &mut Frame, s: &RRef<Scene>) -> (PersistentBuffer, Res<BufferHandle>, Res<BufferHandle>) {
-		let count = s.meshlet_pointer_count();
-		let mut buffer = PersistentBuffer::new(
-			frame.device(),
+		let Persistent { camera, hzb, .. } = self.persistent.as_ref().unwrap();
+		let hzb = ExternalImage {
+			handle: hzb.handle(),
+			desc: hzb.desc(),
+		};
+		let mut pass = frame.pass("setup cull");
+		let hzb = if needs_clear {
+			pass.resource(
+				hzb,
+				ImageUsage {
+					format: vk::Format::UNDEFINED,
+					usages: &[ImageUsageType::TransferWrite],
+					view_type: None,
+					subresource: Subresource::default(),
+				},
+			)
+		} else {
+			pass.resource(
+				hzb,
+				ImageUsage {
+					format: vk::Format::UNDEFINED,
+					usages: &[],
+					view_type: None,
+					subresource: Subresource::default(),
+				},
+			)
+		};
+		let culled = pass.resource(
 			BufferDesc {
-				name: "meshlet dispatch buffer",
-				size: (count + 4) as u64 * 2 * std::mem::size_of::<u32>() as u64,
-				usage: vk::BufferUsageFlags::INDIRECT_BUFFER
-					| vk::BufferUsageFlags::STORAGE_BUFFER
-					| vk::BufferUsageFlags::TRANSFER_DST,
-				on_cpu: false,
+				size: std::mem::size_of::<GpuMeshletPointer>() as u64 * (info.scene.meshlet_pointer_count() + 4) as u64,
+				upload: false,
 			},
-		)
-		.unwrap();
-
-		let (curr, next) = buffer.next();
-		let curr = frame.stage_buffer_new(
-			"scene change",
-			curr,
-			0,
-			ByteReader(
-				[count, (count + 63) / 64, 1, 1]
-					.into_iter()
-					.chain(0..count)
-					.chain([0, 0, 1, 1])
-					.collect(),
-			),
-		);
-		let next = Self::zero_next(frame.pass("clear visbuffer dispatch"), s, next);
-
-		(buffer, curr, next)
-	}
-
-	fn zero_next(mut pass: PassBuilder, s: &RRef<Scene>, next: ExternalBuffer) -> Res<BufferHandle> {
-		let next = pass.resource(
-			next,
 			BufferUsage {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		let count = s.meshlet_pointer_count();
 		pass.build(move |mut ctx| unsafe {
-			let b = ctx.get(next).buffer;
-			ctx.device
-				.device()
-				.cmd_update_buffer(ctx.buf, b, 0, cast_slice(&[0u32, 0, 1, 1]));
-			ctx.device.device().cmd_update_buffer(
-				ctx.buf,
-				b,
-				(4 + count) as u64 * std::mem::size_of::<u32>() as u64,
-				cast_slice(&[0u32, 0, 1, 1]),
-			);
+			let dev = ctx.device.device();
+			let buf = ctx.buf;
+			let hzb = ctx.get(hzb);
+			let culled = ctx.get(culled);
+
+			if needs_clear {
+				dev.cmd_clear_color_image(
+					buf,
+					hzb.image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&vk::ClearColorValue::default(),
+					&[vk::ImageSubresourceRange::default()
+						.aspect_mask(vk::ImageAspectFlags::COLOR)
+						.base_mip_level(0)
+						.level_count(vk::REMAINING_MIP_LEVELS)
+						.base_array_layer(0)
+						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+				);
+			}
+			dev.cmd_update_buffer(buf, culled.buffer, 0, bytes_of(&[0u32, 0, 1, 1]));
 		});
-		next
+
+		(hzb, culled, *camera)
 	}
 
-	fn execute(&self, mut pass: PassContext, io: PassIO) {
-		let curr_dispatch = pass.get(io.curr_dispatch);
-		let next_dispatch = pass.get(io.next_dispatch);
+	fn make_hzb(device: &Device, size: Vec2<u32>) -> Image {
+		Image::create(
+			device,
+			resource::ImageDesc {
+				name: "persistent hzb",
+				flags: vk::ImageCreateFlags::empty(),
+				format: vk::Format::R32_SFLOAT,
+				size: vk::Extent3D {
+					width: size.x,
+					height: size.y,
+					depth: 1,
+				},
+				levels: size.x.max(size.y).ilog2(),
+				layers: 1,
+				samples: vk::SampleCountFlags::TYPE_1,
+				usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST,
+			},
+		)
+		.unwrap()
+	}
+
+	fn execute(&self, mut pass: PassContext, io: PassIO, is_early: bool) {
 		let mut camera = pass.get(io.camera);
 		let visbuffer = pass.get(io.visbuffer);
 		let depth = pass.get(io.depth);
-		let hzb = io.hzb.map(|d| pass.get(d));
+		let hzb = pass.get(io.hzb);
+		let culled = pass.get(io.culled);
 
 		let dev = pass.device.device();
 		let buf = pass.buf;
 
 		unsafe {
 			let mut writer = camera.data.as_mut();
-			writer.write(bytes_of(&io.camera_data)).unwrap();
+			let aspect = io.resolution.x as f32 / io.resolution.y as f32;
+			let cd = CameraData::new(aspect, io.camera_data);
+			let prev_cd = CameraData::new(aspect, io.prev_camera);
+			writer.write(bytes_of(&cd)).unwrap();
+			writer.write(bytes_of(&prev_cd)).unwrap();
 
 			let area = vk::Rect2D::default().extent(vk::Extent2D {
 				width: visbuffer.size.width,
@@ -427,7 +480,7 @@ impl VisBuffer {
 					.color_attachments(&[vk::RenderingAttachmentInfo::default()
 						.image_view(visbuffer.view)
 						.image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-						.load_op(if hzb.is_none() {
+						.load_op(if is_early {
 							vk::AttachmentLoadOp::CLEAR
 						} else {
 							vk::AttachmentLoadOp::LOAD
@@ -440,7 +493,7 @@ impl VisBuffer {
 						&vk::RenderingAttachmentInfo::default()
 							.image_view(depth.view)
 							.image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-							.load_op(if hzb.is_none() {
+							.load_op(if is_early {
 								vk::AttachmentLoadOp::CLEAR
 							} else {
 								vk::AttachmentLoadOp::LOAD
@@ -482,31 +535,23 @@ impl VisBuffer {
 					instances: io.instances,
 					meshlet_pointers: io.meshlet_pointers,
 					camera: camera.id.unwrap(),
-					meshlet_count: io.meshlet_count,
-					width: io.resolution.x,
-					height: io.resolution.y,
-					curr_dispatch: curr_dispatch.id.unwrap(),
-					next_dispatch: next_dispatch.id.unwrap(),
 					hzb_sampler: self.hzb_gen.sampler(),
-					hzb: hzb.map(|x| x.id.unwrap()),
+					hzb: hzb.id.unwrap(),
+					culled: culled.id.unwrap(),
+					meshlet_count: io.meshlet_count,
+					size: io.resolution,
 				}),
 			);
 
-			if hzb.is_none() {
-				dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pre_cull_pipeline);
-				self.mesh.cmd_draw_mesh_tasks_indirect(
-					buf,
-					curr_dispatch.buffer,
-					1 * std::mem::size_of::<u32>() as u64,
-					1,
-					std::mem::size_of::<u32>() as u32 * 3,
-				);
+			if is_early {
+				dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.early_pipeline);
+				self.mesh.cmd_draw_mesh_tasks(buf, (io.meshlet_count + 63) / 64, 1, 1);
 			} else {
-				dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.cull_pipeline);
+				dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.late_pipeline);
 				self.mesh.cmd_draw_mesh_tasks_indirect(
 					buf,
-					curr_dispatch.buffer,
-					(4 + io.meshlet_count as u64 + 1) * std::mem::size_of::<u32>() as u64,
+					culled.buffer,
+					std::mem::size_of::<u32>() as u64,
 					1,
 					std::mem::size_of::<u32>() as u32 * 3,
 				);
@@ -517,12 +562,12 @@ impl VisBuffer {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		if let Some(Persistent { dispatches, .. }) = self.persistent {
-			dispatches.destroy(device);
+		if let Some(Persistent { hzb, .. }) = self.persistent {
+			hzb.destroy(device);
 		}
 		self.hzb_gen.destroy(device);
-		device.device().destroy_pipeline(self.pre_cull_pipeline, None);
-		device.device().destroy_pipeline(self.cull_pipeline, None);
+		device.device().destroy_pipeline(self.early_pipeline, None);
+		device.device().destroy_pipeline(self.late_pipeline, None);
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

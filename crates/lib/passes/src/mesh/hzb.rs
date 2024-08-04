@@ -81,7 +81,7 @@ impl HzbGen {
 
 	pub fn sampler(&self) -> SamplerId { self.hzb_sample_id }
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, depth: Res<ImageView>) -> Res<ImageView> {
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, depth: Res<ImageView>, out: Res<ImageView>) {
 		let mut pass = frame.pass("generate hzb");
 		pass.reference(
 			depth,
@@ -91,18 +91,12 @@ impl HzbGen {
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource {
 					aspect: vk::ImageAspectFlags::DEPTH,
-					first_mip: 0,
-					mip_count: 1,
 					..Default::default()
 				},
 			},
 		);
-
-		let mut desc = pass.desc(depth);
-		desc.levels = desc.size.width.max(desc.size.height).ilog2();
-		desc.format = vk::Format::R32_SFLOAT;
-		let out = pass.resource(
-			desc,
+		pass.reference(
+			out,
 			ImageUsage {
 				format: vk::Format::R32_SFLOAT,
 				usages: &[
@@ -113,8 +107,6 @@ impl HzbGen {
 				subresource: Subresource::default(),
 			},
 		);
-		let size = Vec2::new(desc.size.width, desc.size.height);
-
 		let atomic = pass.resource(
 			BufferDesc {
 				size: std::mem::size_of::<u32>() as u64,
@@ -128,6 +120,9 @@ impl HzbGen {
 			},
 		);
 
+		let desc = pass.desc(depth);
+		let size = Vec2::new(desc.size.width, desc.size.height);
+		let desc = pass.desc(out);
 		pass.build(move |ctx| {
 			self.execute(
 				ctx,
@@ -140,7 +135,6 @@ impl HzbGen {
 				},
 			)
 		});
-		out
 	}
 
 	fn execute(&self, mut pass: PassContext, io: PassIO) {

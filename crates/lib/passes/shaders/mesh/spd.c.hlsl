@@ -166,15 +166,15 @@ void downsample_67(u32 x, u32 y) {
 	f32 v1 = reduce_load4(tex);
 	store(pix, v1, 6);
 
-    tex = uint2(x * 4 + 0, y * 4 + 2);
-    pix = uint2(x * 2 + 0, y * 2 + 1);
-    f32 v2 = reduce_load4(tex);
-    store(pix, v2, 6);
+	tex = uint2(x * 4 + 0, y * 4 + 2);
+	pix = uint2(x * 2 + 0, y * 2 + 1);
+	f32 v2 = reduce_load4(tex);
+	store(pix, v2, 6);
 
-    tex = uint2(x * 4 + 2, y * 4 + 2);
-    pix = uint2(x * 2 + 1, y * 2 + 1);
-    f32 v3 = reduce_load4(tex);
-    store(pix, v3, 6);
+	tex = uint2(x * 4 + 2, y * 4 + 2);
+	pix = uint2(x * 2 + 1, y * 2 + 1);
+	f32 v3 = reduce_load4(tex);
+	store(pix, v3, 6);
 
 	if (Constants.mips <= 7) return;
 
