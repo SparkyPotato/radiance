@@ -111,6 +111,7 @@ impl RenderGraph {
 			self.caches.buffers.destroy(device);
 			self.caches.image_views.destroy(device);
 			self.caches.images.destroy(device);
+			self.caches.events.destroy(device);
 		}
 	}
 

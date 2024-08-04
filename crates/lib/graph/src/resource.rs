@@ -603,7 +603,7 @@ impl ToNamed for () {
 }
 
 #[derive(Default)]
-pub(crate) struct Event {
+pub struct Event {
 	inner: vk::Event,
 }
 
