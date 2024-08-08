@@ -1,25 +1,21 @@
 use std::io::Write;
 
 use ash::{ext, vk};
-use bytemuck::{bytes_of, cast_slice, NoUninit};
+use bytemuck::{bytes_of, AnyBitPattern, NoUninit};
 use radiance_graph::{
 	device::{
-		descriptor::{BufferId, ImageId, SamplerId},
+		descriptor::{ImageId, SamplerId},
 		Device,
 	},
 	graph::{
-		self,
-		util::ByteReader,
 		BufferDesc,
 		BufferUsage,
 		BufferUsageType,
-		ExternalBuffer,
 		ExternalImage,
 		Frame,
 		ImageDesc,
 		ImageUsage,
 		ImageUsageType,
-		PassBuilder,
 		PassContext,
 		Res,
 		Shader,
@@ -28,13 +24,12 @@ use radiance_graph::{
 	util::pipeline::{no_blend, reverse_depth, simple_blend, GraphicsPipelineDesc},
 	Result,
 };
-use radiance_shader_compiler::c_str;
 use vek::{Mat4, Vec2};
 
 use crate::{
 	asset::{
 		rref::RRef,
-		scene::{GpuMeshletPointer, Scene},
+		scene::{GpuInstance, GpuMeshletPointer, Scene},
 	},
 	mesh::hzb::HzbGen,
 };
@@ -71,7 +66,7 @@ struct Persistent {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
+#[derive(Copy, Clone, NoUninit, AnyBitPattern)]
 struct CameraData {
 	view: Mat4<f32>,
 	view_proj: Mat4<f32>,
@@ -107,22 +102,23 @@ impl CameraData {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
+#[derive(Copy, Clone)]
 struct PushConstants {
-	instances: BufferId,
-	meshlet_pointers: BufferId,
-	camera: BufferId,
+	instances: *mut GpuInstance,
+	meshlet_pointers: *mut GpuMeshletPointer,
+	camera: *mut CameraData,
 	hzb_sampler: SamplerId,
 	hzb: ImageId,
-	culled: BufferId,
+	culled: *mut u32,
 	meshlet_count: u32,
 	size: Vec2<u32>,
 }
+unsafe impl NoUninit for PushConstants {}
 
 #[derive(Copy, Clone)]
 struct PassIO {
-	instances: BufferId,
-	meshlet_pointers: BufferId,
+	instances: *mut GpuInstance,
+	meshlet_pointers: *mut GpuMeshletPointer,
 	camera_data: Camera,
 	prev_camera: Camera,
 	camera: Res<BufferHandle>,
@@ -140,23 +136,15 @@ impl VisBuffer {
 			shaders: &[
 				device.shader(
 					if pre_cull {
-						c_str!("radiance-passes/mesh/visbuffer/early")
+						"radiance-passes/visbuffer/early"
 					} else {
-						c_str!("radiance-passes/mesh/visbuffer/late")
+						"radiance-passes/visbuffer/late"
 					},
 					vk::ShaderStageFlags::TASK_EXT,
 					None,
 				),
-				device.shader(
-					c_str!("radiance-passes/mesh/visbuffer/mesh"),
-					vk::ShaderStageFlags::MESH_EXT,
-					None,
-				),
-				device.shader(
-					c_str!("radiance-passes/mesh/visbuffer/pixel"),
-					vk::ShaderStageFlags::FRAGMENT,
-					None,
-				),
+				device.shader("radiance-passes/visbuffer/mesh", vk::ShaderStageFlags::MESH_EXT, None),
+				device.shader("radiance-passes/visbuffer/pixel", vk::ShaderStageFlags::FRAGMENT, None),
 			],
 			depth: &reverse_depth(),
 			blend: &simple_blend(&[no_blend()]),
@@ -332,7 +320,7 @@ impl VisBuffer {
 			hzb,
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Task)],
+				usages: &[ImageUsageType::CustomLayout(vk::ImageLayout::READ_ONLY_OPTIMAL)],
 				view_type: None,
 				subresource: Subresource::default(),
 			},
@@ -534,10 +522,10 @@ impl VisBuffer {
 				bytes_of(&PushConstants {
 					instances: io.instances,
 					meshlet_pointers: io.meshlet_pointers,
-					camera: camera.id.unwrap(),
+					camera: camera.as_gpu(),
 					hzb_sampler: self.hzb_gen.sampler(),
 					hzb: hzb.id.unwrap(),
-					culled: culled.id.unwrap(),
+					culled: culled.as_gpu(),
 					meshlet_count: io.meshlet_count,
 					size: io.resolution,
 				}),

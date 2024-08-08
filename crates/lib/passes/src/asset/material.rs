@@ -1,4 +1,4 @@
-use bytemuck::NoUninit;
+use bytemuck::{AnyBitPattern, NoUninit};
 use crossbeam_channel::Sender;
 use radiance_asset::{Asset, AssetSource};
 use static_assertions::const_assert_eq;
@@ -13,7 +13,7 @@ use crate::asset::{
 	Loader,
 };
 
-#[derive(Copy, Clone, NoUninit)]
+#[derive(Copy, Clone, NoUninit, AnyBitPattern)]
 #[repr(C)]
 pub struct GpuMaterial {
 	pub base_color_factor: Vec4<f32>,

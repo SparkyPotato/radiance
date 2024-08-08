@@ -5,7 +5,7 @@ edition = "2021"
 
 [features]
 runtime = ["ash"]
-compile = ["dep:hassle-rs", "dep:serde", "dep:serde_json", "dep:cargo_toml"]
+compile = ["dep:serde", "dep:serde_json", "dep:cargo_toml"]
 build-script = ["compile"]
 
 [dependencies]
@@ -15,7 +15,6 @@ ash = { workspace = true, optional = true  }
 rustc-hash = { workspace = true }
 walkdir = { workspace = true }
 cargo_toml = { workspace = true, optional = true }
-hassle-rs = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 

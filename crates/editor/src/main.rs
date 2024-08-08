@@ -23,7 +23,6 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 	unsafe {
 		// TODO: Move features somewhere else.
 		Device::builder()
-			.validation(cfg!(debug_assertions))
 			.window(window, event_loop)
 			.device_extensions(&[ext::mesh_shader::NAME])
 			.features(

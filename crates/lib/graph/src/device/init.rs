@@ -17,11 +17,7 @@ use crate::{
 	Result,
 };
 
-const VALIDATION_LAYER: &'static CStr =
-	unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
-
 pub struct DeviceBuilder<'a> {
-	pub validation: bool,
 	pub layers: &'a [&'static CStr],
 	pub instance_extensions: &'a [&'static CStr],
 	pub device_extensions: &'a [&'static CStr],
@@ -33,7 +29,6 @@ pub struct DeviceBuilder<'a> {
 impl Default for DeviceBuilder<'_> {
 	fn default() -> Self {
 		Self {
-			validation: false,
 			layers: &[],
 			instance_extensions: &[],
 			device_extensions: &[],
@@ -45,11 +40,6 @@ impl Default for DeviceBuilder<'_> {
 }
 
 impl<'a> DeviceBuilder<'a> {
-	pub fn validation(mut self, validation: bool) -> Self {
-		self.validation = validation;
-		self
-	}
-
 	pub fn layers(mut self, layers: &'a [&'static CStr]) -> Self {
 		self.layers = layers;
 		self
@@ -91,14 +81,8 @@ impl<'a> DeviceBuilder<'a> {
 			.window
 			.map(|(window, display)| (window.window_handle().unwrap(), display.display_handle().unwrap()));
 
-		let (layers, extensions) = Self::get_instance_layers_and_extensions(
-			&entry,
-			window.map(|x| x.0.as_raw()),
-			self.validation,
-			self.layers,
-			self.instance_extensions,
-		)?;
-		let instance = Self::create_instance(&entry, &layers, &extensions)?;
+		let extensions = Self::get_instance_extensions(&entry, window.map(|x| x.0.as_raw()), self.instance_extensions)?;
+		let instance = Self::create_instance(&entry, self.layers, &extensions)?;
 
 		let surface = window.map(|(window, display)| {
 			let surface_ext = khr::surface::Instance::new(&entry, &instance);
@@ -162,26 +146,10 @@ impl<'a> DeviceBuilder<'a> {
 		}
 	}
 
-	fn get_instance_layers_and_extensions(
-		entry: &ash::Entry, window: Option<RawWindowHandle>, validation: bool, layers: &[&'static CStr],
-		extensions: &[&'static CStr],
-	) -> Result<(Vec<&'static CStr>, Vec<&'static CStr>)> {
+	fn get_instance_extensions(
+		entry: &ash::Entry, window: Option<RawWindowHandle>, extensions: &[&'static CStr],
+	) -> Result<Vec<&'static CStr>> {
 		unsafe {
-			let validation = if validation {
-				if entry
-					.enumerate_instance_layer_properties()?
-					.into_iter()
-					.any(|props| props.layer_name_as_c_str().unwrap() == VALIDATION_LAYER)
-				{
-					Some(VALIDATION_LAYER)
-				} else {
-					warn!("validation layer not found, continuing without");
-					None
-				}
-			} else {
-				None
-			};
-
 			let mut exts: Vec<&CStr> = Self::get_surface_extensions(window)?.to_vec();
 			if entry
 				.enumerate_instance_extension_properties(None)?
@@ -192,10 +160,7 @@ impl<'a> DeviceBuilder<'a> {
 			}
 			exts.extend_from_slice(extensions);
 
-			Ok((
-				validation.into_iter().chain(layers.into_iter().copied()).collect(),
-				exts,
-			))
+			Ok(exts)
 		}
 	}
 
@@ -408,6 +373,8 @@ impl<'a> DeviceBuilder<'a> {
 					match (*next).ty {
 						vk::PhysicalDeviceVulkan11Features::STRUCTURE_TYPE => {
 							let features11 = &mut *(next as *mut vk::PhysicalDeviceVulkan11Features);
+							features11.variable_pointers = true as _;
+							features11.variable_pointers_storage_buffer = true as _;
 							features11.storage_buffer16_bit_access = true as _;
 						},
 						vk::PhysicalDeviceVulkan12Features::STRUCTURE_TYPE => {
@@ -427,6 +394,7 @@ impl<'a> DeviceBuilder<'a> {
 							features12.buffer_device_address = true as _;
 							features12.vulkan_memory_model = true as _;
 							features12.vulkan_memory_model_device_scope = true as _;
+							features12.shader_int8 = true as _;
 						},
 						vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => {
 							let features13 = &mut *(next as *mut vk::PhysicalDeviceVulkan13Features);

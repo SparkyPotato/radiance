@@ -1,5 +1,3 @@
-use std::ffi::CStr;
-
 use ash::vk;
 pub use radiance_shader_compiler_macros::shader;
 use rustc_hash::FxHashMap;
@@ -51,9 +49,8 @@ impl ShaderRuntime {
 	}
 
 	pub fn shader<'a>(
-		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
+		&'a self, name: &'a str, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
 	) -> vk::PipelineShaderStageCreateInfo {
-		let name = name.to_str().expect("shader module name is not valid utf8");
 		let module = self
 			.modules
 			.get(name)

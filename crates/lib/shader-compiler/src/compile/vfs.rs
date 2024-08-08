@@ -92,6 +92,8 @@ impl VirtualFileSystem {
 		Ok(())
 	}
 
+	pub fn includes(&self) -> impl Iterator<Item = &Path> { self.source_roots.values().map(|x| x.as_path()) }
+
 	/// Get the physical source root of a module.
 	pub fn get_root(&self, name: &str) -> Option<&Path> { self.source_roots.get(name).map(|p| p.as_ref()) }
 
@@ -132,14 +134,13 @@ impl VirtualFileSystem {
 	/// Convert a virtual path to a physical output path.
 	pub fn resolve_output(&self, path: &VirtualPath) -> Option<PathBuf> {
 		let mut components = path.inner.components();
-		let name = components.next()?;
-		let name = name.as_os_str().to_str()?;
-		let root = self.output_roots.get(name)?.as_ref()?;
+		let name = components.next().unwrap();
+		let name = name.as_os_str().to_str().unwrap();
+		let root = self.output_roots.get(name)?.as_ref().unwrap();
 		let path = components.as_path();
 
 		let mut path = root.join(path);
-		let ext = path.extension()?;
-		path.set_extension(format!("{}.spv", ext.to_str()?));
+		path.set_extension("spv");
 		Some(path)
 	}
 
@@ -174,4 +175,3 @@ fn get_cargo_package_name(root: &Path) -> Result<String, Box<dyn Error>> {
 	let name = manifest.package.ok_or("Cargo.toml has no package")?.name;
 	Ok(name)
 }
-

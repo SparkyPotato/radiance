@@ -5,7 +5,7 @@ use crossbeam_channel::{Receiver, Sender};
 use material::GpuMaterial;
 use radiance_asset::{AssetError, AssetSource, AssetSystem};
 use radiance_graph::{
-	device::{descriptor::BufferId, Device, QueueSyncs},
+	device::{Device, QueueSyncs},
 	graph::Frame,
 	resource::{Buffer, BufferDesc, Resource},
 	util::async_exec::AsyncCtx,
@@ -51,6 +51,8 @@ impl AssetRuntime {
 		})
 	}
 
+	pub fn materials(&self) -> *mut GpuMaterial { self.material_buffer.handle().as_gpu() }
+
 	pub unsafe fn destroy(self, device: &Device) {
 		for (_, s) in self.scenes {
 			assert!(
@@ -90,8 +92,6 @@ impl AssetRuntime {
 			}
 		}
 	}
-
-	pub fn materials(&self) -> BufferId { self.material_buffer.id().unwrap() }
 
 	pub fn load<S: AssetSource, R>(
 		&mut self, device: &Device, sys: &AssetSystem<S>, ctx: AsyncCtx,

@@ -6,33 +6,27 @@ use ash::vk;
 
 use crate::{device::Device, Result};
 
-/// An ID representing a storage buffer, for use by a shader.
-///
-/// Is a `u32`, bound to binding `0`.
-#[repr(transparent)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct BufferId(NonZeroU32);
 /// An ID representing a sampled image, for use by a shader.
 ///
-/// Is a `u32`, bound to binding `1`.
+/// Is a `u32`, bound to binding `0`.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImageId(NonZeroU32);
 /// An ID representing a storage image, for use by a shader.
 ///
-/// Is a `u32`, bound to binding `2`.
+/// Is a `u32`, bound to binding `1`.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StorageImageId(NonZeroU32);
 /// An ID representing a sampler, for use by a shader.
 ///
-/// Is a `u32`, bound to binding `3`.
+/// Is a `u32`, bound to binding `2`.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SamplerId(NonZeroU32);
 /// An ID representing an acceleration structure, for use by a shader.
 ///
-/// Is a `u32`, bound to binding `4`.
+/// Is a `u32`, bound to binding `3`.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ASId(NonZeroU32);
@@ -40,10 +34,6 @@ pub struct ASId(NonZeroU32);
 #[cfg(feature = "bytemuck")]
 mod bytemuck {
 	use super::*;
-
-	unsafe impl ::bytemuck::NoUninit for BufferId {}
-	unsafe impl ::bytemuck::PodInOption for BufferId {}
-	unsafe impl ::bytemuck::ZeroableInOption for BufferId {}
 
 	unsafe impl ::bytemuck::NoUninit for ImageId {}
 	unsafe impl ::bytemuck::PodInOption for ImageId {}
@@ -70,7 +60,6 @@ pub struct Descriptors {
 }
 
 struct Inner {
-	storage_buffers: FreeIndices,
 	sampled_images: FreeIndices,
 	storage_images: FreeIndices,
 	samplers: FreeIndices,
@@ -83,28 +72,6 @@ impl Descriptors {
 	/// Get a `DescriptorSetLayout` that should be used when making pipelines.
 	pub fn layout(&self) -> vk::DescriptorSetLayout { self.layout }
 
-	pub fn get_buffer(&self, device: &Device, buffer: vk::Buffer) -> BufferId {
-		let mut inner = self.inner.lock().unwrap();
-
-		let index = inner.storage_buffers.get_index();
-		unsafe {
-			device.device().update_descriptor_sets(
-				&[vk::WriteDescriptorSet::default()
-					.dst_set(self.set)
-					.dst_binding(0)
-					.dst_array_element(index.get())
-					.descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-					.buffer_info(&[vk::DescriptorBufferInfo::default()
-						.buffer(buffer)
-						.offset(0)
-						.range(vk::WHOLE_SIZE)])],
-				&[],
-			);
-		}
-
-		BufferId(index)
-	}
-
 	pub fn get_image(&self, device: &Device, image: vk::ImageView) -> ImageId {
 		let mut inner = self.inner.lock().unwrap();
 
@@ -113,7 +80,7 @@ impl Descriptors {
 			device.device().update_descriptor_sets(
 				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
-					.dst_binding(1)
+					.dst_binding(0)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
 					.image_info(&[vk::DescriptorImageInfo::default()
@@ -134,7 +101,7 @@ impl Descriptors {
 			device.device().update_descriptor_sets(
 				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
-					.dst_binding(2)
+					.dst_binding(1)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
 					.image_info(&[vk::DescriptorImageInfo::default()
@@ -155,7 +122,7 @@ impl Descriptors {
 			device.device().update_descriptor_sets(
 				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
-					.dst_binding(3)
+					.dst_binding(2)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::SAMPLER)
 					.image_info(&[vk::DescriptorImageInfo::default().sampler(sampler)])],
@@ -175,7 +142,7 @@ impl Descriptors {
 			ds.descriptor_count = 1;
 			device.device().update_descriptor_sets(
 				&[ds.dst_set(self.set)
-					.dst_binding(4)
+					.dst_binding(3)
 					.dst_array_element(index.get())
 					.descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
 					.push_next(
@@ -186,11 +153,6 @@ impl Descriptors {
 		}
 
 		ASId(index)
-	}
-
-	pub fn return_buffer(&self, index: BufferId) {
-		let mut inner = self.inner.lock().unwrap();
-		inner.storage_buffers.return_index(index.0);
 	}
 
 	pub fn return_image(&self, index: ImageId) {
@@ -214,7 +176,6 @@ impl Descriptors {
 	}
 
 	pub(super) fn new(device: &ash::Device) -> Result<Self> {
-		let storage_buffer_count = 512 * 1024;
 		let sampled_image_count = 512 * 1024;
 		let storage_image_count = 512 * 1024;
 		let sampler_count = 512;
@@ -227,26 +188,21 @@ impl Descriptors {
 		let set_layout = [
 			vk::DescriptorSetLayoutBinding::default()
 				.binding(0)
-				.descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
-				.descriptor_count(storage_buffer_count)
-				.stage_flags(vk::ShaderStageFlags::ALL),
-			vk::DescriptorSetLayoutBinding::default()
-				.binding(1)
 				.descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
 				.descriptor_count(sampled_image_count)
 				.stage_flags(vk::ShaderStageFlags::ALL),
 			vk::DescriptorSetLayoutBinding::default()
-				.binding(2)
+				.binding(1)
 				.descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
 				.descriptor_count(storage_image_count)
 				.stage_flags(vk::ShaderStageFlags::ALL),
 			vk::DescriptorSetLayoutBinding::default()
-				.binding(3)
+				.binding(2)
 				.descriptor_type(vk::DescriptorType::SAMPLER)
 				.descriptor_count(sampler_count)
 				.stage_flags(vk::ShaderStageFlags::ALL),
 			vk::DescriptorSetLayoutBinding::default()
-				.binding(4)
+				.binding(3)
 				.descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
 				.descriptor_count(as_count)
 				.stage_flags(vk::ShaderStageFlags::ALL),
@@ -262,7 +218,6 @@ impl Descriptors {
 							binding_flags,
 							binding_flags,
 							binding_flags,
-							binding_flags,
 						]),
 					),
 				None,
@@ -274,9 +229,6 @@ impl Descriptors {
 				&vk::DescriptorPoolCreateInfo::default()
 					.max_sets(1)
 					.pool_sizes(&[
-						vk::DescriptorPoolSize::default()
-							.ty(vk::DescriptorType::STORAGE_BUFFER)
-							.descriptor_count(storage_buffer_count),
 						vk::DescriptorPoolSize::default()
 							.ty(vk::DescriptorType::SAMPLED_IMAGE)
 							.descriptor_count(sampled_image_count),
@@ -308,7 +260,6 @@ impl Descriptors {
 			layout,
 			set,
 			inner: Mutex::new(Inner {
-				storage_buffers: FreeIndices::new(storage_buffer_count),
 				sampled_images: FreeIndices::new(sampled_image_count),
 				storage_images: FreeIndices::new(storage_image_count),
 				samplers: FreeIndices::new(sampler_count),
