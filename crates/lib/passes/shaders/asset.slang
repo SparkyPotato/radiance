@@ -33,9 +33,9 @@ public struct Meshlet {
     public u8 vertex_count;
     public u8 triangle_count;
     public u16 _pad;
-    public f32 bounding[4];
-    public f32 group_error[4];
-    public f32 parent_error[4];
+    public f32x4 bounding;
+    public f32x4 group_error;
+    public f32x4 parent_error;
 }
 
 public struct Material {

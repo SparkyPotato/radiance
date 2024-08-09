@@ -3,6 +3,9 @@ import asset;
 import common;
 import task;
 
+groupshared u32 MeshletEmitCount;
+groupshared MeshPayload Payload;
+
 [numthreads(64, 1, 1)]
 [shader("amplification")]
 public void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
@@ -10,21 +13,20 @@ public void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
     GroupMemoryBarrierWithGroupSync();
 
     if (id < Constants.meshlet_count) {
-        MeshletPointer pointer = Constants.meshlet_pointers[id];
-        Instance instance = Constants.instances[pointer.instance];
-        Meshlet meshlet = ((Meshlet*)instance.mesh)[pointer.meshlet];
-        Camera camera = Constants.camera[0];
-        Camera prev_camera = Constants.camera[1];
+        let pointer = Constants.meshlet_pointers[id];
+        let instance = Constants.instances[pointer.instance];
+        let meshlet = ((Meshlet*)instance.mesh)[pointer.meshlet];
+        let camera = Constants.camera[0];
+        let prev_camera = Constants.camera[1];
 
-        float4x4 transform = instance.get_transform();
-        float4 sphere = float4(meshlet.bounding);
-        float4x4 mv = mul(camera.view, transform);
-        float4x4 mvp = mul(camera.view_proj, transform);
+        let transform = instance.get_transform();
+        let mv = mul(camera.view, transform);
+        let mvp = mul(camera.view_proj, transform);
         
-        bool visible = decide_lod(mv, camera.h, float4(meshlet.group_error), float4(meshlet.parent_error));
-        visible = visible && frustum_cull(mvp, sphere);
+        var visible = decide_lod(mv, camera.h, meshlet.group_error, meshlet.parent_error);
+        visible = visible && frustum_cull(mvp, meshlet.bounding);
         if (visible) {
-            visible = occlusion_cull(transform, prev_camera, sphere);
+            visible = occlusion_cull(transform, prev_camera, meshlet.bounding);
             if (!visible) {
                 u32 did;
                 InterlockedAdd(Constants.culled[0], 1, did);
@@ -36,10 +38,11 @@ public void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
         }
 
         if (visible) {
-            u32 index;
-            InterlockedAdd(MeshletEmitCount, 1, index);
-            Payload.pointers[index].pointer = pointer;
-            Payload.pointers[index].id = id;
+            u32 i = 1;
+            u32 index = spirv_asm { result:$$u32 = OpAtomicIAdd &MeshletEmitCount Workgroup None $i };
+            // u32 index;
+            // InterlockedAdd(MeshletEmitCount, 1, index);
+            Payload.pointers[index] = { id };
         }
     }
 

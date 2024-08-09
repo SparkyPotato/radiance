@@ -3,6 +3,9 @@ import asset;
 import common;
 import task;
 
+groupshared u32 MeshletEmitCount;
+groupshared MeshPayload Payload;
+
 [numthreads(64, 1, 1)]
 [shader("amplification")]
 public void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
@@ -10,21 +13,20 @@ public void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
     GroupMemoryBarrierWithGroupSync();
 
     if (id < Constants.culled[0]) {
-        u32 pid = Constants.culled[4 + id];
-        MeshletPointer pointer = Constants.meshlet_pointers[pid];
-        Instance instance = Constants.instances[pointer.instance];
-        Meshlet meshlet = ((Meshlet*)instance.mesh)[pointer.meshlet];
-        Camera camera = *Constants.camera;
+        let pid = Constants.culled[4 + id];
+        let pointer = Constants.meshlet_pointers[pid];
+        let instance = Constants.instances[pointer.instance];
+        let meshlet = ((Meshlet*)instance.mesh)[pointer.meshlet];
+        let camera = *Constants.camera;
 
-        float4 sphere = float4(meshlet.bounding);
-        float4x4 transform = instance.get_transform();
-        bool visible = occlusion_cull(transform, camera, sphere);
+        let transform = instance.get_transform();
+        let visible = occlusion_cull(transform, camera, meshlet.bounding);
 
         if (visible) {
-            u32 index;
-            InterlockedAdd(MeshletEmitCount, 1, index);
-            Payload.pointers[index].pointer = pointer;
-            Payload.pointers[index].id = pid;
+            u32 i = 1;
+            u32 index = spirv_asm { result:$$u32 = OpAtomicIAdd &MeshletEmitCount Workgroup None $i };
+            // InterlockedAdd(MeshletEmitCount, 1, index);
+            Payload.pointers[index] = { pointer, id };
         }
     }
 

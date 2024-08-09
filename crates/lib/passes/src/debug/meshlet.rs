@@ -34,7 +34,7 @@ impl DebugMeshlets {
 			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
 				layout,
 				shaders: &[
-					device.shader("radiance-graph/util/screen", vk::ShaderStageFlags::VERTEX, None),
+					device.shader("radiance-graph/graph/util/screen", vk::ShaderStageFlags::VERTEX, None),
 					device.shader("radiance-passes/debug/meshlet", vk::ShaderStageFlags::FRAGMENT, None),
 				],
 				raster: &no_cull(),

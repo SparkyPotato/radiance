@@ -2,12 +2,9 @@ import graph.types;
 import asset;
 import common;
 
-public groupshared u32 MeshletEmitCount;
-public groupshared MeshPayload Payload;
-
 public func normalize_plane(p: f32x4) -> f32x4 {
-    float3 n = p.xyz;
-    float l = length(n);
+    let n = p.xyz;
+    let l = length(n);
     return p / l;
 }
 
@@ -28,7 +25,7 @@ public struct Frustum {
 }
 
 public func plane_distance(plane: f32x4, p: f32x3) -> f32 {
-    return dot(float4(p, 1.f), plane);
+    return dot(f32x4(p, 1.f), plane);
 }
 
 public func frustum_cull(mvp: float4x4, sphere: f32x4) -> bool {

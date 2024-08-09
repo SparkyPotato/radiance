@@ -282,7 +282,7 @@ impl Renderer {
 		pass.device.device().cmd_push_constants(
 			pass.buf,
 			self.layout,
-			vk::ShaderStageFlags::VERTEX,
+			vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
 			0,
 			bytes_of(&PushConstantsStatic {
 				screen_size: screen.physical_size.map(|x| x as f32) / screen.scaling,
@@ -335,7 +335,7 @@ impl Renderer {
 					pass.device.device().cmd_push_constants(
 						pass.buf,
 						self.layout,
-						vk::ShaderStageFlags::FRAGMENT,
+						vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
 						std::mem::size_of::<PushConstantsStatic>() as u32,
 						bytes_of(&PushConstantsDynamic { image, sampler }),
 					);

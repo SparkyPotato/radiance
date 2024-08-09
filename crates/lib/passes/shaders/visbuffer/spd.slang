@@ -22,13 +22,13 @@ groupshared f32 inter[16][16];
 groupshared u32 counter;
 
 f32 load_src(u32x2 p) {
-	f32x2 inv = f32x2(Constants.inv_size[0], Constants.inv_size[1]);
-	f32x2 coord = p * inv + inv;
+	let inv = f32x2(Constants.inv_size[0], Constants.inv_size[1]);
+	let coord = p * inv + inv;
 	return Constants.depth.sample_mip(Constants.s, coord, 0).x;
 }
 
 f32 load(u32x2 p) {
-	u32x2 dim = Constants.out6.size();
+	let dim = Constants.out6.size();
 	if (all(p < dim)) {
 		return Constants.out6.load(p).x;
 	} else {
@@ -37,7 +37,7 @@ f32 load(u32x2 p) {
 }
 
 void store_inner<C: Coherency>(STex<f32, D2, C, NonUniform> tex, u32x2 p, f32 v) {
-	u32x2 dim = tex.size();
+	let dim = tex.size();
 	if (all(p < dim)) {
 		tex.store(p, v);
 	}

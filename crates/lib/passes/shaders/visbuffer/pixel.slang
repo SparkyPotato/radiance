@@ -2,6 +2,6 @@ import graph.types;
 import common;
 
 [shader("pixel")]
-public u32 main(u32 data: VisBuffer): SV_Target0 {
+public func main([vk::location(0)] data: u32) -> u32 {
     return data;
 }

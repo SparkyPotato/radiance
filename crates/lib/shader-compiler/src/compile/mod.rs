@@ -61,9 +61,11 @@ impl ShaderBuilder {
 				"-target",
 				"spirv",
 				"-profile",
-				"sm_6_7+all",
+				"sm_6_7",
 				"-fvk-use-scalar-layout",
 				"-matrix-layout-column-major",
+				"-O2",
+				"-g0",
 			])
 			.args(self.vfs.includes().flat_map(|p| [Path::new("-I"), p]))
 			.args([Path::new("-o"), output.as_path()])
