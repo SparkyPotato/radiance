@@ -56,7 +56,7 @@ impl Device {
 	pub fn reset_arena(&mut self) { self.arena.reset() }
 
 	pub fn shader<'a>(
-		&'a self, name: &'a str, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
+		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
 	) -> vk::PipelineShaderStageCreateInfo {
 		self.shaders.shader(name, stage, specialization)
 	}

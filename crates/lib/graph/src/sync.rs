@@ -3,7 +3,6 @@
 use std::ops::{BitOr, BitOrAssign};
 
 use ash::vk;
-use vk::ImageLayout;
 
 /// Defines all potential shader stages.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -107,8 +106,6 @@ gen_usage_enums! {
 		ColorAttachmentWrite,
 		/// Written as a depth/stencil attachment during rendering, or via a subpass store op.
 		DepthStencilAttachmentWrite,
-		/// Override the default layout decided.
-		CustomLayout(ImageLayout),
 	};
 
 	pub enum CommonUsage {
@@ -200,7 +197,6 @@ impl From<ImageUsage> for vk::ImageUsageFlags {
 			ImageUsage::ShaderStorageWrite(_) => vk::ImageUsageFlags::STORAGE,
 			ImageUsage::TransferWrite => vk::ImageUsageFlags::TRANSFER_DST,
 			ImageUsage::General => vk::ImageUsageFlags::empty(),
-			ImageUsage::CustomLayout(_) => vk::ImageUsageFlags::empty(),
 		}
 	}
 }
@@ -315,11 +311,6 @@ impl From<UsageType> for AccessInfo {
 				access_mask: vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR,
 				image_layout: vk::ImageLayout::UNDEFINED,
 			},
-			UsageType::CustomLayout(image_layout) => AccessInfo {
-				stage_mask: vk::PipelineStageFlags2::empty(),
-				access_mask: vk::AccessFlags2::empty(),
-				image_layout,
-			},
 		}
 	}
 }
@@ -392,6 +383,8 @@ pub struct ImageBarrier<'a> {
 	pub previous_usages: &'a [UsageType],
 	pub next_usages: &'a [UsageType],
 	pub discard_contents: bool,
+	pub src_queue_family_index: u32,
+	pub dst_queue_family_index: u32,
 	pub image: vk::Image,
 	pub range: vk::ImageSubresourceRange,
 }
@@ -402,6 +395,8 @@ impl Default for ImageBarrier<'_> {
 			previous_usages: &[],
 			next_usages: &[],
 			discard_contents: false,
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
 			image: vk::Image::null(),
 			range: vk::ImageSubresourceRange::default(),
 		}
@@ -419,6 +414,8 @@ impl From<ImageBarrier<'_>> for vk::ImageMemoryBarrier2<'static> {
 		}
 
 		ImageBarrierAccess {
+			src_queue_family_index: barrier.src_queue_family_index,
+			dst_queue_family_index: barrier.dst_queue_family_index,
 			image: barrier.image,
 			range: barrier.range,
 			previous_access,
@@ -452,6 +449,8 @@ impl From<ImageBarrier<'_>> for vk::ImageMemoryBarrier2<'static> {
 pub struct ImageBarrierAccess {
 	pub previous_access: AccessInfo,
 	pub next_access: AccessInfo,
+	pub src_queue_family_index: u32,
+	pub dst_queue_family_index: u32,
 	pub image: vk::Image,
 	pub range: vk::ImageSubresourceRange,
 }
@@ -461,8 +460,42 @@ impl Default for ImageBarrierAccess {
 		Self {
 			previous_access: Default::default(),
 			next_access: Default::default(),
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
 			image: vk::Image::null(),
 			range: vk::ImageSubresourceRange::default(),
+		}
+	}
+}
+
+impl ImageBarrierAccess {
+	/// As a QFOT release barrier.
+	pub fn as_release_barrier(self) -> Self {
+		Self {
+			next_access: AccessInfo {
+				image_layout: self.next_access.image_layout,
+				..Default::default()
+			},
+			..self
+		}
+	}
+
+	/// As a QFOT acquire barrier.
+	pub fn as_acquire_barrier(self) -> Self {
+		Self {
+			previous_access: AccessInfo {
+				image_layout: self.previous_access.image_layout,
+				..Default::default()
+			},
+			..self
+		}
+	}
+
+	pub fn as_no_qfot_barrier(self) -> Self {
+		Self {
+			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			..self
 		}
 	}
 }
@@ -478,8 +511,8 @@ impl From<ImageBarrierAccess> for vk::ImageMemoryBarrier2<'static> {
 			dst_stage_mask: barrier.next_access.stage_mask,
 			dst_access_mask: barrier.next_access.access_mask,
 			new_layout: barrier.next_access.image_layout,
-			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+			src_queue_family_index: barrier.src_queue_family_index,
+			dst_queue_family_index: barrier.dst_queue_family_index,
 			..Default::default()
 		}
 	}

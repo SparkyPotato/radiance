@@ -1,5 +1,5 @@
 use ash::vk;
-use bytemuck::{AnyBitPattern, NoUninit, Zeroable};
+use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
 use parry3d::{
 	bounding_volume::SimdAabb,
@@ -10,7 +10,10 @@ use parry3d::{
 };
 use radiance_asset::{scene, util::SliceWriter, Asset, AssetSource};
 use radiance_graph::{
-	device::{descriptor::ASId, Compute},
+	device::{
+		descriptor::{ASId, BufferId},
+		Compute,
+	},
 	graph::Resource,
 	resource::{ASDesc, Buffer, BufferDesc, Resource as _, AS},
 	sync::{get_global_barrier, GlobalBarrier, UsageType},
@@ -48,7 +51,7 @@ pub struct Scene {
 	// bvh: Qbvh<u32>,
 }
 
-#[derive(Copy, Clone, NoUninit, AnyBitPattern)]
+#[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuMeshletPointer {
 	pub instance: u32,
@@ -58,19 +61,16 @@ pub struct GpuMeshletPointer {
 const_assert_eq!(std::mem::size_of::<GpuMeshletPointer>(), 8);
 const_assert_eq!(std::mem::align_of::<GpuMeshletPointer>(), 4);
 
-#[derive(Copy, Clone, Zeroable)]
+#[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuInstance {
 	pub transform: Vec4<Vec3<f32>>,
 	/// Mesh buffer containing meshlets + meshlet data.
-	pub mesh: *mut u8,
+	pub mesh: BufferId,
 }
 
-unsafe impl NoUninit for GpuInstance {}
-unsafe impl AnyBitPattern for GpuInstance {}
-
-const_assert_eq!(std::mem::size_of::<GpuInstance>(), 56);
-const_assert_eq!(std::mem::align_of::<GpuInstance>(), 8);
+const_assert_eq!(std::mem::size_of::<GpuInstance>(), 52);
+const_assert_eq!(std::mem::align_of::<GpuInstance>(), 4);
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -84,9 +84,9 @@ pub struct VkAccelerationStructureInstanceKHR {
 unsafe impl NoUninit for VkAccelerationStructureInstanceKHR {}
 
 impl Scene {
-	pub fn instances(&self) -> *mut GpuInstance { self.instance_buffer.handle().as_gpu() }
+	pub fn instances(&self) -> BufferId { self.instance_buffer.id().unwrap() }
 
-	pub fn meshlet_pointers(&self) -> *mut GpuMeshletPointer { self.meshlet_pointer_buffer.handle().as_gpu() }
+	pub fn meshlet_pointers(&self) -> BufferId { self.meshlet_pointer_buffer.id().unwrap() }
 
 	pub fn meshlet_pointer_count(&self) -> u32 { self.meshlet_pointer_count }
 
@@ -234,7 +234,7 @@ impl<S: AssetSource> Loader<'_, S> {
 				writer
 					.write(GpuInstance {
 						transform: n.transform.cols.map(|x| x.xyz()),
-						mesh: mesh.buffer.handle().as_gpu(),
+						mesh: mesh.buffer.id().unwrap(),
 					})
 					.unwrap();
 				// awriter
@@ -293,8 +293,8 @@ impl<S: AssetSource> Loader<'_, S> {
 		}
 
 		let acceleration_structure = unsafe {
-			// let ext = self.device.as_ext();
-			//
+			let ext = self.device.as_ext();
+
 			// let geo = [vk::AccelerationStructureGeometryKHR::default()
 			// 	.geometry_type(vk::GeometryTypeKHR::INSTANCES)
 			// 	.geometry(vk::AccelerationStructureGeometryDataKHR {
@@ -305,33 +305,34 @@ impl<S: AssetSource> Loader<'_, S> {
 			// 			}),
 			// 	})
 			// 	.flags(vk::GeometryFlagsKHR::OPAQUE)];
-			// let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-			// 	.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
-			// 	.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-			// 	.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-			// 	.geometries(&geo);
-			//
-			// let count = nodes.len() as u32;
-			// let mut size = Default::default();
-			// ext.get_acceleration_structure_build_sizes(
-			// 	vk::AccelerationStructureBuildTypeKHR::DEVICE,
-			// 	&info,
-			// 	&[count],
-			// 	&mut size,
-			// );
-			//
-			// let as_ = AS::create(
-			// 	self.device,
-			// 	ASDesc {
-			// 		name: &format!("{name} AS"),
-			// 		flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
-			// 		ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-			// 		// size: size.acceleration_structure_size,
-			// 		size: 0,
-			// 	},
-			// )
-			// .map_err(LoadError::Vulkan)?;
-			//
+			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+				.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
+				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+				// .geometries(&geo);
+				.geometries(&[]);
+
+			let count = nodes.len() as u32;
+			let mut size = Default::default();
+			ext.get_acceleration_structure_build_sizes(
+				vk::AccelerationStructureBuildTypeKHR::DEVICE,
+				&info,
+				// &[count],
+				&[],
+				&mut size,
+			);
+
+			let as_ = AS::create(
+				self.device,
+				ASDesc {
+					name: &format!("{name} AS"),
+					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
+					ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+					size: size.acceleration_structure_size,
+				},
+			)
+			.map_err(LoadError::Vulkan)?;
+
 			// let scratch = Buffer::create(
 			// 	self.device,
 			// 	BufferDesc {
@@ -342,14 +343,14 @@ impl<S: AssetSource> Loader<'_, S> {
 			// 	},
 			// )
 			// .map_err(LoadError::Vulkan)?;
-			//
+
 			// info.dst_acceleration_structure = as_.handle();
 			// info.scratch_data = vk::DeviceOrHostAddressKHR {
 			// 	device_address: scratch.addr(),
 			// };
-			//
+
 			// let buf = self.ctx.get_buf::<Compute>();
-			//
+
 			// self.device.device().cmd_pipeline_barrier2(
 			// 	buf,
 			// 	&vk::DependencyInfo::default().memory_barriers(&[get_global_barrier(&GlobalBarrier {
@@ -365,9 +366,8 @@ impl<S: AssetSource> Loader<'_, S> {
 			//
 			// self.ctx.delete::<Compute>(temp_build_buffer);
 			// self.ctx.delete::<Compute>(scratch);
-			//
-			// as_
-			AS::default()
+
+			as_
 		};
 
 		// struct Gen<'a> {

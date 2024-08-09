@@ -1,13 +1,6 @@
-use std::{
-	borrow::Borrow,
-	collections::HashSet,
-	error::Error,
-	fs::File,
-	io::{self, BufReader},
-	path::Path,
-	process::{Child, Command, Stdio},
-};
+use std::{borrow::Borrow, collections::HashSet, error::Error, fs::File, io::BufReader, path::Path};
 
+use hassle_rs::{Dxc, DxcCompiler, DxcIncludeHandler, DxcLibrary};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
@@ -20,14 +13,24 @@ pub struct ShaderBuilder {
 	pub(crate) vfs: VirtualFileSystem,
 	debug: bool,
 	dependencies: DependencyInfo,
+	compiler: DxcCompiler,
+	library: DxcLibrary,
+	_dxc: Dxc,
 }
 
 impl ShaderBuilder {
 	pub fn new(debug: bool) -> Result<Self, Box<dyn Error>> {
+		let dxc = Dxc::new(None)?;
+		let compiler = dxc.create_compiler()?;
+		let library = dxc.create_library()?;
+
 		Ok(Self {
 			vfs: VirtualFileSystem::new(),
 			debug: true,
 			dependencies: DependencyInfo::default(),
+			compiler,
+			library,
+			_dxc: dxc,
 		})
 	}
 
@@ -50,28 +53,60 @@ impl ShaderBuilder {
 	}
 
 	/// Compile a physical file.
-	pub fn compile_file_physical(&mut self, file: &Path) -> Result<Child, io::Error> {
+	pub fn compile_file_physical(&mut self, file: &Path) -> Result<(), String> {
+		let ty = ShaderType::new(file)?;
 		let virtual_path = self.vfs.unresolve_source(file).unwrap();
 
-		let output = self.vfs.resolve_output(&virtual_path).unwrap();
-		std::fs::create_dir_all(output.parent().unwrap())?;
-		Command::new("slangc")
-			.arg(file)
-			.args([
-				"-target",
-				"spirv",
-				"-profile",
-				"sm_6_7",
-				"-fvk-use-scalar-layout",
-				"-matrix-layout-column-major",
-				"-O2",
-				"-g0",
-			])
-			.args(self.vfs.includes().flat_map(|p| [Path::new("-I"), p]))
-			.args([Path::new("-o"), output.as_path()])
-			.stdout(Stdio::piped())
-			.stderr(Stdio::piped())
-			.spawn()
+		if let Some(ty) = ty {
+			let args: Vec<_> = [
+				"-spirv",
+				"-fspv-target-env=vulkan1.3",
+				"-HV 2021",
+				"-enable-16bit-types",
+			]
+			.into_iter()
+			.chain(
+				if self.debug { Some(["-Zi", "-Od"]) } else { None }
+					.into_iter()
+					.flatten(),
+			)
+			.map(|x| x.to_string())
+			.chain(Some(format!("-T {}", ty.target_profile())))
+			.collect();
+			let args: Vec<_> = args.iter().map(|x| x.as_str()).collect();
+			let mut handler = IncludeHandler::new(&self.vfs, &mut self.dependencies, &virtual_path);
+
+			let shader = std::fs::read_to_string(file).map_err(|x| x.to_string())?;
+			let blob = self
+				.library
+				.create_blob_with_encoding_from_str(&shader)
+				.map_err(|x| x.to_string())?;
+			let bytecode: Vec<u8> = match self.compiler.compile(
+				&blob,
+				&file.file_name().unwrap().to_string_lossy(),
+				"main",
+				ty.target_profile(),
+				&args,
+				Some(&mut handler),
+				&[],
+			) {
+				Ok(result) => {
+					let result_blob = result.get_result().unwrap();
+					result_blob.to_vec()
+				},
+				Err((result, _)) => {
+					let error_blob = result.get_error_buffer().unwrap();
+					let e = self.library.get_blob_as_string(&error_blob.into()).unwrap();
+					return Err(e);
+				},
+			};
+
+			let output = self.vfs.resolve_output(&virtual_path).unwrap();
+			std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+			std::fs::write(output, bytecode).unwrap();
+		}
+
+		Ok(())
 	}
 
 	/// Compile all shaders in all modules.
@@ -105,23 +140,9 @@ impl ShaderBuilder {
 			}
 		}
 
-		let mut children = Vec::new();
 		for file in compile_queue {
-			match self.compile_file_physical(&file) {
-				Ok(x) => children.push((x, file)),
-				Err(e) => errors.push(format!("{}:\n{}", file.display(), e)),
-			}
-		}
-
-		for (child, file) in children {
-			match child.wait_with_output() {
-				Ok(x) => {
-					if !x.stdout.is_empty() || !x.stderr.is_empty() {
-						errors.push(String::from_utf8(x.stdout).unwrap());
-						errors.push(String::from_utf8(x.stderr).unwrap());
-					}
-				},
-				Err(e) => errors.push(format!("{}:\n{}", file.display(), e)),
+			if let Err(e) = self.compile_file_physical(&file) {
+				errors.push(format!("{}:\n{}", file.display(), e))
 			}
 		}
 
@@ -137,6 +158,49 @@ impl ShaderBuilder {
 		std::fs::write(path, out)?;
 
 		Ok(())
+	}
+}
+
+struct IncludeHandler<'a> {
+	vfs: &'a VirtualFileSystem,
+	deps: &'a mut DependencyInfo,
+	curr: &'a VirtualPath,
+}
+
+impl<'a> IncludeHandler<'a> {
+	fn new(vfs: &'a VirtualFileSystem, deps: &'a mut DependencyInfo, curr: &'a VirtualPath) -> Self {
+		Self { vfs, deps, curr }
+	}
+
+	fn load(&mut self, filename: &Path) -> Option<String> {
+		match std::fs::read_to_string(filename) {
+			Ok(source) => {
+				self.deps.add(self.curr, self.vfs.unresolve_source(filename)?);
+				Some(source)
+			},
+			Err(_) => None,
+		}
+	}
+}
+
+impl DxcIncludeHandler for IncludeHandler<'_> {
+	fn load_source(&mut self, filename: String) -> Option<String> {
+		let path = Path::new(&filename);
+		let mut comp = path.components();
+		comp.next().unwrap();
+		let path = comp.as_path();
+		let us = self.vfs.resolve_source(self.curr)?;
+		let curr_dir = us.parent()?;
+
+		// Check in current directory
+		match self.load(&curr_dir.join(path)) {
+			Some(source) => Some(source),
+			// Global include directories
+			None => {
+				let path = path.with_extension("");
+				self.load(&self.vfs.resolve_source(VirtualPath::new(&path))?)
+			},
+		}
 	}
 }
 
@@ -167,3 +231,62 @@ impl DependencyInfo {
 			.map(|x| x.borrow())
 	}
 }
+
+#[derive(Copy, Clone)]
+enum ShaderType {
+	Pixel,
+	Vertex,
+	Geometry,
+	Hull,
+	Domain,
+	Compute,
+	Mesh,
+	Amplification,
+	RayTracing,
+}
+
+impl ShaderType {
+	fn new(path: &Path) -> Result<Option<Self>, String> {
+		let err = || {
+			format!(
+				"Shader file name must follow format <name>.<type>.hlsl (is `{}`)",
+				path.display()
+			)
+		};
+
+		let mut dots = path.file_name().unwrap().to_str().unwrap().split('.');
+		let _ = dots.next().ok_or_else(err)?;
+		let ty = dots.next().ok_or_else(err)?;
+
+		let ty = match ty {
+			"p" => Some(ShaderType::Pixel),
+			"v" => Some(ShaderType::Vertex),
+			"g" => Some(ShaderType::Geometry),
+			"h" => Some(ShaderType::Hull),
+			"d" => Some(ShaderType::Domain),
+			"c" => Some(ShaderType::Compute),
+			"m" => Some(ShaderType::Mesh),
+			"a" => Some(ShaderType::Amplification),
+			"r" => Some(ShaderType::RayTracing),
+			"hlsl" => return Err(err()),
+			_ => None,
+		};
+
+		Ok(ty)
+	}
+
+	fn target_profile(self) -> &'static str {
+		match self {
+			ShaderType::Pixel => "ps_6_7",
+			ShaderType::Vertex => "vs_6_7",
+			ShaderType::Geometry => "gs_6_7",
+			ShaderType::Hull => "hs_6_7",
+			ShaderType::Domain => "ds_6_7",
+			ShaderType::Compute => "cs_6_7",
+			ShaderType::Mesh => "ms_6_7",
+			ShaderType::Amplification => "as_6_7",
+			ShaderType::RayTracing => "lib_6_7",
+		}
+	}
+}
+

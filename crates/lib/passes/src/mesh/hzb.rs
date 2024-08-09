@@ -4,13 +4,14 @@ use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
 	device::{
-		descriptor::{ImageId, SamplerId, StorageImageId},
+		descriptor::{BufferId, ImageId, SamplerId, StorageImageId},
 		Device,
 	},
 	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
 	Result,
 };
+use radiance_shader_compiler::c_str;
 use vek::Vec2;
 
 pub struct HzbGen {
@@ -21,17 +22,16 @@ pub struct HzbGen {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	depth: ImageId,
 	s: SamplerId,
-	atomic: *mut u32,
+	atomic: BufferId,
 	outs: [Option<StorageImageId>; 12],
 	mips: u32,
 	workgroups: u32,
 	inv_size: Vec2<f32>,
 }
-unsafe impl NoUninit for PushConstants {}
 
 struct PassIO {
 	depth: Res<ImageView>,
@@ -54,7 +54,7 @@ impl HzbGen {
 			)?;
 			let pipeline = device.compute_pipeline(
 				layout,
-				device.shader("radiance-passes/visbuffer/spd", vk::ShaderStageFlags::COMPUTE, None),
+				device.shader(c_str!("radiance-passes/mesh/spd"), vk::ShaderStageFlags::COMPUTE, None),
 			)?;
 
 			let hzb_sample = device.device().create_sampler(
@@ -199,7 +199,7 @@ impl HzbGen {
 				bytes_of(&PushConstants {
 					depth: depth.id.unwrap(),
 					s: self.hzb_sample_id,
-					atomic: atomic.as_gpu(),
+					atomic: atomic.id.unwrap(),
 					outs,
 					mips: io.levels,
 					workgroups: x * 2,

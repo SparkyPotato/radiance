@@ -273,34 +273,35 @@ impl<S: AssetSource> Loader<'_, S> {
 		}
 
 		let acceleration_structure = unsafe {
-			// let ext = self.device.as_ext();
-			//
-			// let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-			// 	.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
-			// 	.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-			// 	.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-			// 	geometries(&geo);
-			//
-			// let mut size = Default::default();
-			// ext.get_acceleration_structure_build_sizes(
-			// 	vk::AccelerationStructureBuildTypeKHR::DEVICE,
-			// 	&info,
-			// 	&counts,
-			// 	&mut size,
-			// );
-			//
-			// let as_ = AS::create(
-			// 	self.device,
-			// 	ASDesc {
-			// 		name: &format!("{name} AS"),
-			// 		flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
-			// 		ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-			// 		// size: size.acceleration_structure_size,
-			// 		size: 0,
-			// 	},
-			// )
-			// .map_err(LoadError::Vulkan)?;
-			//
+			let ext = self.device.as_ext();
+
+			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+				.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
+				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+				// .geometries(&geo);
+				.geometries(&[]);
+
+			let mut size = Default::default();
+			ext.get_acceleration_structure_build_sizes(
+				vk::AccelerationStructureBuildTypeKHR::DEVICE,
+				&info,
+				// &counts,
+				&[],
+				&mut size,
+			);
+
+			let as_ = AS::create(
+				self.device,
+				ASDesc {
+					name: &format!("{name} AS"),
+					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
+					ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+					size: size.acceleration_structure_size,
+				},
+			)
+			.map_err(LoadError::Vulkan)?;
+
 			// let scratch = Buffer::create(
 			// 	self.device,
 			// 	BufferDesc {
@@ -317,15 +318,14 @@ impl<S: AssetSource> Loader<'_, S> {
 			// info.scratch_data = vk::DeviceOrHostAddressKHR {
 			// 	device_address: scratch.addr(),
 			// };
-			//
+
 			// let buf = self.ctx.get_buf::<Compute>();
 			// ext.cmd_build_acceleration_structures(buf, &[info], &[&ranges]);
 			//
 			// self.ctx.delete::<Compute>(scratch);
 			// self.ctx.delete::<Compute>(raw_mesh);
-			//
-			// as_
-			AS::default()
+
+			as_
 		};
 
 		Ok(RRef::new(

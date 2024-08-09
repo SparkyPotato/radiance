@@ -7,6 +7,7 @@ use radiance_graph::{
 	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
 	Result,
 };
+use radiance_shader_compiler::c_str;
 
 pub struct DebugMeshlets {
 	pipeline: vk::Pipeline,
@@ -34,8 +35,12 @@ impl DebugMeshlets {
 			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
 				layout,
 				shaders: &[
-					device.shader("radiance-graph/graph/util/screen", vk::ShaderStageFlags::VERTEX, None),
-					device.shader("radiance-passes/debug/meshlet", vk::ShaderStageFlags::FRAGMENT, None),
+					device.shader(c_str!("radiance-graph/util/screen"), vk::ShaderStageFlags::VERTEX, None),
+					device.shader(
+						c_str!("radiance-passes/debug/meshlet"),
+						vk::ShaderStageFlags::FRAGMENT,
+						None,
+					),
 				],
 				raster: &no_cull(),
 				blend: &simple_blend(&[no_blend()]),

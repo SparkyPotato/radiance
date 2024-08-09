@@ -1,7 +1,6 @@
 use std::{ffi::CString, hash::Hash, ops::BitOr, ptr::NonNull};
 
 use ash::vk;
-use bytemuck::{cast_slice, cast_slice_mut, AnyBitPattern, NoUninit};
 use gpu_allocator::{
 	vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
 	MemoryLocation,
@@ -9,7 +8,7 @@ use gpu_allocator::{
 
 use crate::{
 	device::{
-		descriptor::{ASId, ImageId, StorageImageId},
+		descriptor::{ASId, BufferId, ImageId, StorageImageId},
 		Device,
 		Queues,
 	},
@@ -71,15 +70,8 @@ impl ToNamed for BufferDescUnnamed {
 pub struct BufferHandle {
 	pub buffer: vk::Buffer,
 	pub addr: u64,
+	pub id: Option<BufferId>,
 	pub data: NonNull<[u8]>,
-}
-
-impl BufferHandle {
-	pub fn as_gpu<T: NoUninit + AnyBitPattern>(&self) -> *mut T { self.addr as _ }
-
-	pub unsafe fn as_cpu<T: NoUninit + AnyBitPattern>(&self) -> &[T] { cast_slice(self.data.as_ref()) }
-
-	pub unsafe fn as_cpu_mut<T: NoUninit + AnyBitPattern>(&mut self) -> &mut [T] { cast_slice_mut(self.data.as_mut()) }
 }
 
 impl Default for BufferHandle {
@@ -87,6 +79,7 @@ impl Default for BufferHandle {
 		Self {
 			buffer: vk::Buffer::null(),
 			addr: 0,
+			id: None,
 			data: unsafe { NonNull::new_unchecked(std::slice::from_raw_parts_mut(std::ptr::dangling_mut(), 0)) },
 		}
 	}
@@ -97,6 +90,7 @@ impl Default for BufferHandle {
 pub struct Buffer {
 	inner: vk::Buffer,
 	alloc: Allocation,
+	id: Option<BufferId>,
 	addr: u64,
 }
 
@@ -111,6 +105,8 @@ impl Buffer {
 			))
 		}
 	}
+
+	pub fn id(&self) -> Option<BufferId> { self.id }
 
 	pub fn inner(&self) -> vk::Buffer { self.inner }
 
@@ -134,6 +130,7 @@ impl Resource for Buffer {
 			buffer: self.inner,
 			addr: self.addr,
 			data: self.data(),
+			id: self.id,
 		}
 	}
 
@@ -142,20 +139,20 @@ impl Resource for Buffer {
 		Self: Sized,
 	{
 		unsafe {
+			let info = vk::BufferCreateInfo::default()
+				.size(desc.size)
+				.usage(desc.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
+				.sharing_mode(vk::SharingMode::CONCURRENT);
+
+			let usage = info.usage;
 			let Queues {
 				graphics,
 				compute,
 				transfer,
 			} = device.queue_families();
-			let usage = desc.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS;
-			let buffer = device.device().create_buffer(
-				&vk::BufferCreateInfo::default()
-					.size(desc.size)
-					.usage(usage)
-					.sharing_mode(vk::SharingMode::CONCURRENT)
-					.queue_family_indices(&[graphics, compute, transfer]),
-				None,
-			)?;
+			let buffer = device
+				.device()
+				.create_buffer(&info.queue_family_indices(&[graphics, compute, transfer]), None)?;
 
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
@@ -181,6 +178,9 @@ impl Resource for Buffer {
 				.device()
 				.bind_buffer_memory(buffer, alloc.memory(), alloc.offset())?;
 
+			let id = usage
+				.contains(vk::BufferUsageFlags::STORAGE_BUFFER)
+				.then(|| device.descriptors().get_buffer(device, buffer));
 			let addr = device
 				.device()
 				.get_buffer_device_address(&vk::BufferDeviceAddressInfo::default().buffer(buffer));
@@ -188,12 +188,17 @@ impl Resource for Buffer {
 			Ok(Self {
 				inner: buffer,
 				alloc,
+				id,
 				addr,
 			})
 		}
 	}
 
 	unsafe fn destroy(self, device: &Device) {
+		if let Some(id) = self.id {
+			device.descriptors().return_buffer(id);
+		}
+
 		let _ = device.allocator().free(self.alloc);
 		device.device().destroy_buffer(self.inner, None);
 	}
@@ -261,11 +266,6 @@ impl Resource for Image {
 
 	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
-			let Queues {
-				graphics,
-				compute,
-				transfer,
-			} = device.queue_families();
 			let image = device.device().create_image(
 				&vk::ImageCreateInfo::default()
 					.flags(desc.flags)
@@ -282,8 +282,8 @@ impl Resource for Image {
 					.array_layers(desc.layers)
 					.samples(desc.samples)
 					.usage(desc.usage)
-					.sharing_mode(vk::SharingMode::CONCURRENT)
-					.queue_family_indices(&[graphics, compute, transfer])
+					.sharing_mode(vk::SharingMode::EXCLUSIVE) // TODO: exclusive for attachments,
+					// concurrent for others.
 					.initial_layout(vk::ImageLayout::UNDEFINED),
 				None,
 			)?;

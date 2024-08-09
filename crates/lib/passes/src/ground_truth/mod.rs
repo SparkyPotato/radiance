@@ -1,10 +1,10 @@
 use std::io::Write;
 
 use ash::vk;
-use bytemuck::{bytes_of, AnyBitPattern, NoUninit};
+use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
 	device::{
-		descriptor::{ASId, SamplerId, StorageImageId},
+		descriptor::{ASId, BufferId, SamplerId, StorageImageId},
 		Device,
 	},
 	graph::{
@@ -23,13 +23,13 @@ use radiance_graph::{
 	sync::Shader,
 	Result,
 };
+use radiance_shader_compiler::c_str;
 use vek::{Mat4, Vec2};
 
 use crate::{
 	asset::{
-		material::GpuMaterial,
 		rref::{RRef, RWeak},
-		scene::{GpuInstance, Scene},
+		scene::Scene,
 	},
 	mesh::visbuffer::Camera,
 };
@@ -37,7 +37,7 @@ use crate::{
 #[derive(Clone)]
 pub struct RenderInfo {
 	pub scene: RRef<Scene>,
-	pub materials: *mut GpuMaterial,
+	pub materials: BufferId,
 	pub camera: Camera,
 	pub size: Vec2<u32>,
 }
@@ -64,22 +64,20 @@ struct PassIO {
 	info: RenderInfo,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 struct PushConstants {
 	out: StorageImageId,
 	samples: u32,
-	camera: *mut CameraData,
-	instances: *mut GpuInstance,
-	materials: *mut GpuMaterial,
+	camera: BufferId,
+	instances: BufferId,
+	materials: BufferId,
 	tlas: ASId,
 	sampler: SamplerId,
 	seed: u32,
 }
 
-unsafe impl NoUninit for PushConstants {}
-
-#[derive(Copy, Clone, NoUninit, AnyBitPattern)]
+#[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 struct CameraData {
 	view: Mat4<f32>,
@@ -113,22 +111,22 @@ impl GroundTruth {
 						.flags(vk::PipelineCreateFlags::empty())
 						.stages(&[
 							device.shader(
-								"radiance-passes/ground_truth/gen",
+								c_str!("radiance-passes/ground_truth/gen"),
 								vk::ShaderStageFlags::RAYGEN_KHR,
 								None,
 							),
 							device.shader(
-								"radiance-passes/ground_truth/miss",
+								c_str!("radiance-passes/ground_truth/miss"),
 								vk::ShaderStageFlags::MISS_KHR,
 								None,
 							),
 							device.shader(
-								"radiance-passes/ground_truth/shadow",
+								c_str!("radiance-passes/ground_truth/shadow"),
 								vk::ShaderStageFlags::MISS_KHR,
 								None,
 							),
 							device.shader(
-								"radiance-passes/ground_truth/hit",
+								c_str!("radiance-passes/ground_truth/hit"),
 								vk::ShaderStageFlags::CLOSEST_HIT_KHR,
 								None,
 							),
@@ -376,7 +374,7 @@ impl GroundTruth {
 				bytes_of(&PushConstants {
 					out: write.storage_id.unwrap(),
 					samples: self.samples,
-					camera: camera.as_gpu(),
+					camera: camera.id.unwrap(),
 					instances: io.info.scene.instances(),
 					materials: io.info.materials,
 					tlas: io.info.scene.acceleration_structure(),

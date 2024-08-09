@@ -7,6 +7,7 @@ use radiance_graph::{
 	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
 	Result,
 };
+use radiance_shader_compiler::c_str;
 
 pub struct AcesTonemap {
 	pipeline: vk::Pipeline,
@@ -34,8 +35,12 @@ impl AcesTonemap {
 			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
 				layout,
 				shaders: &[
-					device.shader("radiance-graph/graph/util/screen", vk::ShaderStageFlags::VERTEX, None),
-					device.shader("radiance-passes/tonemap/aces", vk::ShaderStageFlags::FRAGMENT, None),
+					device.shader(c_str!("radiance-graph/util/screen"), vk::ShaderStageFlags::VERTEX, None),
+					device.shader(
+						c_str!("radiance-passes/tonemap/aces"),
+						vk::ShaderStageFlags::FRAGMENT,
+						None,
+					),
 				],
 				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
 				raster: &no_cull(),

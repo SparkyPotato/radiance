@@ -18,7 +18,7 @@ use egui::{
 use radiance_graph::{
 	arena::{Arena, IteratorAlloc},
 	device::{
-		descriptor::{ImageId, SamplerId},
+		descriptor::{BufferId, ImageId, SamplerId},
 		Device,
 	},
 	graph::{
@@ -39,7 +39,10 @@ use radiance_graph::{
 	util::pipeline::{default_blend, no_cull, simple_blend, GraphicsPipelineDesc},
 	Result,
 };
-use radiance_shader_compiler::runtime::{shader, ShaderBlob};
+use radiance_shader_compiler::{
+	c_str,
+	runtime::{shader, ShaderBlob},
+};
 use rustc_hash::FxHashMap;
 use tracing::{span, Level};
 use vek::{Clamp, Vec2};
@@ -70,13 +73,11 @@ struct PassIO {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, NoUninit)]
 struct PushConstantsStatic {
 	screen_size: Vec2<f32>,
-	vertex_buffer: *mut Vertex,
+	vertex_buffer: BufferId,
 }
-
-unsafe impl NoUninit for PushConstantsStatic {}
 
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
@@ -91,20 +92,26 @@ impl Renderer {
 			let layout = device.device().create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange {
-						stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-						offset: 0,
-						size: std::mem::size_of::<PushConstantsStatic>() as u32
-							+ std::mem::size_of::<PushConstantsDynamic>() as u32,
-					}]),
+					.push_constant_ranges(&[
+						vk::PushConstantRange {
+							stage_flags: vk::ShaderStageFlags::VERTEX,
+							offset: 0,
+							size: std::mem::size_of::<PushConstantsStatic>() as u32,
+						},
+						vk::PushConstantRange {
+							stage_flags: vk::ShaderStageFlags::FRAGMENT,
+							offset: std::mem::size_of::<PushConstantsStatic>() as u32,
+							size: std::mem::size_of::<PushConstantsDynamic>() as u32,
+						},
+					]),
 				None,
 			)?;
 
 			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
 				layout,
 				shaders: &[
-					device.shader("radiance-egui/vertex", vk::ShaderStageFlags::VERTEX, None),
-					device.shader("radiance-egui/pixel", vk::ShaderStageFlags::FRAGMENT, None),
+					device.shader(c_str!("radiance-egui/vertex"), vk::ShaderStageFlags::VERTEX, None),
+					device.shader(c_str!("radiance-egui/pixel"), vk::ShaderStageFlags::FRAGMENT, None),
 				],
 				color_attachments: &[vk::Format::B8G8R8A8_UNORM],
 				blend: &simple_blend(&[default_blend()]),
@@ -282,11 +289,11 @@ impl Renderer {
 		pass.device.device().cmd_push_constants(
 			pass.buf,
 			self.layout,
-			vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+			vk::ShaderStageFlags::VERTEX,
 			0,
 			bytes_of(&PushConstantsStatic {
 				screen_size: screen.physical_size.map(|x| x as f32) / screen.scaling,
-				vertex_buffer: vertex.as_gpu(),
+				vertex_buffer: vertex.id.unwrap(),
 			}),
 		);
 		pass.device
@@ -335,7 +342,7 @@ impl Renderer {
 					pass.device.device().cmd_push_constants(
 						pass.buf,
 						self.layout,
-						vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+						vk::ShaderStageFlags::FRAGMENT,
 						std::mem::size_of::<PushConstantsStatic>() as u32,
 						bytes_of(&PushConstantsDynamic { image, sampler }),
 					);
