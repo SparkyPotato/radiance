@@ -273,34 +273,34 @@ impl<S: AssetSource> Loader<'_, S> {
 		}
 
 		let acceleration_structure = unsafe {
-			let ext = self.device.as_ext();
+			// let ext = self.device.as_ext();
+			//
+			// let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+			// 	.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
+			// 	.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+			// 	.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+			// 	// .geometries(&geo);
+			// 	.geometries(&[]);
+			//
+			// let mut size = Default::default();
+			// ext.get_acceleration_structure_build_sizes(
+			// 	vk::AccelerationStructureBuildTypeKHR::DEVICE,
+			// 	&info,
+			// 	// &counts,
+			// 	&[],
+			// 	&mut size,
+			// );
 
-			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-				.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
-				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-				// .geometries(&geo);
-				.geometries(&[]);
-
-			let mut size = Default::default();
-			ext.get_acceleration_structure_build_sizes(
-				vk::AccelerationStructureBuildTypeKHR::DEVICE,
-				&info,
-				// &counts,
-				&[],
-				&mut size,
-			);
-
-			let as_ = AS::create(
-				self.device,
-				ASDesc {
-					name: &format!("{name} AS"),
-					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
-					ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-					size: size.acceleration_structure_size,
-				},
-			)
-			.map_err(LoadError::Vulkan)?;
+			// let as_ = AS::create(
+			// 	self.device,
+			// 	ASDesc {
+			// 		name: &format!("{name} AS"),
+			// 		flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
+			// 		ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+			// 		size: size.acceleration_structure_size,
+			// 	},
+			// )
+			// .map_err(LoadError::Vulkan)?;
 
 			// let scratch = Buffer::create(
 			// 	self.device,
@@ -325,7 +325,8 @@ impl<S: AssetSource> Loader<'_, S> {
 			// self.ctx.delete::<Compute>(scratch);
 			// self.ctx.delete::<Compute>(raw_mesh);
 
-			as_
+			// as_
+			AS::default()
 		};
 
 		Ok(RRef::new(

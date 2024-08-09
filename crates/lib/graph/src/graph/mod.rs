@@ -186,7 +186,6 @@ impl Frame<'_, '_> {
 
 				let buf = submitter.pass(device)?;
 
-				#[cfg(debug_assertions)]
 				unsafe {
 					if let Some(debug) = device.debug_utils_ext() {
 						debug.cmd_begin_debug_utils_label(
@@ -207,7 +206,6 @@ impl Frame<'_, '_> {
 					caches: &mut graph.caches,
 				});
 
-				#[cfg(debug_assertions)]
 				unsafe {
 					if let Some(debug) = device.debug_utils_ext() {
 						debug.cmd_end_debug_utils_label(buf);

@@ -293,7 +293,7 @@ impl<S: AssetSource> Loader<'_, S> {
 		}
 
 		let acceleration_structure = unsafe {
-			let ext = self.device.as_ext();
+			// let ext = self.device.as_ext();
 
 			// let geo = [vk::AccelerationStructureGeometryKHR::default()
 			// 	.geometry_type(vk::GeometryTypeKHR::INSTANCES)
@@ -305,33 +305,33 @@ impl<S: AssetSource> Loader<'_, S> {
 			// 			}),
 			// 	})
 			// 	.flags(vk::GeometryFlagsKHR::OPAQUE)];
-			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-				.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
-				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-				// .geometries(&geo);
-				.geometries(&[]);
-
-			let count = nodes.len() as u32;
-			let mut size = Default::default();
-			ext.get_acceleration_structure_build_sizes(
-				vk::AccelerationStructureBuildTypeKHR::DEVICE,
-				&info,
-				// &[count],
-				&[],
-				&mut size,
-			);
-
-			let as_ = AS::create(
-				self.device,
-				ASDesc {
-					name: &format!("{name} AS"),
-					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
-					ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-					size: size.acceleration_structure_size,
-				},
-			)
-			.map_err(LoadError::Vulkan)?;
+			// let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+			// 	.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
+			// 	.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+			// 	.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+			// 	// .geometries(&geo);
+			// 	.geometries(&[]);
+			//
+			// let count = nodes.len() as u32;
+			// let mut size = Default::default();
+			// ext.get_acceleration_structure_build_sizes(
+			// 	vk::AccelerationStructureBuildTypeKHR::DEVICE,
+			// 	&info,
+			// 	// &[count],
+			// 	&[],
+			// 	&mut size,
+			// );
+			//
+			// let as_ = AS::create(
+			// 	self.device,
+			// 	ASDesc {
+			// 		name: &format!("{name} AS"),
+			// 		flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
+			// 		ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+			// 		size: size.acceleration_structure_size,
+			// 	},
+			// )
+			// .map_err(LoadError::Vulkan)?;
 
 			// let scratch = Buffer::create(
 			// 	self.device,
@@ -367,7 +367,8 @@ impl<S: AssetSource> Loader<'_, S> {
 			// self.ctx.delete::<Compute>(temp_build_buffer);
 			// self.ctx.delete::<Compute>(scratch);
 
-			as_
+			// as_
+			AS::default()
 		};
 
 		// struct Gen<'a> {

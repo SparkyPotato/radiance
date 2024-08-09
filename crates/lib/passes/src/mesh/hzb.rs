@@ -62,9 +62,12 @@ impl HzbGen {
 					.mag_filter(vk::Filter::LINEAR)
 					.min_filter(vk::Filter::LINEAR)
 					.mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+					.address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+					.address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+					.address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
 					.push_next(
 						&mut vk::SamplerReductionModeCreateInfo::default()
-							.reduction_mode(vk::SamplerReductionMode::MAX),
+							.reduction_mode(vk::SamplerReductionMode::MIN),
 					),
 				None,
 			)?;

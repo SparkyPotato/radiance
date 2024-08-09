@@ -2,11 +2,15 @@
 
 #include "radiance-graph/interface.l.hlsl"
 
+[[vk::binding(2, 0)]] globallycoherent RWTexture2D<f32> Coherents[];
+
 struct PushConstants {
 	Tex2D depth;
 	Sampler s;
 	Buf<u32> atomic;
-	STex2D<NonUniform> outs[12];
+	STex2D<NonUniform> out1[5];
+	u32 out5;
+	STex2D<NonUniform> out2[6];
 	u32 mips;
 	u32 workgroups;
 	f32 inv_size[2];
@@ -24,18 +28,34 @@ f32 load_src(uint2 p) {
 }
 
 f32 load(uint2 p) {
-	uint2 dim = Constants.outs[5].dimensions();
+	uint w, h, _;
+	Coherents[Constants.out5].GetDimensions(w, h);
+	uint2 dim = uint2(w, h);
 	if (all(p < dim)) {
-		return Constants.outs[5].load(p).x;
+		return Coherents[NonUniformResourceIndex(Constants.out5)].Load(p);
 	} else {
 		return 0.f;
 	}
 }
 
 void store(uint2 p, f32 v, u32 mip) {
-	uint2 dim = Constants.outs[mip].dimensions();
-	if (all(p < dim)) {
-		Constants.outs[mip].store(p, v);
+	if (mip < 5) {
+		uint2 dim = Constants.out1[mip].dimensions();
+		if (all(p < dim)) {
+			Constants.out1[mip].store(p, v);
+		}
+	} else if (mip == 5) {
+		uint w, h, _;
+		Coherents[Constants.out5].GetDimensions(w, h);
+		uint2 dim = uint2(w, h);
+		if (all(p < dim)) {
+			Coherents[NonUniformResourceIndex(Constants.out5)][p] = v;
+		}
+	} else {
+		uint2 dim = Constants.out2[mip - 6].dimensions();
+		if (all(p < dim)) {
+			Constants.out2[mip - 6].store(p, v);
+		}
 	}
 }
 
@@ -48,7 +68,7 @@ bool should_exit(u32 lid) {
 }
 
 f32 reduce4(f32 v0, f32 v1, f32 v2, f32 v3) {
-	return max(max(v0, v1), max(v2, v3));
+	return min(min(v0, v1), min(v2, v3));
 }
 
 f32 reduce_load4(uint2 base) {
@@ -61,11 +81,11 @@ f32 reduce_load4(uint2 base) {
 }
 
 f32 reduce_quad(f32 v) {
-	u32 quad = WaveGetLaneIndex() & (~3);
+	u32 quad = WaveGetLaneIndex() & (~0x3);
 	f32 v0 = v;
-	f32 v1 = WaveReadLaneAt(v, quad | 1).x;
-	f32 v2 = WaveReadLaneAt(v, quad | 2).x;
-	f32 v3 = WaveReadLaneAt(v, quad | 3).x;
+	f32 v1 = WaveReadLaneAt(v, quad | 1);
+	f32 v2 = WaveReadLaneAt(v, quad | 2);
+	f32 v3 = WaveReadLaneAt(v, quad | 3);
 	return reduce4(v0, v1, v2, v3);
 }
 
@@ -125,7 +145,7 @@ void downsample_2(u32 x, u32 y, uint2 gid, u32 lid, u32 mip) {
 
 void downsample_3(u32 x, u32 y, uint2 gid, u32 lid, u32 mip) {
 	if (lid < 64) {
-		f32 v = inter[x * 2 + y / 2][y * 2];
+		f32 v = inter[x * 2 + (y & 1)][y * 2];
 		v = reduce_quad(v);
 		if ((lid & 3) == 0) {
 			store(gid * 4 + uint2(x / 2, y / 2), v, mip);
