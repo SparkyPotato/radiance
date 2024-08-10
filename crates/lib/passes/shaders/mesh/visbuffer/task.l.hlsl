@@ -32,7 +32,7 @@ float4 transform_sphere(float4x4 mv, float4 sphere) {
 bool occlusion_cull(Camera camera, float4x4 transform, float4 sphere) {
     float4x4 mv = mul(camera.view, transform); 
     float4 s = transform_sphere(mv, sphere);
-    // if (s.z < s.w + camera.near) return true;
+    if (s.z < s.w + camera.near) return true;
 
     float3 cr = s.xyz * s.w;
     f32 czr2 = s.z * s.z - s.w * s.w;

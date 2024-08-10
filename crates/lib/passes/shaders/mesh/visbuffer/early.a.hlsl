@@ -20,8 +20,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
         bool visible = decide_lod(camera.h, group_error, parent_error);
         visible = visible && frustum_cull(camera.frustum, camera.near, sphere);
         if (visible) {
-            // if (occlusion_cull(Constants.camera.load(1), transform, float4(meshlet.bounding))) {
-            if (true) {
+            if (occlusion_cull(Constants.camera.load(1), transform, float4(meshlet.bounding))) {
                 u32 index;
                 InterlockedAdd(MeshletEmitCount, 1, index);
                 Payload.pointers[index].pointer = pointer;

@@ -365,7 +365,11 @@ impl VisBuffer {
 					});
 					true
 				} else {
-					!scene.ptr_eq(&info.scene)
+					let r = !scene.ptr_eq(&info.scene);
+					if r {
+						*scene = info.scene.clone();
+					}
+					r
 				}
 			},
 			None => {
@@ -403,7 +407,7 @@ impl VisBuffer {
 		};
 		let culled = pass.resource(
 			BufferDesc {
-				size: std::mem::size_of::<GpuMeshletPointer>() as u64 * (info.scene.meshlet_pointer_count() + 4) as u64,
+				size: (info.scene.meshlet_pointer_count() + 4) as u64 * std::mem::size_of::<u32>() as u64,
 				upload: false,
 			},
 			BufferUsage {
