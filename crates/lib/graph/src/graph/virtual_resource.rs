@@ -117,6 +117,7 @@ pub struct ExternalBuffer {
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ExternalImage {
 	pub handle: vk::Image,
+	pub layout: vk::ImageLayout,
 	pub desc: ImageDesc,
 }
 
@@ -186,7 +187,7 @@ pub struct GpuData<'graph, D, H, U> {
 }
 
 pub type BufferData<'graph> = GpuData<'graph, BufferDesc, BufferHandle, BufferUsageOwned<&'graph Arena>>;
-pub type ImageData<'graph> = GpuData<'graph, ImageDesc, vk::Image, ImageUsageOwned<&'graph Arena>>;
+pub type ImageData<'graph> = GpuData<'graph, ImageDesc, (vk::Image, vk::ImageLayout), ImageUsageOwned<&'graph Arena>>;
 
 #[derive(Clone)]
 pub enum VirtualResourceType<'graph> {
@@ -273,7 +274,7 @@ impl VirtualResource for ImageView {
 				.get(
 					device,
 					ImageViewDescUnnamed {
-						image: image.handle,
+						image: image.handle.0,
 						size: image.desc.size,
 						view_type,
 						format: if usage.format == vk::Format::UNDEFINED {
@@ -300,7 +301,7 @@ impl VirtualResource for ImageView {
 				.expect("Failed to create image view")
 		} else {
 			ImageView {
-				image: image.handle,
+				image: image.handle.0,
 				view: vk::ImageView::null(),
 				id: None,
 				storage_id: None,
@@ -373,7 +374,7 @@ impl VirtualResourceDesc for ExternalImage {
 		);
 		VirtualResourceType::Image(ImageData {
 			desc: self.desc,
-			handle: self.handle,
+			handle: (self.handle, self.layout),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
 		})
@@ -399,7 +400,7 @@ impl VirtualResourceDesc for SwapchainImage {
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
 			},
-			handle: self.handle,
+			handle: (self.handle, vk::ImageLayout::UNDEFINED),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: Some((self.available, self.rendered)),
 		})

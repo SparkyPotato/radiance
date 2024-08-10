@@ -495,6 +495,11 @@ impl Renderer {
 					"upload ui image",
 					ExternalImage {
 						handle: image.handle(),
+						layout: if data.pos.is_some() {
+							vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
+						} else {
+							vk::ImageLayout::UNDEFINED
+						},
 						desc: image.desc(),
 					},
 					stage,

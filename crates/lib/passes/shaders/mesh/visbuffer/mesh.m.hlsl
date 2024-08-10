@@ -24,8 +24,7 @@ void main(
     u32 tri_count = (meshlet.vert_and_tri_count >> 8) & 0xff;
     SetMeshOutputCounts(vert_count, tri_count);
 
-    float4x4 transform = instance.get_transform();
-    float4x4 mvp = mul(camera.view_proj, transform);
+    float4x4 mvp = mul(camera.view_proj, instance.get_transform());
 
     // 64 threads per group and upto 64 vertices per meshlet.
     if (gtid < vert_count) {

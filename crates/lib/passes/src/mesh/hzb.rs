@@ -90,7 +90,7 @@ impl HzbGen {
 			depth,
 			ImageUsage {
 				format: vk::Format::D32_SFLOAT,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
+				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Compute)],
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource {
 					aspect: vk::ImageAspectFlags::DEPTH,

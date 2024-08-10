@@ -1,3 +1,5 @@
+use ash::vk;
+
 use crate::{
 	device::Device,
 	graph::{self, Deletable, ExternalBuffer, ExternalImage},
@@ -47,28 +49,36 @@ impl Deletable for PersistentBuffer {
 
 pub struct PersistentImage {
 	images: [Image; 2],
+	layout: vk::ImageLayout,
 	current: usize,
 }
 
 impl PersistentImage {
 	pub fn new(device: &Device, desc: ImageDesc) -> Result<Self> {
 		let images = [Image::create(device, desc)?, Image::create(device, desc)?];
-		Ok(Self { images, current: 0 })
+		Ok(Self {
+			images,
+			layout: vk::ImageLayout::UNDEFINED,
+			current: 0,
+		})
 	}
 
-	pub fn next(&mut self) -> (ExternalImage, ExternalImage) {
+	pub fn next(&mut self, final_layout: vk::ImageLayout) -> (ExternalImage, ExternalImage) {
 		let next = self.current ^ 1;
 		let read = &self.images[self.current];
 		let read = ExternalImage {
 			handle: read.handle(),
+			layout: self.layout,
 			desc: read.desc(),
 		};
 		let write = &self.images[next];
 		let write = ExternalImage {
 			handle: write.handle(),
+			layout: vk::ImageLayout::UNDEFINED,
 			desc: write.desc(),
 		};
 		self.current = next;
+		self.layout = final_layout;
 		(read, write)
 	}
 

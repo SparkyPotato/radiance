@@ -63,13 +63,10 @@ impl ShaderBuilder {
 				"-fspv-target-env=vulkan1.3",
 				"-HV 2021",
 				"-enable-16bit-types",
+				"-ffinite-math-only",
 			]
 			.into_iter()
-			.chain(
-				if self.debug { Some(["-Zi", "-Od"]) } else { None }
-					.into_iter()
-					.flatten(),
-			)
+			.chain(self.debug.then_some("-Zi"))
 			.map(|x| x.to_string())
 			.chain(Some(format!("-T {}", ty.target_profile())))
 			.collect();
@@ -289,4 +286,3 @@ impl ShaderType {
 		}
 	}
 }
-

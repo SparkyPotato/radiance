@@ -29,7 +29,7 @@ use radiance_graph::{
 	Result,
 };
 use radiance_shader_compiler::c_str;
-use vek::{Mat4, Vec2};
+use vek::{Mat4, Vec2, Vec4};
 
 use crate::{
 	asset::{
@@ -78,8 +78,11 @@ struct CameraData {
 	w: f32,
 	h: f32,
 	near: f32,
-	_pad: [f32; 13],
+	_pad: f32,
+	frustum: Vec4<f32>,
 }
+
+fn normalize_plane(p: Vec4<f32>) -> Vec4<f32> { p / p.xyz().magnitude() }
 
 impl CameraData {
 	fn new(aspect: f32, camera: Camera) -> Self {
@@ -95,13 +98,19 @@ impl CameraData {
 		let view = camera.view;
 		let view_proj = proj * view;
 
+		let pt = proj.transposed();
+		let px = normalize_plane(pt.cols[3] + pt.cols[0]);
+		let py = normalize_plane(pt.cols[3] + pt.cols[1]);
+		let frustum = Vec4::new(px.x, px.z, py.y, py.z);
+
 		Self {
 			view,
 			view_proj,
 			w,
 			h,
 			near,
-			_pad: [0.0; 13],
+			_pad: 0.0,
+			frustum,
 		}
 	}
 }
@@ -191,8 +200,22 @@ impl VisBuffer {
 
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
 		let (hzb, culled, prev_camera) = self.init_persistent(frame, &info);
+		self.persistent.as_mut().unwrap().camera = info.camera;
 
 		let mut pass = frame.pass("visbuffer early");
+		let usage = ImageUsage {
+			format: vk::Format::R32_SFLOAT,
+			usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Task)],
+			view_type: Some(vk::ImageViewType::TYPE_2D),
+			subresource: Subresource::default(),
+		};
+		let hzb = match hzb {
+			Ok(hzb) => {
+				pass.reference(hzb, usage);
+				hzb
+			},
+			Err(hzb) => pass.resource(hzb, usage),
+		};
 		let c = pass.resource(
 			BufferDesc {
 				size: std::mem::size_of::<CameraData>() as u64 * 2,
@@ -208,7 +231,10 @@ impl VisBuffer {
 		pass.reference(
 			culled,
 			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Task)],
+				usages: &[
+					BufferUsageType::ShaderStorageRead(Shader::Task),
+					BufferUsageType::ShaderStorageWrite(Shader::Task),
+				],
 			},
 		);
 		let desc = ImageDesc {
@@ -244,15 +270,6 @@ impl VisBuffer {
 					aspect: vk::ImageAspectFlags::DEPTH,
 					..Default::default()
 				},
-			},
-		);
-		pass.reference(
-			hzb,
-			ImageUsage {
-				format: vk::Format::R32_SFLOAT,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Task)],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
 			},
 		);
 
@@ -318,7 +335,7 @@ impl VisBuffer {
 			hzb,
 			ImageUsage {
 				format: vk::Format::R32_SFLOAT,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
+				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Task)],
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource::default(),
 			},
@@ -327,22 +344,16 @@ impl VisBuffer {
 
 		this.hzb_gen.run(frame, depth, hzb);
 
-		let mut pass = frame.pass("hzb layout transition");
-		pass.reference(
-			hzb,
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Task)],
-				view_type: None,
-				subresource: Subresource::default(),
-			},
-		);
-		pass.build(|_| {});
-
 		visbuffer
 	}
 
-	fn init_persistent(&mut self, frame: &mut Frame, info: &RenderInfo) -> (Res<ImageView>, Res<BufferHandle>, Camera) {
+	fn init_persistent(
+		&mut self, frame: &mut Frame, info: &RenderInfo,
+	) -> (
+		std::result::Result<Res<ImageView>, ExternalImage>,
+		Res<BufferHandle>,
+		Camera,
+	) {
 		let needs_clear = match &mut self.persistent {
 			Some(Persistent { scene, hzb, .. }) => {
 				if hzb.desc().size.width != info.size.x / 2 || hzb.desc().size.height != info.size.y / 2 {
@@ -368,31 +379,27 @@ impl VisBuffer {
 		};
 
 		let Persistent { camera, hzb, .. } = self.persistent.as_ref().unwrap();
-		let hzb = ExternalImage {
-			handle: hzb.handle(),
-			desc: hzb.desc(),
-		};
 		let mut pass = frame.pass("setup cull");
 		let hzb = if needs_clear {
-			pass.resource(
-				hzb,
+			Ok(pass.resource(
+				ExternalImage {
+					handle: hzb.handle(),
+					layout: vk::ImageLayout::UNDEFINED,
+					desc: hzb.desc(),
+				},
 				ImageUsage {
 					format: vk::Format::UNDEFINED,
 					usages: &[ImageUsageType::TransferWrite],
 					view_type: None,
 					subresource: Subresource::default(),
 				},
-			)
+			))
 		} else {
-			pass.resource(
-				hzb,
-				ImageUsage {
-					format: vk::Format::UNDEFINED,
-					usages: &[],
-					view_type: None,
-					subresource: Subresource::default(),
-				},
-			)
+			Err(ExternalImage {
+				handle: hzb.handle(),
+				layout: vk::ImageLayout::GENERAL,
+				desc: hzb.desc(),
+			})
 		};
 		let culled = pass.resource(
 			BufferDesc {
@@ -406,10 +413,10 @@ impl VisBuffer {
 		pass.build(move |mut ctx| unsafe {
 			let dev = ctx.device.device();
 			let buf = ctx.buf;
-			let hzb = ctx.get(hzb);
 			let culled = ctx.get(culled);
 
-			if needs_clear {
+			if let Ok(hzb) = hzb {
+				let hzb = ctx.get(hzb);
 				dev.cmd_clear_color_image(
 					buf,
 					hzb.image,
@@ -423,6 +430,7 @@ impl VisBuffer {
 						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
 				);
 			}
+
 			dev.cmd_update_buffer(buf, culled.buffer, 0, bytes_of(&[0u32, 0, 1, 1]));
 		});
 
@@ -461,12 +469,14 @@ impl VisBuffer {
 		let buf = pass.buf;
 
 		unsafe {
-			let mut writer = camera.data.as_mut();
-			let aspect = io.resolution.x as f32 / io.resolution.y as f32;
-			let cd = CameraData::new(aspect, io.camera_data);
-			let prev_cd = CameraData::new(aspect, io.prev_camera);
-			writer.write(bytes_of(&cd)).unwrap();
-			writer.write(bytes_of(&prev_cd)).unwrap();
+			if is_early {
+				let mut writer = camera.data.as_mut();
+				let aspect = io.resolution.x as f32 / io.resolution.y as f32;
+				let cd = CameraData::new(aspect, io.camera_data);
+				let prev_cd = CameraData::new(aspect, io.prev_camera);
+				writer.write(bytes_of(&cd)).unwrap();
+				writer.write(bytes_of(&prev_cd)).unwrap();
+			}
 
 			let area = vk::Rect2D::default().extent(vk::Extent2D {
 				width: visbuffer.size.width,
@@ -486,7 +496,9 @@ impl VisBuffer {
 							vk::AttachmentLoadOp::LOAD
 						})
 						.clear_value(vk::ClearValue {
-							color: vk::ClearColorValue { uint32: [0, 0, 0, 0] },
+							color: vk::ClearColorValue {
+								uint32: [u32::MAX, 0, 0, 0],
+							},
 						})
 						.store_op(vk::AttachmentStoreOp::STORE)])
 					.depth_attachment(

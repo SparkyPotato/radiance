@@ -224,7 +224,6 @@ impl Importer<'_> {
 		let s = trace_span!("generating meshlet graph");
 		let _e = s.enter();
 
-		// TODO: there are no shared edges because all vertices are deduped
 		let mut shared_edges = FxHashMap::default();
 		for mid in range.clone() {
 			let m = meshlets.inner.get(mid);

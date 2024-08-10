@@ -11,15 +11,17 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
         Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);
         Camera camera = Constants.camera.load(0);
 
-        float4 sphere = float4(meshlet.bounding);
         float4x4 transform = instance.get_transform();
         float4x4 mv = mul(camera.view, transform);
-        float4x4 mvp = mul(camera.view_proj, transform);
+        float4 sphere = transform_sphere(mv, float4(meshlet.bounding));
+        float4 group_error = transform_sphere(mv, float4(meshlet.group_error));
+        float4 parent_error = transform_sphere(mv, float4(meshlet.parent_error));
         
-        bool visible = decide_lod(mv, camera.h, float4(meshlet.group_error), float4(meshlet.parent_error));
-        visible = visible && frustum_cull(mvp, sphere);
+        bool visible = decide_lod(camera.h, group_error, parent_error);
+        visible = visible && frustum_cull(camera.frustum, camera.near, sphere);
         if (visible) {
-            if (occlusion_cull(Constants.camera.load(1), transform, sphere)) {
+            // if (occlusion_cull(Constants.camera.load(1), transform, float4(meshlet.bounding))) {
+            if (true) {
                 u32 index;
                 InterlockedAdd(MeshletEmitCount, 1, index);
                 Payload.pointers[index].pointer = pointer;

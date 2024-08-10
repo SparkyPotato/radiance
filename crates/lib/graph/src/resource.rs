@@ -266,6 +266,11 @@ impl Resource for Image {
 
 	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
+			let Queues {
+				graphics,
+				compute,
+				transfer,
+			} = device.queue_families();
 			let image = device.device().create_image(
 				&vk::ImageCreateInfo::default()
 					.flags(desc.flags)
@@ -282,8 +287,8 @@ impl Resource for Image {
 					.array_layers(desc.layers)
 					.samples(desc.samples)
 					.usage(desc.usage)
-					.sharing_mode(vk::SharingMode::EXCLUSIVE) // TODO: exclusive for attachments,
-					// concurrent for others.
+					.sharing_mode(vk::SharingMode::CONCURRENT)
+					.queue_family_indices(&[graphics, compute, transfer])
 					.initial_layout(vk::ImageLayout::UNDEFINED),
 				None,
 			)?;

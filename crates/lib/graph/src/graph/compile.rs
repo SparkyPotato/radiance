@@ -341,29 +341,32 @@ impl<'graph> ResourceAliaser<'graph> {
 
 				Resource::Image(data) => {
 					images.push(i as _);
-					if data.handle == vk::Image::null() {
+					if data.handle.0 == vk::Image::null() {
 						let flags = data
 							.usages
 							.values()
 							.any(|u| u.format != data.desc.format)
 							.then_some(vk::ImageCreateFlags::MUTABLE_FORMAT)
 							.unwrap_or_default();
-						data.handle = graph
-							.caches
-							.images
-							.get(
-								device,
-								crate::resource::ImageDescUnnamed {
-									flags,
-									format: data.desc.format,
-									size: data.desc.size,
-									levels: data.desc.levels,
-									layers: data.desc.layers,
-									samples: data.desc.samples,
-									usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
-								},
-							)
-							.expect("failed to allocate graph image");
+						data.handle = (
+							graph
+								.caches
+								.images
+								.get(
+									device,
+									crate::resource::ImageDescUnnamed {
+										flags,
+										format: data.desc.format,
+										size: data.desc.size,
+										levels: data.desc.levels,
+										layers: data.desc.layers,
+										samples: data.desc.samples,
+										usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
+									},
+								)
+								.expect("failed to allocate graph image"),
+							vk::ImageLayout::UNDEFINED,
+						);
 					}
 				},
 			}
@@ -383,7 +386,6 @@ struct SyncPair<T> {
 struct InProgressImageBarrier {
 	sync: SyncPair<AccessInfo>,
 	subresource: Subresource,
-	qfot: Option<u32>,
 }
 
 #[derive(Clone)]
@@ -406,14 +408,8 @@ struct InProgressSync<'graph> {
 	cross_queue: InProgressCrossQueueSync<'graph>,
 }
 
-enum Qfot {
-	From,
-	To,
-	None,
-}
-
 impl<'graph> InProgressDependencyInfo<'graph> {
-	fn finish(self, device: &Device, qfot: Qfot) -> DependencyInfo<'graph> {
+	fn finish(self, signal: bool, wait: bool) -> DependencyInfo<'graph> {
 		let arena = *self.barriers.allocator();
 		DependencyInfo {
 			barriers: self
@@ -421,15 +417,23 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 				.into_iter()
 				.map(|(s, a)| {
 					GlobalBarrierAccess {
-						previous_access: AccessInfo {
-							stage_mask: s.from,
-							access_mask: a.from,
-							image_layout: vk::ImageLayout::UNDEFINED,
+						previous_access: if !wait {
+							AccessInfo {
+								stage_mask: s.from,
+								access_mask: a.from,
+								image_layout: vk::ImageLayout::UNDEFINED,
+							}
+						} else {
+							AccessInfo::default()
 						},
-						next_access: AccessInfo {
-							stage_mask: s.to,
-							access_mask: a.to,
-							image_layout: vk::ImageLayout::UNDEFINED,
+						next_access: if !signal {
+							AccessInfo {
+								stage_mask: s.to,
+								access_mask: a.to,
+								image_layout: vk::ImageLayout::UNDEFINED,
+							}
+						} else {
+							AccessInfo::default()
 						},
 					}
 					.into()
@@ -439,28 +443,23 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 				.image_barriers
 				.into_iter()
 				.map(|(i, b)| {
-					let (src_queue_family_index, previous_access, dst_queue_family_index, next_access) = match qfot {
-						Qfot::From if b.qfot.is_some() => (
-							b.qfot.unwrap(),
-							AccessInfo::default(),
-							device.queue_families().graphics,
-							b.sync.to,
-						),
-						Qfot::To if b.qfot.is_some() => (
-							device.queue_families().graphics,
-							b.sync.from,
-							b.qfot.unwrap(),
-							AccessInfo::default(),
-						),
-						Qfot::None => {
-							debug_assert!(b.qfot.is_none(), "QFOT not allowed in main queue sync");
-							(0, b.sync.from, 0, b.sync.to)
-						},
-						_ => (0, b.sync.from, 0, b.sync.to),
-					};
 					ImageBarrierAccess {
-						previous_access,
-						next_access,
+						previous_access: if !wait {
+							b.sync.from
+						} else {
+							AccessInfo {
+								image_layout: b.sync.from.image_layout,
+								..Default::default()
+							}
+						},
+						next_access: if !signal {
+							b.sync.to
+						} else {
+							AccessInfo {
+								image_layout: b.sync.to.image_layout,
+								..Default::default()
+							}
+						},
 						image: i,
 						range: vk::ImageSubresourceRange {
 							aspect_mask: b.subresource.aspect,
@@ -469,8 +468,6 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 							base_mip_level: b.subresource.first_mip,
 							level_count: b.subresource.mip_count,
 						},
-						src_queue_family_index,
-						dst_queue_family_index,
 					}
 					.into()
 				})
@@ -480,26 +477,26 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 }
 
 impl<'graph> InProgressCrossQueueSync<'graph> {
-	fn finish(self, device: &Device) -> CrossQueueSync<'graph> {
+	fn finish(self) -> CrossQueueSync<'graph> {
 		CrossQueueSync {
 			signal: self.signal,
-			signal_barriers: self.signal_barriers.finish(device, Qfot::To),
+			signal_barriers: self.signal_barriers.finish(true, false),
 			wait: self.wait,
-			wait_barriers: self.wait_barriers.finish(device, Qfot::From),
+			wait_barriers: self.wait_barriers.finish(false, true),
 		}
 	}
 }
 
 impl<'graph> InProgressSync<'graph> {
-	fn finish(self, device: &Device) -> Sync<'graph> {
+	fn finish(self) -> Sync<'graph> {
 		let arena = *self.queue.barriers.allocator();
 		Sync {
 			queue: QueueSync {
-				barriers: self.queue.finish(device, Qfot::None),
+				barriers: self.queue.finish(false, false),
 				set_events: Vec::new_in(arena),
 				wait_events: Vec::new_in(arena),
 			},
-			cross_queue: self.cross_queue.finish(device),
+			cross_queue: self.cross_queue.finish(),
 		}
 	}
 }
@@ -547,13 +544,25 @@ impl<'graph> SyncBuilder<'graph> {
 		next_access: AccessInfo,
 	) {
 		let dep_info = self.get_dep_info(prev_pass, next_pass);
-		Self::insert_info(dep_info, image, subresource, prev_access, next_access, None);
+		Self::insert_info(dep_info, image, subresource, prev_access, next_access);
 	}
 
-	fn init_layout(&mut self, image: vk::Image, subresource: Subresource, access: AccessInfo) {
-		if access.image_layout != vk::ImageLayout::UNDEFINED {
+	fn init_layout(&mut self, image: vk::Image, layout: vk::ImageLayout, subresource: Subresource, access: AccessInfo) {
+		if image != vk::Image::null()
+			&& access.image_layout != vk::ImageLayout::UNDEFINED
+			&& access.image_layout != layout
+		{
 			let dep_info = &mut self.sync[Self::before_pass(0) as usize].queue;
-			Self::insert_info(dep_info, image, subresource, AccessInfo::default(), access, None);
+			Self::insert_info(
+				dep_info,
+				image,
+				subresource,
+				AccessInfo {
+					image_layout: layout,
+					..Default::default()
+				},
+				access,
+			);
 		}
 	}
 
@@ -571,7 +580,6 @@ impl<'graph> SyncBuilder<'graph> {
 			Subresource::default(),
 			AccessInfo::default(),
 			as_next,
-			None,
 		);
 		// Fire off the pass once the image is available.
 		cross_queue.wait.binary_semaphores.push(SyncStage {
@@ -588,7 +596,6 @@ impl<'graph> SyncBuilder<'graph> {
 			Subresource::default(),
 			as_prev,
 			get_access_info(UsageType::Present),
-			None,
 		);
 		// Fire off present once finished.
 		cross_queue.signal.push(SyncStage {
@@ -616,14 +623,14 @@ impl<'graph> SyncBuilder<'graph> {
 	#[inline]
 	fn insert_info(
 		dep_info: &mut InProgressDependencyInfo<'graph>, image: vk::Image, subresource: Subresource,
-		prev_access: AccessInfo, mut next_access: AccessInfo, qfot: Option<u32>,
+		prev_access: AccessInfo, mut next_access: AccessInfo,
 	) {
 		if next_access.stage_mask == vk::PipelineStageFlags2::empty() {
 			// Ensure that the stage masks are valid if no stages were determined
 			next_access.stage_mask = vk::PipelineStageFlags2::ALL_COMMANDS;
 		}
 
-		if prev_access.image_layout == next_access.image_layout && qfot.is_none() || image == vk::Image::null() {
+		if prev_access.image_layout == next_access.image_layout || image == vk::Image::null() {
 			// No transition or QFOT required, use a global barrier instead.
 			let access = dep_info
 				.barriers
@@ -643,7 +650,6 @@ impl<'graph> SyncBuilder<'graph> {
 						to: next_access,
 					},
 					subresource,
-					qfot,
 				},
 			);
 			debug_assert!(old.is_none(), "Multiple transitions for one image in a single pass");
@@ -658,11 +664,11 @@ impl<'graph> SyncBuilder<'graph> {
 		self, device: &Device, event_list: &mut ResourceList<crate::resource::Event>,
 	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
 		let arena = *self.sync.allocator();
-		let mut sync: Vec<Sync, _> = self.sync.into_iter().map(|x| x.finish(device)).collect_in(arena);
+		let mut sync: Vec<Sync, _> = self.sync.into_iter().map(InProgressSync::finish).collect_in(arena);
 
 		for (pair, info) in self.events {
 			let event = event_list.get_or_create(device, ())?;
-			let info = info.finish(device, Qfot::None);
+			let info = info.finish(false, false);
 
 			sync[pair.from as usize].queue.set_events.push(EventInfo {
 				event,
@@ -698,13 +704,13 @@ impl<A: Allocator> Usage for ImageUsageOwned<A> {
 }
 
 trait ToImage: Copy {
-	fn to_image(self) -> vk::Image;
+	fn to_image(self) -> (vk::Image, vk::ImageLayout);
 }
 impl ToImage for BufferHandle {
-	fn to_image(self) -> vk::Image { vk::Image::null() }
+	fn to_image(self) -> (vk::Image, vk::ImageLayout) { (vk::Image::null(), vk::ImageLayout::UNDEFINED) }
 }
-impl ToImage for vk::Image {
-	fn to_image(self) -> vk::Image { self }
+impl ToImage for (vk::Image, vk::ImageLayout) {
+	fn to_image(self) -> (vk::Image, vk::ImageLayout) { self }
 }
 
 struct Synchronizer<'temp, 'pass, 'graph> {
@@ -723,7 +729,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 			let (&pass, usage) = usages.next().unwrap();
 			assert!(usages.next().is_none(), "Swapchains can only be used in one pass");
 			sync.swapchain(
-				res.handle.to_image(),
+				res.handle.to_image().0,
 				pass,
 				usage.as_prev(),
 				usage.as_next(AccessInfo::default()),
@@ -735,11 +741,8 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 
 		let (&(mut prev_pass), usage) = usages.next().unwrap();
 		let mut prev_access = usage.as_prev();
-		sync.init_layout(
-			res.handle.to_image(),
-			usage.subresource(),
-			usage.as_next(AccessInfo::default()),
-		);
+		let (i, l) = res.handle.to_image();
+		sync.init_layout(i, l, usage.subresource(), usage.as_next(AccessInfo::default()));
 
 		while let Some((&pass, usage)) = usages.next() {
 			let next_pass = pass;
@@ -749,7 +752,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 			if usage.is_write() {
 				// We're a write, so we can't merge future passes into us.
 				sync.barrier(
-					res.handle.to_image(),
+					res.handle.to_image().0,
 					usage.subresource(),
 					prev_pass,
 					prev_access,
@@ -791,7 +794,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 				}
 
 				sync.barrier(
-					res.handle.to_image(),
+					res.handle.to_image().0,
 					subresource,
 					prev_pass,
 					prev_access,

@@ -17,9 +17,6 @@ use crate::{
 	Result,
 };
 
-const VALIDATION_LAYER: &'static CStr =
-	unsafe { CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0") };
-
 pub struct DeviceBuilder<'a> {
 	pub layers: &'a [&'static CStr],
 	pub instance_extensions: &'a [&'static CStr],

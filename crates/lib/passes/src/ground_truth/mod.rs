@@ -301,6 +301,7 @@ impl GroundTruth {
 		let write = pass.resource(
 			ExternalImage {
 				handle: self.accum.handle(),
+				layout: vk::ImageLayout::GENERAL,
 				desc: ImageDesc {
 					size,
 					levels: 1,

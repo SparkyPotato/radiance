@@ -56,5 +56,6 @@ struct Camera {
     f32 w;
     f32 h;
     f32 near;
-    f32 _pad[13];
+    f32 _pad;
+    float4 frustum;
 };
