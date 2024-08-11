@@ -53,8 +53,7 @@ bool occlusion_cull(Camera camera, float4x4 transform, float4 sphere) {
     f32 height = (aabb.w - aabb.y) * f32(Constants.height) / 2.f;
     f32 level = ceil(log2(max(width, height)));
     f32 depth = Constants.hzb.sample_mip(Constants.hzb_sampler, (aabb.xy + aabb.zw) * 0.5f, level).x;
-    f32 closest = camera.near / (s.z - s.w);
-    return closest >= depth;
+    return s.z - s.w < depth;
 }
 
 void payload_set(u32 index, u32 id) {

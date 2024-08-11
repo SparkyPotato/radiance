@@ -293,7 +293,7 @@ impl VisBuffer {
 		let this: &Self = self;
 		pass.build(move |ctx| this.execute(ctx, io, true));
 
-		this.hzb_gen.run(frame, depth, hzb);
+		this.hzb_gen.run(frame, depth, hzb, info.camera.near);
 
 		let mut pass = frame.pass("visbuffer late");
 		pass.reference(
@@ -346,7 +346,7 @@ impl VisBuffer {
 		);
 		pass.build(move |ctx| this.execute(ctx, io, false));
 
-		this.hzb_gen.run(frame, depth, hzb);
+		this.hzb_gen.run(frame, depth, hzb, info.camera.near);
 
 		visbuffer
 	}

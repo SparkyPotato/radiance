@@ -31,6 +31,7 @@ struct PushConstants {
 	mips: u32,
 	workgroups: u32,
 	inv_size: Vec2<f32>,
+	near: f32,
 }
 
 struct PassIO {
@@ -39,6 +40,7 @@ struct PassIO {
 	atomic: Res<BufferHandle>,
 	size: Vec2<u32>,
 	levels: u32,
+	near: f32,
 }
 
 impl HzbGen {
@@ -54,7 +56,7 @@ impl HzbGen {
 			)?;
 			let pipeline = device.compute_pipeline(
 				layout,
-				device.shader(c_str!("radiance-passes/mesh/spd"), vk::ShaderStageFlags::COMPUTE, None),
+				device.shader(c_str!("radiance-passes/mesh/hzb"), vk::ShaderStageFlags::COMPUTE, None),
 			)?;
 
 			let hzb_sample = device.device().create_sampler(
@@ -84,7 +86,9 @@ impl HzbGen {
 
 	pub fn sampler(&self) -> SamplerId { self.hzb_sample_id }
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, depth: Res<ImageView>, out: Res<ImageView>) {
+	pub fn run<'pass>(
+		&'pass self, frame: &mut Frame<'pass, '_>, depth: Res<ImageView>, out: Res<ImageView>, near: f32,
+	) {
 		let mut pass = frame.pass("generate hzb");
 		pass.reference(
 			depth,
@@ -135,6 +139,7 @@ impl HzbGen {
 					atomic,
 					size,
 					levels: desc.levels,
+					near,
 				},
 			)
 		});
@@ -207,6 +212,7 @@ impl HzbGen {
 					mips: io.levels,
 					workgroups: x * 2,
 					inv_size: io.size.map(|x| x as f32).recip(),
+					near: io.near,
 				}),
 			);
 			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
