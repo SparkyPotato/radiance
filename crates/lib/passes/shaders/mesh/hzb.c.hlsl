@@ -22,6 +22,13 @@ PUSH PushConstants Constants;
 groupshared f32 inter[16];
 groupshared bool is_last;
 
+[[vk::ext_capability(65 /* GroupNonUniformShuffle */)]]
+[[vk::ext_instruction(346 /* OpGroupNonUniformShuffleXor */)]]
+f32 GroupNonUniformShuffleXor(u32 scope, f32 value, u32 mask);
+f32 WaveShuffleXor(f32 value, u32 mask) {
+	return GroupNonUniformShuffleXor(vk::SubgroupScope, value, mask);
+}
+
 f32 transform_depth(f32 d) {
 	return Constants.near / d;
 }
@@ -118,27 +125,6 @@ f32 reduce_mip_6(float4x4 m, uint2 p, u32 mip) {
 	return reduce(ret);
 }
 
-f32 reduce_mip_src(float4 m, uint2 p) {
-	f32 d0 = m.x;
-	f32 d1 = m.y;
-	f32 d2 = m.z;
-	f32 d3 = m.w;
-	uint2 res = mip_size(0);
-
-	if (p.x + 1 == res.x) {
-		d0 = min(d0, d1);
-		d2 = min(d2, d3);
-	}
-	if (p.y + 1 == res.y) {
-		d2 = min(d2, d0);
-		d3 = min(d3, d1);
-	}
-
-	float4 ret = float4(d0, d1, d2, d3);
-	store4(p, 0, ret);
-	return reduce(ret);
-}
-
 f32 reduce_mip_simd(uint2 p, u32 lid, u32 mip, f32 d, bool full) {
 	uint2 res = mip_size(mip);
 	
@@ -158,9 +144,9 @@ f32 reduce_mip_simd(uint2 p, u32 lid, u32 mip, f32 d, bool full) {
 		p >>= 1;
 		res = mip_size(mip + 1);
 		d = reduce(float4(d, horiz, vert, diag));
-		horiz = WaveReadLaneAt(d, lid ^ 0b1000);
-		vert = WaveReadLaneAt(d, lid ^ 0b100);
-		diag = WaveReadLaneAt(d, lid ^ 0b1100);
+		horiz = WaveShuffleXor(d, 0b1000);
+		vert = WaveShuffleXor(d, 0b100);
+		diag = WaveShuffleXor(d, 0b1100);
 		if (!full) {
 			bool shoriz = p.x + 1 == res.x;
 			bool svert = p.y + 1 == res.y;
@@ -174,47 +160,60 @@ f32 reduce_mip_simd(uint2 p, u32 lid, u32 mip, f32 d, bool full) {
 	return reduce(float4(d, horiz, vert, diag));
 }
 
-u32 bitfield_insert(u32 src, u32 ins, u32 off, u32 bits) {
-	u32 mask = ((1u << bits) - 1u) << off;
-	return (ins & mask) | (src & (~mask));
-} 
-
-u32 bitfield_extract(u32 src, u32 off, u32 bits){
-	u32 mask = (1u << bits) - 1u;
-	return (src >> off) & mask;
-}
-
 uint2 unswizzle(u32 index) {
-	u32 x0 = bitfield_extract(index, 0, 1);
-	u32 y01 = bitfield_extract(index, 1, 2);
-	u32 x12 = bitfield_extract(index, 3, 2);
-	u32 y23 = bitfield_extract(index, 5, 2);
-	u32 x3 = bitfield_extract(index, 7, 1);
+	u32 x0 = index & 0b1;
+	u32 y01 = (index >> 1) & 0b11;
+	u32 x12 = (index >> 3) & 0b11;
+	u32 y23 = (index >> 5) & 0b11;
+	u32 x3 = (index >> 7) & 0b1;
 	return uint2(
-		bitfield_insert(bitfield_insert(x0, x12, 1, 2), x3, 3, 1), 
-		bitfield_insert(y01, y23, 2, 2)
+	    x0 | (x12 << 1) | (x3 << 3),
+	    y01 | (y23 << 2)
 	);
 }
 
+f32 reduce_mip_src(uint2 base) {
+	float4 m = fetch4x4(base);
+	uint2 p = base >> 1;
+
+	uint2 res = mip_size(0);
+	if (p.x + 1 == res.x) {
+		m.x = min(m.x, m.y);
+		m.z = min(m.z, m.w);
+	}
+	if (p.y + 1 == res.y) {
+		m.z = min(m.z, m.z);
+		m.w = min(m.w, m.y);
+	}
+
+	store4(p, 0, m);
+	return reduce(m);
+}
+
+[[vk::ext_builtin_input(40 /* SubgroupId */)]] 
+static const u32 subgroup_id;
+[[vk::ext_builtin_input(36 /* SubgroupSize */)]] 
+static const u32 subgroup_size;
+[[vk::ext_builtin_input(41 /* SubgroupLocalInvocationId */)]] 
+static const u32 subgroup_invoc_id;
+
 [numthreads(256, 1, 1)]
-void main(uint3 gid: SV_GroupID, uint lid: SV_GroupIndex) {
+void main(uint2 gid: SV_GroupID) {
+	u32 lid = subgroup_id * subgroup_size + subgroup_invoc_id;
 	uint2 p = unswizzle(lid);
 	
-	uint2 base = gid.xy * 64 + p * 4;
-	float4 m = fetch4x4(base);
-	f32 d = reduce_mip_src(m, base >> 1);
+	uint2 base = gid * 64 + p * 4;
+	f32 d = reduce_mip_src(base);
 	if (Constants.mips <= 1) return;
-	return;
 
-	d = reduce_mip_simd(base >> 1, lid, 1, d, true);
+	d = reduce_mip_simd(base >> 2, lid, 1, d, true);
 	if (Constants.mips <= 3) return;
 
 	if ((lid & 15) == 0) inter[lid >> 4] = d;
 	AllMemoryBarrierWithGroupSync();
-
-	if (lid < 16) d = reduce_mip_simd(gid.xy * 4 + p, lid, 3, inter[lid], true);
-
+	if (lid < 16) d = reduce_mip_simd(gid * 4 + p, lid, 3, inter[lid], true);
 	if (Constants.mips <= 5) return;
+
 	if (lid == 0) store(gid.xy, 5, d);
 	if (Constants.mips <= 6) return;
 
@@ -231,8 +230,8 @@ void main(uint3 gid: SV_GroupID, uint lid: SV_GroupIndex) {
 	if (Constants.mips <= 9) return;
 	if ((lid & 15) == 0) inter[lid >> 4] = d;
 	AllMemoryBarrierWithGroupSync();
-
 	if (lid < 16) d = reduce_mip_simd(p, lid, 9, inter[lid], false);
 	if (Constants.mips <= 11) return;
+
 	if (lid == 0) store(uint2(0, 0), 11, d);
 }
