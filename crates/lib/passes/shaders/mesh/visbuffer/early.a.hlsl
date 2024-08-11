@@ -1,8 +1,11 @@
-#include "task.l.hlsl"
+#include "cull.l.hlsl"
 
 [numthreads(64, 1, 1)]
 void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
-    if (gtid == 0) { MeshletEmitCount = 0; }
+    if (gtid == 0) { 
+        MeshletEmitCount = 0; 
+        Payload.base = id;
+    }
     GroupMemoryBarrierWithGroupSync();
 
     if (id < Constants.meshlet_count) {
@@ -23,8 +26,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupThreadID) {
             if (occlusion_cull(Constants.camera.load(1), transform, float4(meshlet.bounding))) {
                 u32 index;
                 InterlockedAdd(MeshletEmitCount, 1, index);
-                Payload.pointers[index].pointer = pointer;
-                Payload.pointers[index].id = id;
+                payload_set(index, id);
             } else {
                 u32 did = Constants.culled.atomic_add(0, 1);
                 Constants.culled.store(4 + did, id);

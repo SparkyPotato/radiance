@@ -12,9 +12,11 @@ void main(
     out indices uint3 triangles[124],
     out primitives PrimitiveOutput visbuffer[124]
 ) {
-    PointerWithId pointer_id = payload.pointers[gid];
-    MeshletPointer pointer = pointer_id.pointer;
-    u32 id = pointer_id.id;
+    u32 id = payload.get(gid);
+    #ifdef LATE
+    id = Constants.culled.load(4 + id);
+    #endif
+    MeshletPointer pointer = Constants.meshlet_pointers.load(id);
 
     Instance instance = Constants.instances.load(pointer.instance);
     Meshlet meshlet = instance.mesh.load<Meshlet>(0, pointer.meshlet);

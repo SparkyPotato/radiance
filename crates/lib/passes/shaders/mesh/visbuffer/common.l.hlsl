@@ -14,13 +14,15 @@ struct PushConstants {
     u32 height;
 };
 
-struct PointerWithId {
-    MeshletPointer pointer;
-    u32 id;
-};
-
 struct MeshPayload {
-    PointerWithId pointers[64];
+    u32 base;
+    u32 pointers[16];
+
+    u32 get(u32 index) {
+        u32 i = index >> 2;
+        u32 o = (index & 0b11) << 3;
+        return this.base + ((this.pointers[i] >> o) & 0xff);
+    }
 };
 
 struct VertexOutput {

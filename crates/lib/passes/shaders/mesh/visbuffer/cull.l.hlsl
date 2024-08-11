@@ -56,3 +56,9 @@ bool occlusion_cull(Camera camera, float4x4 transform, float4 sphere) {
     f32 closest = camera.near / (s.z - s.w);
     return closest >= depth;
 }
+
+void payload_set(u32 index, u32 id) {
+    u32 i = index >> 2;
+    u32 o = (index & 0b11) << 3;
+    InterlockedOr(Payload.pointers[i], ((id - Payload.base) & 0xff) << o);
+}

@@ -157,7 +157,11 @@ impl VisBuffer {
 					None,
 				),
 				device.shader(
-					c_str!("radiance-passes/mesh/visbuffer/mesh"),
+					if pre_cull {
+						c_str!("radiance-passes/mesh/visbuffer/earlym")
+					} else {
+						c_str!("radiance-passes/mesh/visbuffer/latem")
+					},
 					vk::ShaderStageFlags::MESH_EXT,
 					None,
 				),
