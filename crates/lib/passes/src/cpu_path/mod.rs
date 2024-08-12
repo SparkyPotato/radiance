@@ -27,7 +27,7 @@ use vek::{
 use crate::{
 	asset::{rref::RRef, scene::Scene},
 	cpu_path::framebuffer::Framebuffer,
-	mesh::visbuffer::Camera,
+	mesh::Camera,
 };
 
 mod framebuffer;

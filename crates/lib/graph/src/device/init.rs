@@ -397,6 +397,7 @@ impl<'a> DeviceBuilder<'a> {
 							features12.buffer_device_address = true as _;
 							features12.vulkan_memory_model = true as _;
 							features12.vulkan_memory_model_device_scope = true as _;
+							features12.scalar_block_layout = true as _;
 						},
 						vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => {
 							let features13 = &mut *(next as *mut vk::PhysicalDeviceVulkan13Features);

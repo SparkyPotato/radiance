@@ -11,7 +11,7 @@ use radiance_passes::{
 	cpu_path::{self, CpuPath},
 	debug::meshlet::DebugMeshlets,
 	ground_truth::{self, GroundTruth},
-	mesh::visbuffer::{RenderInfo, VisBuffer},
+	mesh::{RenderInfo, VisBuffer},
 	tonemap::aces::AcesTonemap,
 };
 use tracing::{event, Level};

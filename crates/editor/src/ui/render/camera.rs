@@ -1,6 +1,6 @@
 use egui::Context;
 use radiance_asset::scene;
-use radiance_passes::mesh::visbuffer::Camera;
+use radiance_passes::mesh::Camera;
 use vek::{num_traits::FloatConst, Mat4, Vec2, Vec3, Vec4};
 use winit::{
 	dpi::PhysicalPosition,

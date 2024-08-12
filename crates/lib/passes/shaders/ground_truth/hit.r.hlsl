@@ -20,15 +20,15 @@ Hit EvalHit(BuiltInTriangleIntersectionAttributes attrs) {
 	};
 	float3 bary = float3(1.0 - attrs.barycentrics.x - attrs.barycentrics.y, attrs.barycentrics.x, attrs.barycentrics.y);
 	u32 meshlet_index = GeometryIndex();
-	Meshlet meshlet = instance.mesh.load<Meshlet>(0, meshlet_index);
+	MeshletData meshlet = MeshletData::get(instance.mesh, 0, meshlet_index); // TODO: fix
 
 	u32 prim = PrimitiveIndex();
-	u32 indices = instance.mesh.load<u32>(meshlet.index_offset, prim);
+	u32 indices = meshlet.tri(instance.mesh, prim);
 	uint3 i = uint3(indices >> 0, indices >> 8, indices >> 16) & 0xff;
 
-	Vertex v0 = instance.mesh.load<Vertex>(meshlet.vertex_offset, i.x);
-	Vertex v1 = instance.mesh.load<Vertex>(meshlet.vertex_offset, i.y);
-	Vertex v2 = instance.mesh.load<Vertex>(meshlet.vertex_offset, i.z);
+	Vertex v0 = meshlet.vertex(instance.mesh, i.x);
+	Vertex v1 = meshlet.vertex(instance.mesh, i.y);
+	Vertex v2 = meshlet.vertex(instance.mesh, i.z);
 
 	float3 p0 = float3(v0.position);
 	float3 p1 = float3(v1.position);

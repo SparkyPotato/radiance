@@ -19,7 +19,7 @@ pub struct ShaderBuilder {
 }
 
 impl ShaderBuilder {
-	pub fn new(debug: bool) -> Result<Self, Box<dyn Error>> {
+	pub fn new(_: bool) -> Result<Self, Box<dyn Error>> {
 		let dxc = Dxc::new(None)?;
 		let compiler = dxc.create_compiler()?;
 		let library = dxc.create_library()?;
@@ -64,6 +64,8 @@ impl ShaderBuilder {
 				"-HV 2021",
 				"-enable-16bit-types",
 				"-ffinite-math-only",
+				"-fvk-use-scalar-layout",
+				"-fspv-reduce-load-size",
 			]
 			.into_iter()
 			.chain(self.debug.then_some("-Zi"))

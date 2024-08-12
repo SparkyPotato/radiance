@@ -31,7 +31,7 @@ use crate::{
 		rref::{RRef, RWeak},
 		scene::Scene,
 	},
-	mesh::visbuffer::Camera,
+	mesh::Camera,
 };
 
 #[derive(Clone)]

@@ -39,19 +39,26 @@ pub struct Sphere {
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
-pub struct GpuMeshlet {
-	pub vertex_byte_offset: u32,
-	pub index_byte_offset: u32,
-	pub vertex_count: u8,
-	pub triangle_count: u8,
-	pub _pad: u16,
+pub struct GpuMeshletBounds {
 	pub bounding: Sphere,
 	pub group_error: Sphere,
 	pub parent_error: Sphere,
 }
 
-const_assert_eq!(std::mem::size_of::<GpuMeshlet>(), 60);
-const_assert_eq!(std::mem::align_of::<GpuMeshlet>(), 4);
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct GpuMeshletData {
+	pub vertex_byte_offset: u32,
+	pub index_byte_offset: u32,
+	pub vertex_count: u8,
+	pub triangle_count: u8,
+	pub _pad: u16,
+}
+
+const_assert_eq!(std::mem::size_of::<GpuMeshletBounds>(), 48);
+const_assert_eq!(std::mem::size_of::<GpuMeshletData>(), 12);
+const_assert_eq!(std::mem::align_of::<GpuMeshletBounds>(), 4);
+const_assert_eq!(std::mem::align_of::<GpuMeshletData>(), 4);
 
 pub struct Mesh {
 	pub(super) buffer: Buffer,
@@ -146,9 +153,11 @@ impl<S: AssetSource> Loader<'_, S> {
 			unreachable!("Mesh asset is not a mesh");
 		};
 
-		let meshlet_byte_offset = 0;
-		let meshlet_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshlet>()) as u64;
-		let vertex_byte_offset = meshlet_byte_offset + meshlet_byte_len;
+		let meshlet_bounds_byte_offset = 0;
+		let meshlet_bounds_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshletBounds>()) as u64;
+		let meshlet_data_byte_offset = meshlet_bounds_byte_offset + meshlet_bounds_byte_len;
+		let meshlet_data_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshletData>()) as u64;
+		let vertex_byte_offset = meshlet_data_byte_offset + meshlet_data_byte_len;
 		let vertex_byte_len = (m.vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
 		let index_byte_offset = vertex_byte_offset + vertex_byte_len;
 		let index_byte_len = (m.indices.len() / 3 * std::mem::size_of::<u32>()) as u64;
@@ -174,7 +183,9 @@ impl<S: AssetSource> Loader<'_, S> {
 		// 	.map(|v| Point::new(v.position.x, v.position.y, v.position.z))
 		// 	.collect();
 
-		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
+		let (bounds, data) = unsafe { buffer.data().as_mut().split_at_mut(meshlet_data_byte_offset as _) };
+		let mut bwriter = SliceWriter::new(bounds);
+		let mut dwriter = SliceWriter::new(data);
 		// let indices = m
 		// 	.meshlets
 		// 	.iter()
@@ -240,15 +251,8 @@ impl<S: AssetSource> Loader<'_, S> {
 			// counts.push(me.tri_count as u32);
 			// ranges.push(vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(me.tri_count as u32));
 
-			writer
-				.write(GpuMeshlet {
-					vertex_byte_offset: vertex_byte_offset as u32
-						+ (me.vertex_offset * std::mem::size_of::<GpuVertex>() as u32),
-					index_byte_offset: index_byte_offset as u32
-						+ (me.index_offset / 3 * std::mem::size_of::<u32>() as u32),
-					vertex_count: me.vert_count,
-					triangle_count: me.tri_count,
-					_pad: 0,
+			bwriter
+				.write(GpuMeshletBounds {
 					bounding: Sphere {
 						center: me.bounding.center,
 						radius: me.bounding.radius,
@@ -263,13 +267,24 @@ impl<S: AssetSource> Loader<'_, S> {
 					},
 				})
 				.unwrap();
+			dwriter
+				.write(GpuMeshletData {
+					vertex_byte_offset: vertex_byte_offset as u32
+						+ (me.vertex_offset * std::mem::size_of::<GpuVertex>() as u32),
+					index_byte_offset: index_byte_offset as u32
+						+ (me.index_offset / 3 * std::mem::size_of::<u32>() as u32),
+					vertex_count: me.vert_count,
+					triangle_count: me.tri_count,
+					_pad: 0,
+				})
+				.unwrap();
 		}
 
-		writer.write_slice(&m.vertices).unwrap();
+		dwriter.write_slice(&m.vertices).unwrap();
 
 		for tri in m.indices.chunks(3) {
-			writer.write_slice(tri).unwrap();
-			writer.write(0u8).unwrap();
+			dwriter.write_slice(tri).unwrap();
+			dwriter.write(0u8).unwrap();
 		}
 
 		let acceleration_structure = unsafe {

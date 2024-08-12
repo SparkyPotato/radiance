@@ -1,9 +1,19 @@
-#include "common.l.hlsl"
+#include "radiance-passes/asset/data.l.hlsl"
+
+struct PushConstants {
+    Buf<bytes> instances;
+    Buf<Camera> camera;
+    Sampler hzb_sampler;
+    Tex2D hzb;
+    Buf<u32> culled;
+    Buf<u32> o;
+    u32 meshlet_count;
+    u32 instance_count;
+    u32 width;
+    u32 height;
+};
 
 PUSH PushConstants Constants;
-
-groupshared u32 MeshletEmitCount;
-groupshared MeshPayload Payload;
 
 f32 is_imperceptible(float h, float4 error) {
     f32 d2 = dot(error.xyz, error.xyz);
@@ -54,10 +64,4 @@ bool occlusion_cull(Camera camera, float4x4 transform, float4 sphere) {
     f32 level = ceil(log2(max(width, height)));
     f32 depth = Constants.hzb.sample_mip(Constants.hzb_sampler, (aabb.xy + aabb.zw) * 0.5f, level).x;
     return s.z - s.w < depth;
-}
-
-void payload_set(u32 index, u32 id) {
-    u32 i = index >> 2;
-    u32 o = (index & 0b11) << 3;
-    InterlockedOr(Payload.pointers[i], ((id - Payload.base) & 0xff) << o);
 }

@@ -43,8 +43,7 @@ pub struct Node {
 
 pub struct Scene {
 	instance_buffer: Buffer,
-	meshlet_pointer_buffer: Buffer,
-	meshlet_pointer_count: u32,
+	meshlet_count: u32,
 	acceleration_structure: AS,
 	pub cameras: Vec<scene::Camera>,
 	nodes: Vec<Node>,
@@ -86,9 +85,9 @@ unsafe impl NoUninit for VkAccelerationStructureInstanceKHR {}
 impl Scene {
 	pub fn instances(&self) -> BufferId { self.instance_buffer.id().unwrap() }
 
-	pub fn meshlet_pointers(&self) -> BufferId { self.meshlet_pointer_buffer.id().unwrap() }
+	pub fn instance_count(&self) -> u32 { self.nodes.len() as _ }
 
-	pub fn meshlet_pointer_count(&self) -> u32 { self.meshlet_pointer_count }
+	pub fn meshlet_count(&self) -> u32 { self.meshlet_count }
 
 	pub fn acceleration_structure(&self) -> ASId { self.acceleration_structure.id.unwrap() }
 
@@ -165,9 +164,6 @@ impl Scene {
 impl RuntimeAsset for Scene {
 	fn into_resources(self, queue: Sender<DelRes>) {
 		queue.send(Resource::Buffer(self.instance_buffer).into()).unwrap();
-		queue
-			.send(Resource::Buffer(self.meshlet_pointer_buffer).into())
-			.unwrap();
 		queue.send(Resource::AS(self.acceleration_structure).into()).unwrap();
 	}
 }
@@ -197,7 +193,7 @@ impl<S: AssetSource> Loader<'_, S> {
 			.human_name(scene)
 			.to_owned()
 			.unwrap_or("unnamed scene".to_string());
-		let size = (std::mem::size_of::<GpuInstance>() * s.nodes.len()) as u64;
+		let size = ((std::mem::size_of::<GpuInstance>() + std::mem::size_of::<u32>()) * s.nodes.len()) as u64;
 		let instance_buffer = Buffer::create(
 			self.device,
 			BufferDesc {
@@ -211,7 +207,14 @@ impl<S: AssetSource> Loader<'_, S> {
 		// instance_buffer
 		// 	.alloc_size(loader.ctx, loader.queue, size)
 		// 	.map_err(LoadError::Vulkan)?;
-		let mut writer = SliceWriter::new(unsafe { instance_buffer.data().as_mut() });
+		let (sums, instances) = unsafe {
+			instance_buffer
+				.data()
+				.as_mut()
+				.split_at_mut(std::mem::size_of::<u32>() * s.nodes.len())
+		};
+		let mut swriter = SliceWriter::new(sums);
+		let mut iwriter = SliceWriter::new(instances);
 
 		// let temp_build_buffer = Buffer::create(
 		// 	self.device,
@@ -225,13 +228,16 @@ impl<S: AssetSource> Loader<'_, S> {
 		// .map_err(LoadError::Vulkan)?;
 		// let mut awriter = SliceWriter::new(unsafe { temp_build_buffer.data().as_mut() });
 
+		let mut meshlet_prefix_sum = 0;
 		let nodes: Vec<_> = s
 			.nodes
 			.into_iter()
 			.enumerate()
 			.map(|(i, n)| {
 				let mesh = self.load_mesh(n.model)?;
-				writer
+				meshlet_prefix_sum += mesh.meshlet_count;
+				swriter.write(meshlet_prefix_sum).unwrap();
+				iwriter
 					.write(GpuInstance {
 						transform: n.transform.cols.map(|x| x.xyz()),
 						mesh: mesh.buffer.id().unwrap(),
@@ -267,30 +273,6 @@ impl<S: AssetSource> Loader<'_, S> {
 				})
 			})
 			.collect::<Result<_, LoadError<S>>>()?;
-
-		let meshlet_pointer_count: u32 = nodes.iter().map(|n| n.mesh.meshlet_count).sum();
-		let size = std::mem::size_of::<GpuMeshletPointer>() as u64 * meshlet_pointer_count as u64;
-		let meshlet_pointer_buffer = Buffer::create(
-			self.device,
-			BufferDesc {
-				name: &format!("{name} meshlet pointers"),
-				size,
-				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
-				on_cpu: false,
-			},
-		)
-		.map_err(LoadError::Vulkan)?;
-		let mut writer = SliceWriter::new(unsafe { meshlet_pointer_buffer.data().as_mut() });
-		for (instance, node) in nodes.iter().enumerate() {
-			for meshlet in 0..node.mesh.meshlet_count {
-				writer
-					.write(GpuMeshletPointer {
-						instance: instance as u32,
-						meshlet,
-					})
-					.unwrap();
-			}
-		}
 
 		let acceleration_structure = unsafe {
 			// let ext = self.device.as_ext();
@@ -404,9 +386,8 @@ impl<S: AssetSource> Loader<'_, S> {
 			Scene {
 				nodes,
 				instance_buffer,
-				meshlet_pointer_buffer,
 				acceleration_structure,
-				meshlet_pointer_count,
+				meshlet_count: meshlet_prefix_sum,
 				cameras: s.cameras,
 				// bvh,
 			},
