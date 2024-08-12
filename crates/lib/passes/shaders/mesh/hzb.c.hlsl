@@ -29,10 +29,6 @@ f32 WaveShuffleXor(f32 value, u32 mask) {
 	return GroupNonUniformShuffleXor(vk::SubgroupScope, value, mask);
 }
 
-f32 transform_depth(f32 d) {
-	return Constants.near / d;
-}
-
 f32 reduce(float4 v) {
 	return min(min(v.x, v.y), min(v.z, v.w));
 }
@@ -72,7 +68,7 @@ f32 fetch(uint2 p) {
 	float2 inv = float2(Constants.inv_size);
 	float2 coord = p * inv + inv;
 	f32 v = Constants.depth.sample_mip(Constants.s, coord, 0).x;
-	return transform_depth(v);
+	return v;
 }
 
 float4 fetch4x4(uint2 p) {
@@ -84,11 +80,11 @@ float4 fetch4x4(uint2 p) {
 }
 
 float4 fetch2x2_6(uint2 p) {
-	uint2 maxc = mip_size(5) - 1;
-	f32 x = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(0, 0), maxc));
-	f32 y = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(1, 0), maxc));
-	f32 z = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(0, 1), maxc));
-	f32 w = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(1, 1), maxc));
+	uint2 minc = mip_size(5) - 1;
+	f32 x = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(0, 0), minc));
+	f32 y = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(1, 0), minc));
+	f32 z = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(0, 1), minc));
+	f32 w = Coherents[NonUniformResourceIndex(Constants.out5)].Load(min(p + uint2(1, 1), minc));
 	return float4(x, y, z, w);
 }
 
