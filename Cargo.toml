@@ -13,6 +13,11 @@ codegen-units = 24
 [profile.dev.build-override]
 opt-level = 3
 
+[profile.dev]
+debug = true
+[profile.release]
+debug = true
+
 [workspace.dependencies]
 ash = "0.38.0"
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
