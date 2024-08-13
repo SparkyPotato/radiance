@@ -17,7 +17,7 @@ use radiance_graph::{
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::Uuid;
-use vek::{Ray, Vec2, Vec3};
+use vek::{Ray, Sphere, Vec2, Vec3, Vec4};
 
 use crate::asset::{
 	rref::{RRef, RuntimeAsset},
@@ -32,18 +32,13 @@ pub type GpuVertex = Vertex;
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
-pub struct Sphere {
-	center: Vec3<f32>,
-	radius: f32,
+pub struct GpuMeshletBounds {
+	pub bounding: Vec4<f32>,
+	pub group_error: Vec4<f32>,
+	pub parent_error: Vec4<f32>,
 }
 
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-pub struct GpuMeshletBounds {
-	pub bounding: Sphere,
-	pub group_error: Sphere,
-	pub parent_error: Sphere,
-}
+fn map_sphere(x: Sphere<f32, f32>) -> Vec4<f32> { x.center.with_w(x.radius) }
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
@@ -253,18 +248,9 @@ impl<S: AssetSource> Loader<'_, S> {
 
 			bwriter
 				.write(GpuMeshletBounds {
-					bounding: Sphere {
-						center: me.bounding.center,
-						radius: me.bounding.radius,
-					},
-					group_error: Sphere {
-						center: me.group_bounding.center,
-						radius: me.group_bounding.radius,
-					},
-					parent_error: Sphere {
-						center: me.parent_group_bounding.center,
-						radius: me.parent_group_bounding.radius,
-					},
+					bounding: map_sphere(me.bounding),
+					group_error: map_sphere(me.group_error),
+					parent_error: map_sphere(me.parent_group_error),
 				})
 				.unwrap();
 			dwriter

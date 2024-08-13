@@ -4,7 +4,7 @@ use bincode::{Decode, Encode};
 use bytemuck::{Pod, Zeroable};
 use static_assertions::const_assert_eq;
 use uuid::Uuid;
-use vek::{Sphere, Vec2, Vec3, Vec4};
+use vek::{Sphere, Vec2, Vec3};
 
 #[derive(Pod, Zeroable, Copy, Clone, Default, Encode, Decode)]
 #[repr(C)]
@@ -35,12 +35,12 @@ pub struct Meshlet {
 	/// The bounding sphere of the meshlet.
 	#[bincode(with_serde)]
 	pub bounding: Sphere<f32, f32>,
-	/// The bounding sphere of the meshlet group, used for LOD decision.
+	/// The error sphere of the meshlet group, used for LOD decision.
 	#[bincode(with_serde)]
-	pub group_bounding: Sphere<f32, f32>,
-	/// The bounding sphere of the parent meshlet group, used for LOD decision.
+	pub group_error: Sphere<f32, f32>,
+	/// The error sphere of the parent meshlet group, used for LOD decision.
 	#[bincode(with_serde)]
-	pub parent_group_bounding: Sphere<f32, f32>,
+	pub parent_group_error: Sphere<f32, f32>,
 }
 
 #[derive(Encode, Decode)]

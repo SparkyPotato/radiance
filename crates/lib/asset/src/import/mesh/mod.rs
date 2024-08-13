@@ -17,36 +17,48 @@ use crate::{
 
 mod simplify;
 
-struct Bounds {
+#[derive(Copy, Clone)]
+struct MappedMeshlet {
+	vertex_offset: u32,
+	vertex_count: u32,
+	tri_offset: u32,
+	tri_count: u32,
 	bounding: Sphere<f32, f32>,
-	group_bounding: Sphere<f32, f32>,
-	parent_group_bounding: Sphere<f32, f32>,
+	group_error: Sphere<f32, f32>,
+	parent_group_error: Sphere<f32, f32>,
+}
+
+impl MappedMeshlet {
+	fn vertices(&self) -> Range<usize> {
+		(self.vertex_offset as usize)..(self.vertex_offset as usize + self.vertex_count as usize)
+	}
+
+	fn tris(&self) -> Range<usize> {
+		(self.tri_offset as usize)..(self.tri_offset as usize + self.tri_count as usize * 3)
+	}
 }
 
 struct Meshlets {
 	vertices: Vec<Vertex>,
-	inner: meshopt::Meshlets,
-	bounds: Vec<Bounds>,
+	vertex_remap: Vec<u32>,
+	tris: Vec<u8>,
+	meshlets: Vec<MappedMeshlet>,
 }
 
 impl Meshlets {
 	fn add(&mut self, other: Meshlets) {
-		let vertex_offset = self.inner.vertices.len() as u32;
-		let triangle_offset = self.inner.triangles.len() as u32;
-		self.inner
-			.meshlets
-			.extend(other.inner.meshlets.into_iter().map(|mut m| {
-				m.vertex_offset += vertex_offset;
-				m.triangle_offset += triangle_offset;
-				m
-			}));
+		let vertex_offset = self.vertex_remap.len() as u32;
+		let tri_offset = self.tris.len() as u32;
+		self.meshlets.extend(other.meshlets.into_iter().map(|mut m| {
+			m.vertex_offset += vertex_offset;
+			m.tri_offset += tri_offset;
+			m
+		}));
 		let vertex_data_offset = self.vertices.len() as u32;
 		self.vertices.extend(other.vertices);
-		self.inner
-			.vertices
-			.extend(other.inner.vertices.into_iter().map(|v| v + vertex_data_offset));
-		self.inner.triangles.extend(other.inner.triangles);
-		self.bounds.extend(other.bounds);
+		self.vertex_remap
+			.extend(other.vertex_remap.into_iter().map(|v| v + vertex_data_offset));
+		self.tris.extend(other.tris);
 	}
 }
 
@@ -58,32 +70,32 @@ impl Importer<'_> {
 		let mesh = self.conv_to_mesh(mesh, materials)?;
 		let mut meshlets = self.generate_meshlets(mesh, None);
 
-		let mut simplify = 0..meshlets.inner.len();
+		let mut simplify = 0..meshlets.meshlets.len();
 		let mut lod = 1;
 		while simplify.len() > 1 {
 			let s = debug_span!("generating lod", lod, meshlets = simplify.len());
 			let _e = s.enter();
 
-			let next_start = meshlets.inner.len();
+			let next_start = meshlets.meshlets.len();
 			let groups = self.generate_groups(simplify.clone(), &meshlets);
 
 			let par: Vec<_> = groups
 				.into_par_iter()
 				.filter(|x| x.len() > 1)
 				.filter_map(|group| {
-					let (mesh, group_bounding) = self.simplify_group(&group, &meshlets)?;
-					let n_meshlets = self.generate_meshlets(mesh, Some(group_bounding));
-					Some((group, group_bounding, n_meshlets))
+					let (mesh, group_error) = self.simplify_group(&group, &meshlets)?;
+					let n_meshlets = self.generate_meshlets(mesh, Some(group_error));
+					Some((group, group_error, n_meshlets))
 				})
 				.collect();
-			for (group, group_bounding, n_meshlets) in par {
+			for (group, group_error, n_meshlets) in par {
 				for mid in group {
-					meshlets.bounds[mid].parent_group_bounding = group_bounding;
+					meshlets.meshlets[mid].parent_group_error = group_error;
 				}
 				meshlets.add(n_meshlets);
 			}
 
-			simplify = next_start..meshlets.inner.len();
+			simplify = next_start..meshlets.meshlets.len();
 			lod += 1;
 		}
 
@@ -94,41 +106,42 @@ impl Importer<'_> {
 		let vertices = meshlets.vertices;
 		let mut out = Mesh {
 			vertices: Vec::with_capacity(vertices.len()),
-			indices: Vec::with_capacity(meshlets.inner.len() * 124 * 3),
-			meshlets: Vec::with_capacity(meshlets.inner.len()),
+			indices: Vec::with_capacity(meshlets.meshlets.len() * 124 * 3),
+			meshlets: Vec::with_capacity(meshlets.meshlets.len()),
 			material_ranges: Vec::new(),
 		};
 
-		out.meshlets
-			.extend(meshlets.inner.iter().zip(meshlets.bounds).map(|(m, bounds)| {
-				let indices: Vec<_> = m.triangles.iter().map(|&x| x as u32).collect();
-				let vertices = m.vertices.iter().map(|&x| vertices[x as usize]);
+		out.meshlets.extend(meshlets.meshlets.into_iter().map(|m| {
+			let indices: Vec<_> = meshlets.tris[m.tris()].iter().map(|&x| x as u32).collect();
+			let vertices = meshlets.vertex_remap[m.vertices()]
+				.iter()
+				.map(|&x| vertices[x as usize]);
 
-				let index_offset = out.indices.len() as u32;
-				let vertex_offset = out.vertices.len() as u32;
-				let vert_count = vertices.len() as u8;
-				let tri_count = (indices.len() / 3) as u8;
+			let index_offset = out.indices.len() as u32;
+			let vertex_offset = out.vertices.len() as u32;
+			let vert_count = vertices.len() as u8;
+			let tri_count = (indices.len() / 3) as u8;
 
-				out.vertices.extend(vertices);
-				out.indices.extend(indices.into_iter().map(|x| x as u8));
-				let start = out.material_ranges.len() as _;
+			out.vertices.extend(vertices);
+			out.indices.extend(indices.into_iter().map(|x| x as u8));
+			let start = out.material_ranges.len() as _;
 
-				Meshlet {
-					index_offset,
-					vertex_offset,
-					tri_count,
-					vert_count,
-					material_ranges: start..(out.material_ranges.len() as _),
-					bounding: bounds.bounding,
-					group_bounding: bounds.group_bounding,
-					parent_group_bounding: bounds.parent_group_bounding,
-				}
-			}));
+			Meshlet {
+				index_offset,
+				vertex_offset,
+				tri_count,
+				vert_count,
+				material_ranges: start..(out.material_ranges.len() as _),
+				bounding: m.bounding,
+				group_error: m.group_error,
+				parent_group_error: m.parent_group_error,
+			}
+		}));
 
 		out
 	}
 
-	fn generate_meshlets(&self, mesh: FullMesh, group_bounding: Option<Sphere<f32, f32>>) -> Meshlets {
+	fn generate_meshlets(&self, mesh: FullMesh, group_error: Option<Sphere<f32, f32>>) -> Meshlets {
 		let s = trace_span!("building meshlets");
 		let _e = s.enter();
 
@@ -138,30 +151,38 @@ impl Importer<'_> {
 			0,
 		)
 		.unwrap();
-		let meshlets = meshopt::build_meshlets(&mesh.indices, &adapter, 64, 124, 0.5);
-
-		let mut bounds = Vec::with_capacity(meshlets.len());
-		for m in meshlets.iter() {
-			let mbounds = meshopt::compute_meshlet_bounds(m, &adapter);
-			let center = Vec3::from(mbounds.center);
-			let group_bounding = group_bounding.unwrap_or(Sphere { center, radius: 0.0 });
-			bounds.push(Bounds {
-				bounding: Sphere {
-					center,
-					radius: mbounds.radius,
-				},
-				group_bounding,
-				parent_group_bounding: Sphere {
-					center: group_bounding.center,
-					radius: f32::INFINITY,
-				},
+		let ms = meshopt::build_meshlets(&mesh.indices, &adapter, 64, 124, 0.5);
+		let meshlets = ms
+			.meshlets
+			.iter()
+			.enumerate()
+			.map(|(i, m)| {
+				let mbounds = meshopt::compute_meshlet_bounds(ms.get(i), &adapter);
+				let center = Vec3::from(mbounds.center);
+				let group_error = group_error.unwrap_or(Sphere { center, radius: 0.0 });
+				MappedMeshlet {
+					vertex_offset: m.vertex_offset,
+					vertex_count: m.vertex_count,
+					tri_offset: m.triangle_offset,
+					tri_count: m.triangle_count,
+					bounding: Sphere {
+						center,
+						radius: mbounds.radius,
+					},
+					group_error,
+					parent_group_error: Sphere {
+						center: group_error.center,
+						radius: f32::INFINITY,
+					},
+				}
 			})
-		}
+			.collect();
 
 		Meshlets {
 			vertices: mesh.vertices,
-			inner: meshlets,
-			bounds,
+			vertex_remap: ms.vertices,
+			tris: ms.triangles,
+			meshlets,
 		}
 	}
 
@@ -171,14 +192,18 @@ impl Importer<'_> {
 
 		let indices: Vec<_> = group
 			.iter()
-			.map(|&mid| meshlets.inner.get(mid))
-			.flat_map(|m| m.triangles.iter().map(|&x| m.vertices[x as usize]))
+			.map(|&mid| meshlets.meshlets[mid])
+			.flat_map(|m| {
+				meshlets.tris[m.tris()]
+					.iter()
+					.map(move |&x| meshlets.vertex_remap[m.vertices()][x as usize])
+			})
 			.collect();
 		let (omesh, mut error) = simplify::simplify_mesh(&meshlets.vertices, &indices)?;
 
 		error.radius += group
 			.iter()
-			.map(|&x| meshlets.bounds[x].group_bounding.radius)
+			.map(|&x| meshlets.meshlets[x].group_error.radius)
 			.reduce(f32::max)
 			.unwrap();
 
@@ -226,11 +251,14 @@ impl Importer<'_> {
 
 		let mut shared_edges = FxHashMap::default();
 		for mid in range.clone() {
-			let m = meshlets.inner.get(mid);
-			for i in m.triangles.chunks(3) {
+			let m = &meshlets.meshlets[mid];
+			let verts = &meshlets.vertex_remap[m.vertices()];
+			for i in meshlets.tris[m.tris()].chunks(3) {
 				for j in 0..3 {
-					let v0 = m.vertices[i[j] as usize];
-					let v1 = m.vertices[i[(j + 1) % 3] as usize];
+					let i0 = i[j] as usize;
+					let i1 = i[(j + 1) % 3] as usize;
+					let v0 = verts[i0];
+					let v1 = verts[i1];
 					let edge = (v0.min(v1), v0.max(v1));
 					let out = shared_edges.entry(edge).or_insert(Vec::new());
 					if out.last() != Some(&mid) {

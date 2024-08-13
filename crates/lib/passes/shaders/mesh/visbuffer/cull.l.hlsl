@@ -34,9 +34,13 @@ bool frustum_cull(float4 f, float near, float4 sphere) {
 }
 
 float4 transform_sphere(float4x4 mv, float4 sphere) {
-    float scale = max(max(length(mv._m00_m10_m20), length(mv._m01_m11_m21)), length(mv._m02_m12_m22));
-    float4 center = mul(mv, float4(sphere.xyz, 1.f));
-    return float4(center.xyz, sphere.w * scale);
+    float3 x = mv._m00_m10_m20;
+    float3 y = mv._m01_m11_m21;
+    float3 z = mv._m02_m12_m22;
+    f32 m = max(dot(x, x), max(dot(y, y), dot(z, z)));
+    f32 scale = sqrt(m);
+    float3 center = mul(mv, float4(sphere.xyz, 1.f)).xyz;
+    return float4(center, sphere.w * scale);
 }
 
 bool occlusion_cull(Camera camera, float4x4 transform, float4 sphere) {
