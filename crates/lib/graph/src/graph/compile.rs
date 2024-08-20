@@ -255,7 +255,7 @@ impl<'graph> ResourceAliaser<'graph> {
 	fn try_merge_buffer(&mut self, data: BufferData<'graph>, lifetime: ResourceLifetime) {
 		// TODO: fix
 		// If the data to be merged is an external resource, don't try to merge it at all.
-		if data.handle.buffer == vk::Buffer::null() {
+		if data.handle.buffer == vk::Buffer::null() && !data.desc.upload {
 			for &i in self.buffers.iter() {
 				let res = &mut self.resources[i as usize];
 				let res = unsafe { res.buffer_mut() };

@@ -1,7 +1,7 @@
 use std::usize;
 
 use ash::vk;
-use bytemuck::NoUninit;
+use bytemuck::{NoUninit, Pod, Zeroable};
 use crossbeam_channel::Sender;
 use parry3d::{
 	math::{Point, Vector},
@@ -17,7 +17,7 @@ use radiance_graph::{
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::Uuid;
-use vek::{Ray, Sphere, Vec2, Vec3, Vec4};
+use vek::{Aabb, Ray, Sphere, Vec2, Vec3, Vec4};
 
 use crate::asset::{
 	rref::{RRef, RuntimeAsset},
@@ -30,35 +30,57 @@ use crate::asset::{
 
 pub type GpuVertex = Vertex;
 
-#[derive(Copy, Clone, NoUninit)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
-pub struct GpuMeshletBounds {
-	pub bounding: Vec4<f32>,
-	pub group_error: Vec4<f32>,
-	pub parent_error: Vec4<f32>,
+pub struct GpuAabb {
+	pub center: Vec3<f32>,
+	pub half_extent: Vec3<f32>,
+}
+const_assert_eq!(std::mem::size_of::<GpuAabb>(), 24);
+const_assert_eq!(std::mem::align_of::<GpuAabb>(), 4);
+
+pub(super) fn map_aabb(aabb: Aabb<f32>) -> GpuAabb {
+	GpuAabb {
+		center: aabb.center(),
+		half_extent: aabb.half_size().into(),
+	}
 }
 
-fn map_sphere(x: Sphere<f32, f32>) -> Vec4<f32> { x.center.with_w(x.radius) }
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct GpuBvhNode {
+	pub aabb: GpuAabb,
+	pub lod_bounds: Vec4<f32>,
+	pub parent_error: f32,
+	pub children_offset: u32,
+	pub child_count: u32,
+}
+const_assert_eq!(std::mem::size_of::<GpuBvhNode>(), 52);
+const_assert_eq!(std::mem::align_of::<GpuBvhNode>(), 4);
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
-pub struct GpuMeshletData {
+pub struct GpuMeshlet {
+	pub aabb: GpuAabb,
+	pub lod_bounds: Vec4<f32>,
+	pub error: f32,
 	pub vertex_byte_offset: u32,
 	pub index_byte_offset: u32,
 	pub vertex_count: u8,
 	pub triangle_count: u8,
 	pub _pad: u16,
 }
+const_assert_eq!(std::mem::size_of::<GpuMeshlet>(), 56);
+const_assert_eq!(std::mem::align_of::<GpuMeshlet>(), 4);
 
-const_assert_eq!(std::mem::size_of::<GpuMeshletBounds>(), 48);
-const_assert_eq!(std::mem::size_of::<GpuMeshletData>(), 12);
-const_assert_eq!(std::mem::align_of::<GpuMeshletBounds>(), 4);
-const_assert_eq!(std::mem::align_of::<GpuMeshletData>(), 4);
+fn map_sphere(x: Sphere<f32, f32>) -> Vec4<f32> { x.center.with_w(x.radius) }
 
 pub struct Mesh {
 	pub(super) buffer: Buffer,
 	pub(super) acceleration_structure: AS,
 	pub(super) meshlet_count: u32,
+	pub(super) bvh_depth: u32,
+	pub(super) aabb: Aabb<f32>,
 	// pub(super) vertices: Vec<Vertex>,
 	// pub(super) mesh: TriMesh,
 }
@@ -148,11 +170,11 @@ impl<S: AssetSource> Loader<'_, S> {
 			unreachable!("Mesh asset is not a mesh");
 		};
 
-		let meshlet_bounds_byte_offset = 0;
-		let meshlet_bounds_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshletBounds>()) as u64;
-		let meshlet_data_byte_offset = meshlet_bounds_byte_offset + meshlet_bounds_byte_len;
-		let meshlet_data_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshletData>()) as u64;
-		let vertex_byte_offset = meshlet_data_byte_offset + meshlet_data_byte_len;
+		let bvh_byte_offset = 0;
+		let bvh_byte_len = (m.bvh.len() * std::mem::size_of::<GpuBvhNode>()) as u64;
+		let meshlet_byte_offset = bvh_byte_offset + bvh_byte_len;
+		let meshlet_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshlet>()) as u64;
+		let vertex_byte_offset = meshlet_byte_offset + meshlet_byte_len;
 		let vertex_byte_len = (m.vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
 		let index_byte_offset = vertex_byte_offset + vertex_byte_len;
 		let index_byte_len = (m.indices.len() / 3 * std::mem::size_of::<u32>()) as u64;
@@ -178,9 +200,25 @@ impl<S: AssetSource> Loader<'_, S> {
 		// 	.map(|v| Point::new(v.position.x, v.position.y, v.position.z))
 		// 	.collect();
 
-		let (bounds, data) = unsafe { buffer.data().as_mut().split_at_mut(meshlet_data_byte_offset as _) };
-		let mut bwriter = SliceWriter::new(bounds);
-		let mut dwriter = SliceWriter::new(data);
+		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
+
+		for node in m.bvh {
+			let is_meshlet = (node.child_count >> 7) == 1;
+			writer
+				.write(GpuBvhNode {
+					aabb: map_aabb(node.aabb),
+					lod_bounds: map_sphere(node.lod_bounds),
+					parent_error: node.parent_error,
+					children_offset: if is_meshlet {
+						meshlet_byte_offset as u32 + node.children_offset * std::mem::size_of::<GpuMeshlet>() as u32
+					} else {
+						bvh_byte_offset as u32 + node.children_offset * std::mem::size_of::<GpuBvhNode>() as u32
+					},
+					child_count: node.child_count as _,
+				})
+				.unwrap();
+		}
+
 		// let indices = m
 		// 	.meshlets
 		// 	.iter()
@@ -246,17 +284,13 @@ impl<S: AssetSource> Loader<'_, S> {
 			// counts.push(me.tri_count as u32);
 			// ranges.push(vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(me.tri_count as u32));
 
-			bwriter
-				.write(GpuMeshletBounds {
-					bounding: map_sphere(me.bounding),
-					group_error: map_sphere(me.group_error),
-					parent_error: map_sphere(me.parent_group_error),
-				})
-				.unwrap();
-			dwriter
-				.write(GpuMeshletData {
+			writer
+				.write(GpuMeshlet {
+					aabb: map_aabb(me.aabb),
+					lod_bounds: map_sphere(me.lod_bounds),
+					error: me.error,
 					vertex_byte_offset: vertex_byte_offset as u32
-						+ (me.vertex_offset * std::mem::size_of::<GpuVertex>() as u32),
+						+ (me.vert_offset * std::mem::size_of::<GpuVertex>() as u32),
 					index_byte_offset: index_byte_offset as u32
 						+ (me.index_offset / 3 * std::mem::size_of::<u32>() as u32),
 					vertex_count: me.vert_count,
@@ -266,11 +300,10 @@ impl<S: AssetSource> Loader<'_, S> {
 				.unwrap();
 		}
 
-		dwriter.write_slice(&m.vertices).unwrap();
-
+		writer.write_slice(&m.vertices).unwrap();
 		for tri in m.indices.chunks(3) {
-			dwriter.write_slice(tri).unwrap();
-			dwriter.write(0u8).unwrap();
+			writer.write_slice(tri).unwrap();
+			writer.write(0u8).unwrap();
 		}
 
 		let acceleration_structure = unsafe {
@@ -335,6 +368,8 @@ impl<S: AssetSource> Loader<'_, S> {
 				buffer,
 				meshlet_count,
 				acceleration_structure,
+				bvh_depth: m.bvh_depth,
+				aabb: m.aabb,
 				// vertices: m.vertices,
 				// mesh,
 			},

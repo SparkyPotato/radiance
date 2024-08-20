@@ -5,7 +5,7 @@ use std::{
 };
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use vek::{Mat4, Sphere, Vec2, Vec3, Vec4};
+use vek::{Mat4, Vec2, Vec3, Vec4};
 
 use crate::{import::mesh::FullMesh, mesh::Vertex};
 
@@ -142,32 +142,13 @@ impl EdgeMesh {
 		this
 	}
 
-	fn finish(self, error: f32) -> (FullMesh, Sphere<f32, f32>) {
+	fn finish(self) -> FullMesh {
 		let v: Vec<_> = self.vertices.into_iter().map(|x| x.vertex).collect();
 		let (vertices, indices) = remap_vertices(
 			&v,
 			self.tris.into_iter().filter(|x| !x.collapsed).flat_map(|x| x.vertices),
 		);
-		let mesh = FullMesh { vertices, indices };
-		let mut t_volume = 0.0;
-		let mut temp = Vec3::zero();
-		for tri in mesh.indices.chunks(3) {
-			let v0 = mesh.vertices[tri[0] as usize].position;
-			let v1 = mesh.vertices[tri[1] as usize].position;
-			let v2 = mesh.vertices[tri[2] as usize].position;
-			let center = (v0 + v1 + v2) / 4.0;
-			let volume = v0.dot(v1.cross(v2)) / 6.0;
-			t_volume += volume;
-			temp += center * volume;
-		}
-
-		(
-			mesh,
-			Sphere {
-				center: temp / t_volume,
-				radius: error,
-			},
-		)
+		FullMesh { vertices, indices }
 	}
 
 	fn calc_quadrics_of(&mut self, vertex: u32) {
@@ -281,7 +262,7 @@ impl EdgeMesh {
 	}
 
 	fn get_vertex_of_collapse(&self, edge: u32, break_pos: Vec3<f32>) -> Vertex {
-		let e = &self.edges[edge as usize];
+		let _ = &self.edges[edge as usize];
 		// TODO: find out why no work
 		// for v in [e.v0, e.v1] {
 		// 	for t in self.tris_of(v).filter(|&x| {
@@ -414,7 +395,7 @@ impl PartialOrd for Candidate {
 	fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
 }
 
-pub fn simplify_mesh(vertices: &[Vertex], indices: &[u32]) -> Option<(FullMesh, Sphere<f32, f32>)> {
+pub fn simplify_mesh(vertices: &[Vertex], indices: &[u32]) -> Option<(FullMesh, f32)> {
 	let mut mesh = EdgeMesh::new(vertices, indices);
 
 	let mut q = BinaryHeap::new();
@@ -456,5 +437,6 @@ pub fn simplify_mesh(vertices: &[Vertex], indices: &[u32]) -> Option<(FullMesh, 
 	}
 
 	let ratio = target as f32 / remaining as f32;
-	(ratio > 0.8).then(|| mesh.finish(total_cost.sqrt() * 0.5))
+	// TODO: should this be divided by 2?
+	(ratio > 0.8).then(|| (mesh.finish(), total_cost.sqrt() * 0.5))
 }

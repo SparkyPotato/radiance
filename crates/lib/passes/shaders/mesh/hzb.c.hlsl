@@ -14,7 +14,6 @@ struct PushConstants {
 	u32 mips;
 	u32 workgroups;
 	f32 inv_size[2];
-	f32 near;
 };
 
 PUSH PushConstants Constants;
@@ -163,8 +162,8 @@ uint2 unswizzle(u32 index) {
 	u32 y23 = (index >> 5) & 0b11;
 	u32 x3 = (index >> 7) & 0b1;
 	return uint2(
-	    x0 | (x12 << 1) | (x3 << 3),
-	    y01 | (y23 << 2)
+		x0 | (x12 << 1) | (x3 << 3),
+		y01 | (y23 << 2)
 	);
 }
 

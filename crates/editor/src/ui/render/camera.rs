@@ -149,7 +149,7 @@ impl CameraController {
 		Camera {
 			view: Mat4::identity().rotated_y(-self.yaw).rotated_x(-self.pitch) * Mat4::translation_3d(-self.pos),
 			fov: 90f32.to_radians(),
-			near: 0.01,
+			near: 0.001,
 		}
 	}
 }

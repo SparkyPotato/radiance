@@ -4,61 +4,62 @@ use bytemuck::from_bytes;
 use gltf::accessor::{DataType, Dimensions};
 use meshopt::VertexDataAdapter;
 use metis::Graph;
-use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
-use tracing::{debug_span, info_span, trace_span};
+use tracing::{debug_span, field, info_span, trace_span};
 use uuid::Uuid;
-use vek::{Sphere, Vec2, Vec3};
+use vek::{Aabb, Sphere, Vec2, Vec3};
 
 use crate::{
 	import::{ImportError, ImportResult, Importer},
-	mesh::{Mesh, Meshlet, Vertex},
+	mesh::{BvhNode, Mesh, Meshlet, Vertex},
 };
 
+mod bvh;
 mod simplify;
 
-#[derive(Copy, Clone)]
-struct MappedMeshlet {
-	vertex_offset: u32,
-	vertex_count: u32,
-	tri_offset: u32,
-	tri_count: u32,
-	bounding: Sphere<f32, f32>,
-	group_error: Sphere<f32, f32>,
-	parent_group_error: Sphere<f32, f32>,
-}
-
-impl MappedMeshlet {
+impl Meshlet {
 	fn vertices(&self) -> Range<usize> {
-		(self.vertex_offset as usize)..(self.vertex_offset as usize + self.vertex_count as usize)
+		(self.vert_offset as usize)..(self.vert_offset as usize + self.vert_count as usize)
 	}
 
 	fn tris(&self) -> Range<usize> {
-		(self.tri_offset as usize)..(self.tri_offset as usize + self.tri_count as usize * 3)
+		(self.index_offset as usize)..(self.index_offset as usize + self.tri_count as usize * 3)
 	}
 }
 
+#[derive(Clone)]
+struct MeshletGroup {
+	aabb: Aabb<f32>,
+	lod_bounds: Sphere<f32, f32>,
+	parent_error: f32,
+	meshlets: Range<u32>,
+}
+
 struct Meshlets {
-	vertices: Vec<Vertex>,
 	vertex_remap: Vec<u32>,
 	tris: Vec<u8>,
-	meshlets: Vec<MappedMeshlet>,
+	groups: Vec<MeshletGroup>,
+	meshlets: Vec<Meshlet>,
 }
 
 impl Meshlets {
 	fn add(&mut self, other: Meshlets) {
 		let vertex_offset = self.vertex_remap.len() as u32;
 		let tri_offset = self.tris.len() as u32;
+		let meshlet_offset = self.meshlets.len() as u32;
 		self.meshlets.extend(other.meshlets.into_iter().map(|mut m| {
-			m.vertex_offset += vertex_offset;
-			m.tri_offset += tri_offset;
+			m.vert_offset += vertex_offset;
+			m.index_offset += tri_offset;
 			m
 		}));
-		let vertex_data_offset = self.vertices.len() as u32;
-		self.vertices.extend(other.vertices);
-		self.vertex_remap
-			.extend(other.vertex_remap.into_iter().map(|v| v + vertex_data_offset));
+		self.vertex_remap.extend(other.vertex_remap);
 		self.tris.extend(other.tris);
+		self.groups.extend(other.groups.into_iter().map(|mut g| {
+			g.meshlets.start += meshlet_offset;
+			g.meshlets.end += meshlet_offset;
+			g
+		}));
 	}
 }
 
@@ -68,149 +69,113 @@ impl Importer<'_> {
 		let _e = s.enter();
 
 		let mesh = self.conv_to_mesh(mesh, materials)?;
-		let mut meshlets = self.generate_meshlets(mesh, None);
+		let mut meshlets = self.generate_meshlets(&mesh.vertices, &mesh.indices, None);
 
+		let mut bvh = bvh::BvhBuilder::default();
 		let mut simplify = 0..meshlets.meshlets.len();
 		let mut lod = 1;
 		while simplify.len() > 1 {
-			let s = debug_span!("generating lod", lod, meshlets = simplify.len());
+			let s = debug_span!(
+				"generating lod",
+				lod,
+				meshlets = simplify.len(),
+				groups = field::Empty,
+				min_error = field::Empty,
+				avg_error = field::Empty,
+				max_error = field::Empty,
+			);
 			let _e = s.enter();
 
 			let next_start = meshlets.meshlets.len();
-			let groups = self.generate_groups(simplify.clone(), &meshlets);
 
-			let par: Vec<_> = groups
+			let first = self.generate_groups(simplify.clone(), &mut meshlets);
+
+			// self.dump_groups_to_obj(name, lod, &mesh.vertices, &meshlets, first);
+
+			s.record("groups", meshlets.groups.len() - first);
+			let par: Vec<_> = meshlets.groups[first..]
 				.into_par_iter()
-				.filter(|x| x.len() > 1)
-				.filter_map(|group| {
-					let (mesh, group_error) = self.simplify_group(&group, &meshlets)?;
-					let n_meshlets = self.generate_meshlets(mesh, Some(group_error));
-					Some((group, group_error, n_meshlets))
+				.enumerate()
+				.filter(|(_, x)| x.meshlets.len() > 1)
+				.filter_map(|(i, group)| {
+					let (indices, parent_error) = self.simplify_group(&mesh.vertices, &meshlets, &group)?;
+					let n_meshlets =
+						self.generate_meshlets(&mesh.vertices, &indices, Some((group.lod_bounds, parent_error)));
+					Some((i, parent_error, n_meshlets))
 				})
 				.collect();
-			for (group, group_error, n_meshlets) in par {
-				for mid in group {
-					meshlets.meshlets[mid].parent_group_error = group_error;
-				}
+			let mut min_error = f32::MAX;
+			let mut avg_error = 0.0f32;
+			let mut max_error = 0.0f32;
+			let count = par.len();
+			for (group, parent_error, n_meshlets) in par {
 				meshlets.add(n_meshlets);
+				meshlets.groups[group + first].parent_error = parent_error;
+
+				min_error = min_error.min(parent_error);
+				avg_error += parent_error;
+				max_error = max_error.max(parent_error);
 			}
+			if count > 0 {
+				s.record("min_error", min_error);
+				s.record("avg_error", avg_error / count as f32);
+				s.record("max_error", max_error);
+			}
+
+			bvh.add_lod(first as _, &meshlets.groups[first..]);
 
 			simplify = next_start..meshlets.meshlets.len();
 			lod += 1;
 		}
 
-		Ok(self.convert_meshlets(meshlets))
+		let (bvh, depth) = bvh.build(&meshlets.groups);
+		Ok(self.convert_meshlets(mesh.vertices, meshlets, bvh, depth))
 	}
 
-	fn convert_meshlets(&self, meshlets: Meshlets) -> Mesh {
-		let vertices = meshlets.vertices;
-		let mut out = Mesh {
-			vertices: Vec::with_capacity(vertices.len()),
-			indices: Vec::with_capacity(meshlets.meshlets.len() * 124 * 3),
-			meshlets: Vec::with_capacity(meshlets.meshlets.len()),
-			material_ranges: Vec::new(),
-		};
-
-		out.meshlets.extend(meshlets.meshlets.into_iter().map(|m| {
-			let indices: Vec<_> = meshlets.tris[m.tris()].iter().map(|&x| x as u32).collect();
-			let vertices = meshlets.vertex_remap[m.vertices()]
-				.iter()
-				.map(|&x| vertices[x as usize]);
-
-			let index_offset = out.indices.len() as u32;
-			let vertex_offset = out.vertices.len() as u32;
-			let vert_count = vertices.len() as u8;
-			let tri_count = (indices.len() / 3) as u8;
-
-			out.vertices.extend(vertices);
-			out.indices.extend(indices.into_iter().map(|x| x as u8));
-			let start = out.material_ranges.len() as _;
-
-			Meshlet {
-				index_offset,
-				vertex_offset,
-				tri_count,
-				vert_count,
-				material_ranges: start..(out.material_ranges.len() as _),
-				bounding: m.bounding,
-				group_error: m.group_error,
-				parent_group_error: m.parent_group_error,
-			}
-		}));
-
-		out
-	}
-
-	fn generate_meshlets(&self, mesh: FullMesh, group_error: Option<Sphere<f32, f32>>) -> Meshlets {
+	fn generate_meshlets(
+		&self, vertices: &[Vertex], indices: &[u32], error: Option<(Sphere<f32, f32>, f32)>,
+	) -> Meshlets {
 		let s = trace_span!("building meshlets");
 		let _e = s.enter();
 
-		let adapter = VertexDataAdapter::new(
-			bytemuck::cast_slice(mesh.vertices.as_slice()),
-			std::mem::size_of::<Vertex>(),
-			0,
-		)
-		.unwrap();
-		let ms = meshopt::build_meshlets(&mesh.indices, &adapter, 64, 124, 0.5);
+		let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
+		let ms = meshopt::build_meshlets(indices, &adapter, 128, 124, 0.0);
 		let meshlets = ms
 			.meshlets
 			.iter()
 			.enumerate()
 			.map(|(i, m)| {
+				let aabb = bvh::calc_aabb(vertices.iter());
 				let mbounds = meshopt::compute_meshlet_bounds(ms.get(i), &adapter);
-				let center = Vec3::from(mbounds.center);
-				let group_error = group_error.unwrap_or(Sphere { center, radius: 0.0 });
-				MappedMeshlet {
-					vertex_offset: m.vertex_offset,
-					vertex_count: m.vertex_count,
-					tri_offset: m.triangle_offset,
-					tri_count: m.triangle_count,
-					bounding: Sphere {
-						center,
+				let (lod_bounds, error) = error.unwrap_or((
+					Sphere {
+						center: Vec3::from(mbounds.center),
 						radius: mbounds.radius,
 					},
-					group_error,
-					parent_group_error: Sphere {
-						center: group_error.center,
-						radius: f32::INFINITY,
-					},
+					0.0,
+				));
+
+				Meshlet {
+					vert_offset: m.vertex_offset,
+					vert_count: m.vertex_count as _,
+					index_offset: m.triangle_offset,
+					tri_count: m.triangle_count as _,
+					aabb,
+					lod_bounds,
+					error,
 				}
 			})
 			.collect();
 
 		Meshlets {
-			vertices: mesh.vertices,
 			vertex_remap: ms.vertices,
 			tris: ms.triangles,
+			groups: Vec::new(),
 			meshlets,
 		}
 	}
 
-	fn simplify_group(&self, group: &[usize], meshlets: &Meshlets) -> Option<(FullMesh, Sphere<f32, f32>)> {
-		let s = trace_span!("simplifying group");
-		let _e = s.enter();
-
-		let indices: Vec<_> = group
-			.iter()
-			.map(|&mid| meshlets.meshlets[mid])
-			.flat_map(|m| {
-				meshlets.tris[m.tris()]
-					.iter()
-					.map(move |&x| meshlets.vertex_remap[m.vertices()][x as usize])
-			})
-			.collect();
-		let (omesh, mut error) = simplify::simplify_mesh(&meshlets.vertices, &indices)?;
-
-		error.radius += group
-			.iter()
-			.map(|&x| meshlets.meshlets[x].group_error.radius)
-			.reduce(f32::max)
-			.unwrap();
-
-		Some((omesh, error))
-	}
-
-	fn generate_groups(&self, range: Range<usize>, meshlets: &Meshlets) -> Vec<Vec<usize>> {
+	fn generate_groups(&self, range: Range<usize>, meshlets: &mut Meshlets) -> usize {
 		let s = trace_span!("grouping meshlets");
 		let _e = s.enter();
 
@@ -221,9 +186,9 @@ impl Importer<'_> {
 		let mut adj = Vec::new();
 		let mut weights = Vec::new();
 
-		for mid in range.clone() {
+		for conn in connections {
 			xadj.push(adj.len() as i32);
-			for &(connected, count) in connections[mid - range.start].iter() {
+			for (connected, count) in conn {
 				adj.push(connected as i32);
 				weights.push(count as i32);
 			}
@@ -231,18 +196,90 @@ impl Importer<'_> {
 		xadj.push(adj.len() as i32);
 
 		let mut group_of = vec![0; range.len()];
-		let group_count = range.len().div_ceil(4);
+		let group_count = range.len().div_ceil(8);
 		Graph::new(1, group_count as _, &xadj, &adj)
 			.unwrap()
 			.set_adjwgt(&weights)
 			.part_kway(&mut group_of)
 			.unwrap();
 
-		let mut groups = vec![Vec::new(); group_count];
-		for (i, group) in group_of.into_iter().enumerate() {
-			groups[group as usize].push(i + range.start);
+		let first = meshlets.groups.len();
+
+		let mut meshlet_reorder: Vec<_> = range.clone().collect();
+		meshlet_reorder.sort_unstable_by_key(|&x| group_of[x - range.start]);
+
+		let mut out = vec![Meshlet::default(); meshlet_reorder.len()];
+		let mut last_group = 0;
+		let mut group = MeshletGroup {
+			aabb: bvh::aabb_default(),
+			lod_bounds: Sphere::default(),
+			parent_error: f32::MAX,
+			meshlets: range.start as u32..0,
+		};
+		for (i, p) in meshlet_reorder.into_iter().enumerate() {
+			let next = group_of[p - range.start];
+			if last_group != next {
+				let end = (i + range.start) as u32;
+				group.meshlets.end = end;
+				meshlets.groups.push(group.clone());
+
+				last_group = next;
+				group.aabb = bvh::aabb_default();
+				group.lod_bounds = Sphere::default();
+				group.meshlets.start = end;
+			}
+
+			let m = meshlets.meshlets[p];
+			group.aabb = group.aabb.union(m.aabb);
+			group.lod_bounds = bvh::merge_spheres(group.lod_bounds, m.lod_bounds);
+			out[i] = m;
 		}
-		groups
+		group.meshlets.end = (out.len() + range.start) as u32;
+		meshlets.groups.push(group);
+
+		meshlets.meshlets[range.start..].copy_from_slice(&out);
+
+		first
+	}
+
+	fn simplify_group(
+		&self, vertices: &[Vertex], meshlets: &Meshlets, group: &MeshletGroup,
+	) -> Option<(Vec<u32>, f32)> {
+		let s = trace_span!("simplifying group");
+		let _e = s.enter();
+
+		let ms = &meshlets.meshlets[(group.meshlets.start as usize)..(group.meshlets.end as usize)];
+		let indices: Vec<_> = ms
+			.iter()
+			.flat_map(|m| {
+				let verts = &meshlets.vertex_remap[m.vertices()];
+				meshlets.tris[m.tris()].iter().map(move |&x| verts[x as usize])
+			})
+			.collect();
+
+		let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
+
+		let mut error = 0.0;
+		let simplified = meshopt::simplify(
+			&indices,
+			&adapter,
+			indices.len() / 2,
+			group.aabb.size().reduce_partial_max(),
+			meshopt::SimplifyOptions::LockBorder
+				| meshopt::SimplifyOptions::Sparse
+				| meshopt::SimplifyOptions::ErrorAbsolute,
+			Some(&mut error),
+		);
+
+		for m in ms {
+			error = error.max(m.error);
+		}
+
+		if (simplified.len() as f32 / indices.len() as f32) < 0.65 {
+			Some((simplified, error))
+		} else {
+			None
+		}
 	}
 
 	fn find_connections(&self, range: Range<usize>, meshlets: &Meshlets) -> Vec<Vec<(usize, usize)>> {
@@ -280,11 +317,47 @@ impl Importer<'_> {
 		}
 
 		let mut connections = vec![Vec::new(); range.len()];
-		for ((m1, m2), count) in shared_count {
-			connections[m1 - range.start].push((m2 - range.start, count));
-			connections[m2 - range.start].push((m1 - range.start, count));
+		for ((mut m1, mut m2), count) in shared_count {
+			m1 -= range.start;
+			m2 -= range.start;
+			connections[m1].push((m2, count));
+			connections[m2].push((m1, count));
 		}
 		connections
+	}
+
+	fn convert_meshlets(&self, vertices: Vec<Vertex>, meshlets: Meshlets, bvh: Vec<BvhNode>, bvh_depth: u32) -> Mesh {
+		let mut outv = Vec::with_capacity(vertices.len());
+		let mut outi = Vec::with_capacity(meshlets.meshlets.len() * 124 * 3);
+		let meshlets = meshlets
+			.meshlets
+			.into_iter()
+			.map(|m| {
+				let indices: Vec<_> = meshlets.tris[m.tris()].iter().map(|&x| x as u32).collect();
+				let vertices = meshlets.vertex_remap[m.vertices()]
+					.iter()
+					.map(|&x| vertices[x as usize]);
+				let index_offset = outi.len() as u32;
+				let vert_offset = outv.len() as u32;
+				outv.extend(vertices);
+				outi.extend(indices.into_iter().map(|x| x as u8));
+				Meshlet {
+					vert_offset,
+					index_offset,
+					..m
+				}
+			})
+			.collect();
+		let aabb = bvh::calc_aabb(&outv);
+
+		Mesh {
+			vertices: outv,
+			indices: outi,
+			meshlets,
+			bvh,
+			bvh_depth,
+			aabb,
+		}
 	}
 
 	fn conv_to_mesh(&self, mesh: gltf::Mesh, _: &[Uuid]) -> ImportResult<FullMesh> {
@@ -364,6 +437,29 @@ impl Importer<'_> {
 		}
 
 		Ok(out)
+	}
+
+	#[cfg(feature = "disabled")]
+	fn dump_groups_to_obj(&self, name: &str, lod: usize, vertices: &[Vertex], meshlets: &Meshlets, first: usize) {
+		let mut o = String::new();
+		for v in vertices.iter() {
+			o.push_str(&format!("v {} {} {}\n", v.position.x, v.position.y, v.position.z));
+		}
+		for (i, g) in meshlets.groups[first..].iter().enumerate() {
+			o.push_str(&format!("o group {}\n", i));
+			for m in meshlets.meshlets[(g.meshlets.start as usize)..(g.meshlets.end as usize)].iter() {
+				let verts = &meshlets.vertex_remap[m.vertices()];
+				for t in meshlets.tris[m.tris()].chunks(3) {
+					o.push_str(&format!(
+						"f {} {} {}\n",
+						verts[t[0] as usize] + 1,
+						verts[t[1] as usize] + 1,
+						verts[t[2] as usize] + 1,
+					));
+				}
+			}
+		}
+		std::fs::write(format!("{name}_grouped_{lod}.obj"), o).unwrap();
 	}
 }
 

@@ -20,7 +20,7 @@ Hit EvalHit(BuiltInTriangleIntersectionAttributes attrs) {
 	};
 	float3 bary = float3(1.0 - attrs.barycentrics.x - attrs.barycentrics.y, attrs.barycentrics.x, attrs.barycentrics.y);
 	u32 meshlet_index = GeometryIndex();
-	MeshletData meshlet = MeshletData::get(instance.mesh, 0, meshlet_index); // TODO: fix
+	Meshlet meshlet = instance.mesh.load<Meshlet>(0, meshlet_index); // TODO: fix
 
 	u32 prim = PrimitiveIndex();
 	u32 indices = meshlet.tri(instance.mesh, prim);
