@@ -162,14 +162,19 @@ impl VisBuffer {
 	}
 
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
+		frame.start_region("visbuffer");
+
 		let res = self.setup.run(frame, &info, self.hzb_gen.sampler());
 		let this: &Self = self;
 
+		frame.start_region("early pass");
+		frame.start_region("cull");
 		this.early_instance_cull.run(frame, &info, &res);
 		this.early_bvh_cull.run(frame, &info, &res);
 		this.early_meshlet_cull.run(frame, &info, &res);
+		frame.end_region();
 
-		let mut pass = frame.pass("visbuffer early");
+		let mut pass = frame.pass("rasterize");
 		let camera = res.camera_mesh(&mut pass);
 		let read = res.input_mesh(&mut pass, res.meshlet_render_lists[0]);
 		let desc = ImageDesc {
@@ -214,22 +219,28 @@ impl VisBuffer {
 			depth,
 		};
 		pass.build(move |ctx| this.execute(ctx, io, true));
+		frame.end_region();
 
 		this.hzb_gen.run(frame, depth, res.hzb);
+		frame.start_region("late pass");
+		frame.start_region("cull");
 		this.late_instance_cull.run(frame, &info, &res);
 		this.late_bvh_cull.run(frame, &info, &res);
 		this.late_meshlet_cull.run(frame, &info, &res);
+		frame.end_region();
 
-		let mut pass = frame.pass("visbuffer late");
+		let mut pass = frame.pass("rasterize");
 		res.camera_mesh(&mut pass);
 
 		pass.reference(visbuffer, visbuffer_usage);
 		pass.reference(depth, depth_usage);
 		io.read = res.input_mesh(&mut pass, res.meshlet_render_lists[1]);
 		pass.build(move |ctx| this.execute(ctx, io, false));
+		frame.end_region();
 
 		this.hzb_gen.run(frame, depth, res.hzb);
 
+		frame.end_region();
 		visbuffer
 	}
 

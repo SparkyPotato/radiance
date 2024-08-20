@@ -76,11 +76,7 @@ impl MeshletCull {
 	}
 
 	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, resources: &Resources) {
-		let mut pass = frame.pass(if self.early {
-			"meshlet cull early"
-		} else {
-			"meshlet cull late"
-		});
+		let mut pass = frame.pass("meshlet cull");
 
 		let camera = resources.camera(&mut pass);
 		let hzb = resources.hzb(&mut pass);

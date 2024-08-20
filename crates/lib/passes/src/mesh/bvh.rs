@@ -87,7 +87,7 @@ impl BvhCull {
 		};
 		let mut next = resources.bvh_queues[1];
 		for i in 0..info.scene.max_depth() {
-			let mut pass = frame.pass(if self.early { "bvh cull early" } else { "bvh cull late" });
+			let mut pass = frame.pass("bvh cull");
 
 			let camera = resources.camera(&mut pass);
 			let hzb = resources.hzb(&mut pass);

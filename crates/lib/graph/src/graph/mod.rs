@@ -121,11 +121,17 @@ impl RenderGraph {
 	}
 }
 
+enum FrameEvent<'pass, 'graph> {
+	Pass(PassData<'pass, 'graph>),
+	RegionStart(Vec<u8, &'graph Arena>),
+	RegionEnd,
+}
+
 /// A frame being recorded to run in the render graph.
 pub struct Frame<'pass, 'graph> {
 	graph: &'graph mut RenderGraph,
 	device: &'graph Device,
-	passes: Vec<PassData<'pass, 'graph>, &'graph Arena>,
+	passes: Vec<FrameEvent<'pass, 'graph>, &'graph Arena>,
 	virtual_resources: Vec<VirtualResourceData<'graph>, &'graph Arena>,
 }
 
@@ -138,13 +144,18 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 
 	pub fn arena(&self) -> &'graph Arena { self.device.arena() }
 
+	pub fn start_region(&mut self, name: &str) {
+		let name = name.as_bytes().iter().copied().chain([0]);
+		self.passes
+			.push(FrameEvent::RegionStart(name.collect_in(self.device.arena())));
+	}
+
+	pub fn end_region(&mut self) { self.passes.push(FrameEvent::RegionEnd); }
+
 	/// Build a pass with a name.
 	pub fn pass(&mut self, name: &str) -> PassBuilder<'_, 'pass, 'graph> {
-		let name = name.as_bytes().iter().copied().chain([0]);
-		PassBuilder {
-			name: name.collect_in(self.device.arena()),
-			frame: self,
-		}
+		self.start_region(name);
+		PassBuilder { frame: self }
 	}
 }
 
@@ -178,39 +189,46 @@ impl Frame<'_, '_> {
 
 		let mut submitter = Submitter::new(arena, sync, &mut graph.frame_data, graph.curr_frame);
 
+		let mut region_stack = Vec::new_in(arena);
 		for (i, pass) in passes.into_iter().enumerate() {
-			{
-				let name = unsafe { std::str::from_utf8_unchecked(&pass.name[..pass.name.len() - 1]) };
-				let span = span!(Level::TRACE, "run pass", name = name);
-				let _e = span.enter();
+			match pass {
+				FrameEvent::RegionStart(name) => {
+					let span = span!(
+						Level::TRACE,
+						"graph exec",
+						name = unsafe { std::str::from_utf8_unchecked(&name[..name.len() - 1]) }
+					);
+					region_stack.push(span.entered());
 
-				let buf = submitter.pass(device)?;
-
-				unsafe {
-					if let Some(debug) = device.debug_utils_ext() {
-						debug.cmd_begin_debug_utils_label(
-							buf,
-							&vk::DebugUtilsLabelEXT::default()
-								.label_name(std::ffi::CStr::from_bytes_with_nul_unchecked(&pass.name)),
-						);
+					unsafe {
+						if let Some(debug) = device.debug_utils_ext() {
+							debug.cmd_begin_debug_utils_label(
+								submitter.pass(device)?,
+								&vk::DebugUtilsLabelEXT::default()
+									.label_name(std::ffi::CStr::from_bytes_with_nul_unchecked(&name)),
+							);
+						}
 					}
-				}
-
-				(pass.callback)(PassContext {
-					arena,
-					device,
-					buf,
-					base_id: graph.resource_base_id,
-					pass: i as u32,
-					resource_map: &mut resource_map,
-					caches: &mut graph.caches,
-				});
-
-				unsafe {
+				},
+				FrameEvent::RegionEnd => unsafe {
+					region_stack.pop();
 					if let Some(debug) = device.debug_utils_ext() {
-						debug.cmd_end_debug_utils_label(buf);
+						debug.cmd_end_debug_utils_label(submitter.pass(device)?);
 					}
-				}
+				},
+				FrameEvent::Pass(pass) => {
+					let buf = submitter.pass(device)?;
+
+					(pass.callback)(PassContext {
+						arena,
+						device,
+						buf,
+						base_id: graph.resource_base_id,
+						pass: i as u32,
+						resource_map: &mut resource_map,
+						caches: &mut graph.caches,
+					});
+				},
 			}
 		}
 
@@ -233,7 +251,6 @@ impl Frame<'_, '_> {
 
 /// A builder for a pass.
 pub struct PassBuilder<'frame, 'pass, 'graph> {
-	name: Vec<u8, &'graph Arena>,
 	frame: &'frame mut Frame<'pass, 'graph>,
 }
 
@@ -245,7 +262,7 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		unsafe {
 			let res = self.frame.virtual_resources.get_unchecked_mut(id);
 			res.lifetime.end = self.frame.passes.len() as _;
-			T::add_read_usage(res, self.frame.passes.len() as _, usage, self.name.allocator());
+			T::add_read_usage(res, self.frame.passes.len() as _, usage, self.frame.device.arena());
 		}
 	}
 
@@ -311,10 +328,10 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 	/// Build the pass with the given callback.
 	pub fn build(self, callback: impl FnOnce(PassContext<'_, 'graph>) + 'pass) {
 		let pass = PassData {
-			name: self.name,
 			callback: Box::new_in(callback, self.frame.device.arena()),
 		};
-		self.frame.passes.push(pass);
+		self.frame.passes.push(FrameEvent::Pass(pass));
+		self.frame.end_region();
 	}
 }
 
@@ -456,8 +473,6 @@ impl<T: VirtualResource> Clone for Res<T> {
 }
 
 struct PassData<'pass, 'graph> {
-	// UTF-8 encoded, null terminated.
-	name: Vec<u8, &'graph Arena>,
 	callback: Box<dyn FnOnce(PassContext<'_, 'graph>) + 'pass, &'graph Arena>,
 }
 

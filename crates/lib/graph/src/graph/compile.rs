@@ -21,8 +21,8 @@ use crate::{
 		},
 		ArenaMap,
 		Frame,
+		FrameEvent,
 		ImageDesc,
-		PassData,
 		RenderGraph,
 	},
 	resource::{BufferHandle, Subresource},
@@ -40,7 +40,7 @@ use crate::{
 };
 
 pub(super) struct CompiledFrame<'pass, 'graph> {
-	pub passes: Vec<PassData<'pass, 'graph>, &'graph Arena>,
+	pub passes: Vec<FrameEvent<'pass, 'graph>, &'graph Arena>,
 	/// First sync is before the first pass, then interspersed between passes, and then the last sync is after the last
 	/// pass.
 	pub sync: Vec<Sync<'graph>, &'graph Arena>,
@@ -514,7 +514,7 @@ struct SyncBuilder<'graph> {
 }
 
 impl<'graph> SyncBuilder<'graph> {
-	fn new<'temp, 'pass>(arena: &'graph Arena, passes: &'temp [PassData<'pass, 'graph>]) -> Self {
+	fn new<'temp, 'pass>(arena: &'graph Arena, passes: usize) -> Self {
 		Self {
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
@@ -525,7 +525,7 @@ impl<'graph> SyncBuilder<'graph> {
 					wait_barriers: InProgressDependencyInfo::default(arena),
 				},
 			})
-			.take(passes.len() + 1)
+			.take(passes + 1)
 			.collect_in(arena),
 			events: ArenaMap::with_hasher_in(Default::default(), arena),
 		}
@@ -711,15 +711,13 @@ impl ToImage for (vk::Image, vk::ImageLayout) {
 	fn to_image(self) -> (vk::Image, vk::ImageLayout) { self }
 }
 
-struct Synchronizer<'temp, 'pass, 'graph> {
+struct Synchronizer<'temp, 'graph> {
 	resource_map: &'temp ResourceMap<'graph>,
-	passes: &'temp [PassData<'pass, 'graph>],
+	passes: usize,
 }
 
-impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
-	fn new(resource_map: &'temp ResourceMap<'graph>, passes: &'temp [PassData<'pass, 'graph>]) -> Self {
-		Self { resource_map, passes }
-	}
+impl<'temp, 'graph> Synchronizer<'temp, 'graph> {
+	fn new(resource_map: &'temp ResourceMap<'graph>, passes: usize) -> Self { Self { resource_map, passes } }
 
 	fn do_sync_for<D, H: ToImage, U: Usage>(&mut self, sync: &mut SyncBuilder, res: &GpuData<D, H, U>) {
 		let mut usages = res.usages.iter().peekable();
@@ -847,7 +845,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			let span = span!(Level::TRACE, "synchronize");
 			let _e = span.enter();
 
-			Synchronizer::new(&resource_map, &self.passes).sync(device, &mut self.graph.caches.events)
+			Synchronizer::new(&resource_map, self.passes.len()).sync(device, &mut self.graph.caches.events)
 		}?;
 
 		Ok(CompiledFrame {

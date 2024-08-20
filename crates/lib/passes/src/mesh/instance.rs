@@ -78,11 +78,7 @@ impl InstanceCull {
 	}
 
 	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, resources: &Resources) {
-		let mut pass = frame.pass(if self.early {
-			"instance cull early"
-		} else {
-			"instance cull late"
-		});
+		let mut pass = frame.pass("instance cull");
 
 		let camera = resources.camera(&mut pass);
 		let hzb = resources.hzb(&mut pass);
