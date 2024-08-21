@@ -126,6 +126,7 @@ impl Renderer {
 				scene,
 				camera: self.camera.get(),
 				size: s,
+				debug_info: debug.debug_vis().requires_debug_info(),
 			},
 		);
 

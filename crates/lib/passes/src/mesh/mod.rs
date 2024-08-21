@@ -1,9 +1,12 @@
 use ash::{ext, vk};
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
-	device::{descriptor::BufferId, Device},
-	graph::{BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
-	resource::{BufferHandle, Image, ImageView, Resource, Subresource},
+	device::{
+		descriptor::{BufferId, ImageId},
+		Device,
+	},
+	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
+	resource::{BufferHandle, ImageView, Subresource},
 	util::pipeline::{no_blend, reverse_depth, simple_blend, GraphicsPipelineDesc},
 	Result,
 };
@@ -35,11 +38,13 @@ pub struct RenderInfo {
 	pub scene: RRef<Scene>,
 	pub camera: Camera,
 	pub size: Vec2<u32>,
+	pub debug_info: bool,
 }
 
 #[derive(Copy, Clone)]
 pub struct RenderOutput {
 	pub visbuffer: Res<ImageView>,
+	pub overdraw: Option<Res<ImageView>>,
 	pub early: Res<BufferHandle>,
 	pub late: Res<BufferHandle>,
 }
@@ -54,8 +59,8 @@ pub struct VisBuffer {
 	late_meshlet_cull: MeshletCull,
 	hzb_gen: HzbGen,
 	layout: vk::PipelineLayout,
-	early: vk::Pipeline,
-	late: vk::Pipeline,
+	no_debug: [vk::Pipeline; 2],
+	debug: [vk::Pipeline; 2],
 	mesh: ext::mesh_shader::Device,
 }
 
@@ -121,6 +126,7 @@ struct PassIO {
 	camera: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
 	depth: Res<ImageView>,
+	overdraw: Option<Res<ImageView>>,
 }
 
 impl VisBuffer {
@@ -129,9 +135,15 @@ impl VisBuffer {
 			let layout = device.device().create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT)
-						.size(std::mem::size_of::<PushConstants>() as u32)]),
+					.push_constant_ranges(&[
+						vk::PushConstantRange::default()
+							.stage_flags(vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT)
+							.size(std::mem::size_of::<PushConstants>() as _),
+						vk::PushConstantRange::default()
+							.stage_flags(vk::ShaderStageFlags::FRAGMENT)
+							.offset(std::mem::size_of::<PushConstants>() as _)
+							.size(std::mem::size_of::<ImageId>() as _),
+					]),
 				None,
 			)?;
 
@@ -145,14 +157,20 @@ impl VisBuffer {
 				late_meshlet_cull: MeshletCull::new(device, false)?,
 				hzb_gen: HzbGen::new(device)?,
 				layout,
-				early: Self::pipeline(device, layout, true)?,
-				late: Self::pipeline(device, layout, false)?,
+				no_debug: [
+					Self::pipeline(device, layout, true, false)?,
+					Self::pipeline(device, layout, false, false)?,
+				],
+				debug: [
+					Self::pipeline(device, layout, true, true)?,
+					Self::pipeline(device, layout, false, true)?,
+				],
 				mesh: ext::mesh_shader::Device::new(device.instance(), device.device()),
 			})
 		}
 	}
 
-	fn pipeline(device: &Device, layout: vk::PipelineLayout, early: bool) -> Result<vk::Pipeline> {
+	fn pipeline(device: &Device, layout: vk::PipelineLayout, early: bool, debug: bool) -> Result<vk::Pipeline> {
 		device.graphics_pipeline(&GraphicsPipelineDesc {
 			shaders: &[
 				device.shader(
@@ -165,7 +183,11 @@ impl VisBuffer {
 					None,
 				),
 				device.shader(
-					c_str!("radiance-passes/mesh/pixel"),
+					if debug {
+						c_str!("radiance-passes/mesh/debug")
+					} else {
+						c_str!("radiance-passes/mesh/pixel")
+					},
 					vk::ShaderStageFlags::FRAGMENT,
 					None,
 				),
@@ -229,6 +251,7 @@ impl VisBuffer {
 			},
 			depth_usage,
 		);
+		let overdraw = res.overdraw(&mut pass);
 		let mut io = PassIO {
 			early: true,
 			instances: info.scene.instances(),
@@ -236,6 +259,7 @@ impl VisBuffer {
 			camera,
 			visbuffer,
 			depth,
+			overdraw,
 		};
 		pass.build(move |ctx| this.execute(ctx, io, true));
 		frame.end_region();
@@ -253,6 +277,7 @@ impl VisBuffer {
 		res.mesh(&mut pass);
 		pass.reference(visbuffer, visbuffer_usage);
 		pass.reference(depth, depth_usage);
+		res.overdraw(&mut pass);
 		io.early = false;
 		pass.build(move |ctx| this.execute(ctx, io, false));
 		frame.end_region();
@@ -264,6 +289,7 @@ impl VisBuffer {
 			visbuffer,
 			early: io.meshlets[0],
 			late: io.meshlets[1],
+			overdraw,
 		}
 	}
 
@@ -347,11 +373,27 @@ impl VisBuffer {
 				}),
 			);
 
-			dev.cmd_bind_pipeline(
-				buf,
-				vk::PipelineBindPoint::GRAPHICS,
-				if io.early { self.early } else { self.late },
-			);
+			if let Some(o) = io.overdraw {
+				dev.cmd_bind_pipeline(
+					buf,
+					vk::PipelineBindPoint::GRAPHICS,
+					if io.early { self.debug[0] } else { self.debug[1] },
+				);
+				let id = pass.get(o).storage_id.unwrap();
+				dev.cmd_push_constants(
+					buf,
+					self.layout,
+					vk::ShaderStageFlags::FRAGMENT,
+					std::mem::size_of::<PushConstants>() as _,
+					bytes_of(&id),
+				);
+			} else {
+				dev.cmd_bind_pipeline(
+					buf,
+					vk::PipelineBindPoint::GRAPHICS,
+					if io.early { self.no_debug[0] } else { self.no_debug[1] },
+				);
+			}
 			self.mesh
 				.cmd_draw_mesh_tasks_indirect(buf, read.buffer, 0, 1, std::mem::size_of::<u32>() as u32 * 3);
 
@@ -368,8 +410,10 @@ impl VisBuffer {
 		self.early_meshlet_cull.destroy(device);
 		self.late_meshlet_cull.destroy(device);
 		self.hzb_gen.destroy(device);
-		device.device().destroy_pipeline(self.early, None);
-		device.device().destroy_pipeline(self.late, None);
+		device.device().destroy_pipeline(self.no_debug[0], None);
+		device.device().destroy_pipeline(self.no_debug[1], None);
+		device.device().destroy_pipeline(self.debug[0], None);
+		device.device().destroy_pipeline(self.debug[1], None);
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

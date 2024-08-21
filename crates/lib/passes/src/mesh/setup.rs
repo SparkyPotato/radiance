@@ -10,6 +10,7 @@ use radiance_graph::{
 		BufferUsageType,
 		ExternalImage,
 		Frame,
+		ImageDesc,
 		ImageUsage,
 		ImageUsageType,
 		PassBuilder,
@@ -39,6 +40,7 @@ pub struct Resources {
 	pub bvh_queues: [Res<BufferHandle>; 3],
 	pub meshlet_queues: [Res<BufferHandle>; 2],
 	pub meshlet_render_lists: [Res<BufferHandle>; 2],
+	pub overdraw: Option<Res<ImageView>>,
 }
 
 impl Resources {
@@ -114,6 +116,21 @@ impl Resources {
 			},
 		);
 		buf
+	}
+
+	pub fn overdraw(&self, pass: &mut PassBuilder) -> Option<Res<ImageView>> {
+		if let Some(o) = self.overdraw {
+			pass.reference(
+				o,
+				ImageUsage {
+					format: vk::Format::UNDEFINED,
+					usages: &[ImageUsageType::ShaderStorageWrite(Shader::Fragment)],
+					view_type: Some(vk::ImageViewType::TYPE_2D),
+					subresource: Subresource::default(),
+				},
+			);
+		}
+		self.overdraw
 	}
 }
 
@@ -201,6 +218,27 @@ impl Setup {
 				},
 			)
 		});
+		let overdraw = info.debug_info.then(|| {
+			pass.resource(
+				ImageDesc {
+					size: vk::Extent3D {
+						width: info.size.x,
+						height: info.size.y,
+						depth: 1,
+					},
+					format: vk::Format::R32_UINT,
+					levels: 1,
+					layers: 1,
+					samples: vk::SampleCountFlags::TYPE_1,
+				},
+				ImageUsage {
+					format: vk::Format::UNDEFINED,
+					usages: &[ImageUsageType::TransferWrite],
+					view_type: None,
+					subresource: Subresource::default(),
+				},
+			)
+		});
 
 		let res = info.size;
 		let cam = info.camera;
@@ -230,6 +268,21 @@ impl Setup {
 				);
 			}
 
+			if let Some(o) = overdraw {
+				dev.cmd_clear_color_image(
+					buf,
+					pass.get(o).image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&vk::ClearColorValue::default(),
+					&[vk::ImageSubresourceRange::default()
+						.aspect_mask(vk::ImageAspectFlags::COLOR)
+						.base_mip_level(0)
+						.level_count(vk::REMAINING_MIP_LEVELS)
+						.base_array_layer(0)
+						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+				);
+			}
+
 			for b in bvh_queues.into_iter().chain(meshlet_queues).chain(Some(late_instances)) {
 				dev.cmd_update_buffer(buf, pass.get(b).buffer, 0, bytes_of(&[0u32, 0, 1, 1]));
 			}
@@ -247,6 +300,7 @@ impl Setup {
 			bvh_queues,
 			meshlet_queues,
 			meshlet_render_lists,
+			overdraw,
 		}
 	}
 

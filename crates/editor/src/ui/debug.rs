@@ -1,10 +1,12 @@
-use egui::{ComboBox, Context, Window};
+use egui::{ComboBox, Context, DragValue, Window};
 use radiance_graph::{alloc::AllocatorVisualizer, device::Device};
 use radiance_passes::debug::mesh::DebugVis;
 
 pub struct Debug {
 	pub enabled: bool,
 	debug_vis: DebugVis,
+	bottom: u32,
+	top: u32,
 	alloc: AllocatorVisualizer,
 	alloc_breakdown: bool,
 	alloc_block: bool,
@@ -16,6 +18,8 @@ impl Debug {
 		Self {
 			enabled: false,
 			debug_vis: DebugVis::Meshlets,
+			bottom: 0,
+			top: 1000,
 			alloc: AllocatorVisualizer::new(),
 			alloc_breakdown: false,
 			alloc_block: false,
@@ -23,28 +27,47 @@ impl Debug {
 		}
 	}
 
-	fn text_of_vis(vis: DebugVis) -> &'static str {
+	fn vis_to_index(vis: DebugVis) -> usize {
 		match vis {
-			DebugVis::Triangles => "triangles",
-			DebugVis::Meshlets => "meshlets",
+			DebugVis::Triangles => 0,
+			DebugVis::Meshlets => 1,
+			DebugVis::Overdraw(..) => 2,
 		}
 	}
 
-	fn vis_from_usize(val: usize) -> DebugVis {
-		match val {
-			0 => DebugVis::Triangles,
-			1 => DebugVis::Meshlets,
+	fn text_of_index(vis: usize) -> &'static str {
+		match vis {
+			0 => "triangles",
+			1 => "meshlets",
+			2 => "overdraw",
 			_ => unreachable!(),
 		}
 	}
 
 	pub fn render(&mut self, device: &Device, ctx: &Context) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
-			let mut sel = self.debug_vis as usize;
+			let mut sel = Self::vis_to_index(self.debug_vis);
 			ComboBox::from_label("debug vis")
-				.selected_text(Self::text_of_vis(self.debug_vis))
-				.show_index(ui, &mut sel, 2, |x| Self::text_of_vis(Self::vis_from_usize(x)));
-			self.debug_vis = Self::vis_from_usize(sel);
+				.selected_text(Self::text_of_index(sel))
+				.show_index(ui, &mut sel, 3, Self::text_of_index);
+			self.debug_vis = match sel {
+				0 => DebugVis::Triangles,
+				1 => DebugVis::Meshlets,
+				2 => DebugVis::Overdraw(self.bottom, self.top),
+				_ => unreachable!(),
+			};
+
+			match &mut self.debug_vis {
+				DebugVis::Overdraw(b, t) => {
+					ui.horizontal(|ui| {
+						ui.add(DragValue::new(&mut self.bottom).speed(0.2));
+						ui.add(DragValue::new(&mut self.top).speed(0.2));
+					});
+					*b = self.bottom;
+					*t = self.top;
+				},
+				_ => {},
+			}
 
 			ui.checkbox(&mut self.alloc_breakdown, "gpu alloc breakdown");
 			ui.checkbox(&mut self.alloc_block, "gpu alloc blocks");

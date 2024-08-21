@@ -20,11 +20,17 @@ use crate::mesh::RenderOutput;
 pub enum DebugVis {
 	Triangles,
 	Meshlets,
+	Overdraw(u32, u32),
+}
+
+impl DebugVis {
+	pub fn requires_debug_info(self) -> bool { matches!(self, Self::Overdraw(..)) }
 }
 
 pub struct DebugMesh {
 	triangles: vk::Pipeline,
 	meshlets: vk::Pipeline,
+	overdraw: vk::Pipeline,
 	layout: vk::PipelineLayout,
 }
 
@@ -32,8 +38,11 @@ pub struct DebugMesh {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	visbuffer: ImageId,
+	overdraw: Option<ImageId>,
 	early: BufferId,
 	late: BufferId,
+	bottom: u32,
+	top: u32,
 }
 
 impl DebugMesh {
@@ -62,13 +71,11 @@ impl DebugMesh {
 				None,
 			)?;
 
-			let triangles = Self::pipeline(device, layout, c_str!("radiance-passes/debug/triangles"))?;
-			let meshlets = Self::pipeline(device, layout, c_str!("radiance-passes/debug/meshlets"))?;
-
 			Ok(Self {
 				layout,
-				triangles,
-				meshlets,
+				triangles: Self::pipeline(device, layout, c_str!("radiance-passes/debug/triangles"))?,
+				meshlets: Self::pipeline(device, layout, c_str!("radiance-passes/debug/meshlets"))?,
+				overdraw: Self::pipeline(device, layout, c_str!("radiance-passes/debug/overdraw"))?,
 			})
 		}
 	}
@@ -77,15 +84,13 @@ impl DebugMesh {
 		&'pass self, frame: &mut Frame<'pass, '_>, vis: DebugVis, output: RenderOutput,
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("debug meshlets");
-		pass.reference(
-			output.visbuffer,
-			ImageUsage {
-				format: vk::Format::R32_UINT,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
-		);
+		let usage = ImageUsage {
+			format: vk::Format::R32_UINT,
+			usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
+			view_type: Some(vk::ImageViewType::TYPE_2D),
+			subresource: Subresource::default(),
+		};
+		pass.reference(output.visbuffer, usage);
 		let out = pass.resource(
 			output.visbuffer,
 			ImageUsage {
@@ -95,6 +100,9 @@ impl DebugMesh {
 				subresource: Subresource::default(),
 			},
 		);
+		if let Some(o) = output.overdraw {
+			pass.reference(o, usage);
+		}
 
 		pass.build(move |ctx| self.execute(ctx, vis, output, out));
 
@@ -148,6 +156,7 @@ impl DebugMesh {
 				match vis {
 					DebugVis::Triangles => self.triangles,
 					DebugVis::Meshlets => self.meshlets,
+					DebugVis::Overdraw(..) => self.overdraw,
 				},
 			);
 			dev.cmd_bind_descriptor_sets(
@@ -158,6 +167,10 @@ impl DebugMesh {
 				&[pass.device.descriptors().set()],
 				&[],
 			);
+			let (bottom, top) = match vis {
+				DebugVis::Overdraw(bottom, top) => (bottom, top),
+				_ => (0, 0),
+			};
 			dev.cmd_push_constants(
 				buf,
 				self.layout,
@@ -165,8 +178,11 @@ impl DebugMesh {
 				0,
 				bytes_of(&PushConstants {
 					visbuffer: visbuffer.id.unwrap(),
+					overdraw: output.overdraw.map(|x| pass.get(x).id.unwrap()),
 					early: pass.get(output.early).id.unwrap(),
 					late: pass.get(output.late).id.unwrap(),
+					bottom,
+					top,
 				}),
 			);
 

@@ -5,8 +5,11 @@
 
 struct PushConstants {
 	Tex2D visbuffer;
+	Tex2D overdraw;
 	MeshletQueue early;
 	MeshletQueue late;
+	u32 bottom;
+	u32 top;
 };
 
 PUSH PushConstants Constants;
