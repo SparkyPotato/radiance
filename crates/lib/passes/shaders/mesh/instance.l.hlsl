@@ -84,7 +84,7 @@ void main(u32 tid: SV_DispatchThreadID) {
 	float4x4 omvp = occ_camera(mvp, transform);
 
 	Cull c = Cull::init(mv, mvp, Constants.res, camera.h);
-	OccCull oc = OccCull::init(omvp, Constants.res, Constants.hzb, Constants.hzb_sampler);
+	OccCull oc = OccCull::init(omvp, Constants.res, camera.near, Constants.hzb, Constants.hzb_sampler);
 	Aabb aabb = instance.aabb;
 	if (frustum_cull(c, aabb)) return;
 

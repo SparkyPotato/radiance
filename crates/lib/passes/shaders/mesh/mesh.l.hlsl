@@ -13,20 +13,39 @@ struct PrimitiveOutput {
 struct PushConstants {
 	Buf<Instance> instances;
 	Buf<Camera> camera;
-	MeshletQueue read;
+	MeshletQueue early;
+	MeshletQueue late;
 };
 
 PUSH PushConstants Constants;
 
+#ifdef EARLY
+MeshletPointer get(u32 gid) {
+	return Constants.early.get(gid);
+}
+
+u32 meshlet_id(u32 gid) {
+	return gid;
+}
+#else
+MeshletPointer get(u32 gid) {
+	return Constants.late.get(gid);
+}
+
+u32 meshlet_id(u32 gid) {
+	return Constants.early.len() + gid;
+}
+#endif
+
 [outputtopology("triangle")]
-[numthreads(128, 1, 1)]
+[numthreads(64, 1, 1)]
 void main(
 	u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex,
-	out vertices VertexOutput vertices[128],
+	out vertices VertexOutput vertices[64],
 	out indices uint3 triangles[124],
 	out primitives PrimitiveOutput visbuffer[124]
 ) {
-	MeshletPointer p = Constants.read.get(gid);
+	MeshletPointer p = get(gid);
 	Instance instance = Constants.instances.load(p.instance);
 	Meshlet meshlet = instance.mesh.load<Meshlet>(p.meshlet_offset, 0);
 	Camera camera = Constants.camera.load(0);
@@ -42,11 +61,13 @@ void main(
 		vertices[gtid].position = mul(mvp, float4(vertex.position, 1.f));
 	}
 
-	if (gtid < tri_count) {
-		u32 indices = meshlet.tri(instance.mesh, gtid);
-		triangles[gtid] = uint3(indices >> 0, indices >> 8, indices >> 16) & 0xff;
+	[unroll]
+	for (u32 i = 0; i < 2; i++) {
+		u32 t = min(gtid + i * 64, tri_count);
+		u32 indices = meshlet.tri(instance.mesh, t);
+		triangles[t] = uint3(indices >> 0, indices >> 8, indices >> 16) & 0xff;
 
-		VisBufferData data = { gid, gtid }; // TODO: fix
-		visbuffer[gtid].data = data.encode();
+		VisBufferData data = { meshlet_id(gid), t };
+		visbuffer[t].data = data.encode();
 	}
 }

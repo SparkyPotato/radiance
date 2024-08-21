@@ -1,7 +1,12 @@
+use std::ffi::CStr;
+
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
-	device::{descriptor::ImageId, Device},
+	device::{
+		descriptor::{BufferId, ImageId},
+		Device,
+	},
 	graph::{Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{ImageView, Subresource},
 	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
@@ -9,8 +14,17 @@ use radiance_graph::{
 };
 use radiance_shader_compiler::c_str;
 
-pub struct DebugMeshlets {
-	pipeline: vk::Pipeline,
+use crate::mesh::RenderOutput;
+
+#[derive(Copy, Clone)]
+pub enum DebugVis {
+	Triangles,
+	Meshlets,
+}
+
+pub struct DebugMesh {
+	triangles: vk::Pipeline,
+	meshlets: vk::Pipeline,
 	layout: vk::PipelineLayout,
 }
 
@@ -18,9 +32,25 @@ pub struct DebugMeshlets {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	visbuffer: ImageId,
+	early: BufferId,
+	late: BufferId,
 }
 
-impl DebugMeshlets {
+impl DebugMesh {
+	fn pipeline(device: &Device, layout: vk::PipelineLayout, name: &CStr) -> Result<vk::Pipeline> {
+		device.graphics_pipeline(&GraphicsPipelineDesc {
+			layout,
+			shaders: &[
+				device.shader(c_str!("radiance-graph/util/screen"), vk::ShaderStageFlags::VERTEX, None),
+				device.shader(name, vk::ShaderStageFlags::FRAGMENT, None),
+			],
+			raster: &no_cull(),
+			blend: &simple_blend(&[no_blend()]),
+			color_attachments: &[vk::Format::R8G8B8A8_SRGB],
+			..Default::default()
+		})
+	}
+
 	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
@@ -32,30 +62,23 @@ impl DebugMeshlets {
 				None,
 			)?;
 
-			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
-				layout,
-				shaders: &[
-					device.shader(c_str!("radiance-graph/util/screen"), vk::ShaderStageFlags::VERTEX, None),
-					device.shader(
-						c_str!("radiance-passes/debug/meshlet"),
-						vk::ShaderStageFlags::FRAGMENT,
-						None,
-					),
-				],
-				raster: &no_cull(),
-				blend: &simple_blend(&[no_blend()]),
-				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
-				..Default::default()
-			})?;
+			let triangles = Self::pipeline(device, layout, c_str!("radiance-passes/debug/triangles"))?;
+			let meshlets = Self::pipeline(device, layout, c_str!("radiance-passes/debug/meshlets"))?;
 
-			Ok(Self { layout, pipeline })
+			Ok(Self {
+				layout,
+				triangles,
+				meshlets,
+			})
 		}
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, visbuffer: Res<ImageView>) -> Res<ImageView> {
+	pub fn run<'pass>(
+		&'pass self, frame: &mut Frame<'pass, '_>, vis: DebugVis, output: RenderOutput,
+	) -> Res<ImageView> {
 		let mut pass = frame.pass("debug meshlets");
 		pass.reference(
-			visbuffer,
+			output.visbuffer,
 			ImageUsage {
 				format: vk::Format::R32_UINT,
 				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
@@ -63,8 +86,8 @@ impl DebugMeshlets {
 				subresource: Subresource::default(),
 			},
 		);
-		let output = pass.resource(
-			visbuffer,
+		let out = pass.resource(
+			output.visbuffer,
 			ImageUsage {
 				format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
 				usages: &[ImageUsageType::ColorAttachmentWrite],
@@ -73,13 +96,13 @@ impl DebugMeshlets {
 			},
 		);
 
-		pass.build(move |ctx| self.execute(ctx, visbuffer, output));
+		pass.build(move |ctx| self.execute(ctx, vis, output, out));
 
-		output
+		out
 	}
 
-	fn execute(&self, mut pass: PassContext, visbuffer: Res<ImageView>, out: Res<ImageView>) {
-		let visbuffer = pass.get(visbuffer);
+	fn execute(&self, mut pass: PassContext, vis: DebugVis, output: RenderOutput, out: Res<ImageView>) {
+		let visbuffer = pass.get(output.visbuffer);
 		let out = pass.get(out);
 
 		let dev = pass.device.device();
@@ -119,7 +142,14 @@ impl DebugMeshlets {
 				}],
 			);
 			dev.cmd_set_scissor(buf, 0, &[area]);
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+			dev.cmd_bind_pipeline(
+				buf,
+				vk::PipelineBindPoint::GRAPHICS,
+				match vis {
+					DebugVis::Triangles => self.triangles,
+					DebugVis::Meshlets => self.meshlets,
+				},
+			);
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::GRAPHICS,
@@ -135,6 +165,8 @@ impl DebugMeshlets {
 				0,
 				bytes_of(&PushConstants {
 					visbuffer: visbuffer.id.unwrap(),
+					early: pass.get(output.early).id.unwrap(),
+					late: pass.get(output.late).id.unwrap(),
 				}),
 			);
 
@@ -145,7 +177,8 @@ impl DebugMeshlets {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		device.device().destroy_pipeline(self.pipeline, None);
+		device.device().destroy_pipeline(self.triangles, None);
+		device.device().destroy_pipeline(self.meshlets, None);
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

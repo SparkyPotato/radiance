@@ -139,7 +139,7 @@ impl Importer<'_> {
 		let _e = s.enter();
 
 		let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
-		let ms = meshopt::build_meshlets(indices, &adapter, 128, 124, 0.0);
+		let ms = meshopt::build_meshlets(indices, &adapter, 64, 124, 0.0);
 		let meshlets = ms
 			.meshlets
 			.iter()
@@ -270,6 +270,7 @@ impl Importer<'_> {
 				| meshopt::SimplifyOptions::ErrorAbsolute,
 			Some(&mut error),
 		);
+		error *= 0.5;
 
 		for m in ms {
 			error = error.max(m.error);

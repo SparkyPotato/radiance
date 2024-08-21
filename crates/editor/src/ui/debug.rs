@@ -1,16 +1,10 @@
 use egui::{ComboBox, Context, Window};
 use radiance_graph::{alloc::AllocatorVisualizer, device::Device};
-
-#[derive(Copy, Clone)]
-pub enum RenderMode {
-	Realtime,
-	GroundTruth,
-	CpuPath,
-}
+use radiance_passes::debug::mesh::DebugVis;
 
 pub struct Debug {
 	pub enabled: bool,
-	render_mode: RenderMode,
+	debug_vis: DebugVis,
 	alloc: AllocatorVisualizer,
 	alloc_breakdown: bool,
 	alloc_block: bool,
@@ -21,7 +15,7 @@ impl Debug {
 	pub fn new() -> Self {
 		Self {
 			enabled: false,
-			render_mode: RenderMode::Realtime,
+			debug_vis: DebugVis::Meshlets,
 			alloc: AllocatorVisualizer::new(),
 			alloc_breakdown: false,
 			alloc_block: false,
@@ -29,21 +23,28 @@ impl Debug {
 		}
 	}
 
+	fn text_of_vis(vis: DebugVis) -> &'static str {
+		match vis {
+			DebugVis::Triangles => "triangles",
+			DebugVis::Meshlets => "meshlets",
+		}
+	}
+
+	fn vis_from_usize(val: usize) -> DebugVis {
+		match val {
+			0 => DebugVis::Triangles,
+			1 => DebugVis::Meshlets,
+			_ => unreachable!(),
+		}
+	}
+
 	pub fn render(&mut self, device: &Device, ctx: &Context) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
-			let mut x = self.render_mode as usize;
-			ComboBox::from_label("render mode").show_index(ui, &mut x, 3, |x| match x {
-				0 => "Realtime",
-				1 => "Ground Truth",
-				2 => "CPU Path",
-				_ => unreachable!(),
-			});
-			self.render_mode = match x {
-				0 => RenderMode::Realtime,
-				1 => RenderMode::GroundTruth,
-				2 => RenderMode::CpuPath,
-				_ => unreachable!(),
-			};
+			let mut sel = self.debug_vis as usize;
+			ComboBox::from_label("debug vis")
+				.selected_text(Self::text_of_vis(self.debug_vis))
+				.show_index(ui, &mut sel, 2, |x| Self::text_of_vis(Self::vis_from_usize(x)));
+			self.debug_vis = Self::vis_from_usize(sel);
 
 			ui.checkbox(&mut self.alloc_breakdown, "gpu alloc breakdown");
 			ui.checkbox(&mut self.alloc_block, "gpu alloc blocks");
@@ -65,5 +66,5 @@ impl Debug {
 
 	pub fn set_arena_size(&mut self, size: usize) { self.arena_size = size; }
 
-	pub fn render_mode(&self) -> RenderMode { self.render_mode }
+	pub fn debug_vis(&self) -> DebugVis { self.debug_vis }
 }

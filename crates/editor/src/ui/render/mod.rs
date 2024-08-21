@@ -8,9 +8,7 @@ use radiance_graph::{
 };
 use radiance_passes::{
 	asset::{rref::RRef, scene, AssetRuntime},
-	cpu_path::{self, CpuPath},
-	debug::meshlet::DebugMeshlets,
-	ground_truth::{self, GroundTruth},
+	debug::mesh::DebugMesh,
 	mesh::{RenderInfo, VisBuffer},
 	tonemap::aces::AcesTonemap,
 };
@@ -20,7 +18,7 @@ use winit::event::WindowEvent;
 
 use crate::{
 	ui::{
-		debug::{Debug, RenderMode},
+		debug::Debug,
 		render::camera::{CameraController, Mode},
 	},
 	window::Window,
@@ -37,9 +35,9 @@ enum Scene {
 pub struct Renderer {
 	scene: Scene,
 	visbuffer: VisBuffer,
-	debug: DebugMeshlets,
-	ground_truth: GroundTruth,
-	cpu_path: CpuPath,
+	debug: DebugMesh,
+	// ground_truth: GroundTruth,
+	// cpu_path: CpuPath,
 	tonemap: AcesTonemap,
 	runtime: AssetRuntime,
 	camera: CameraController,
@@ -50,9 +48,9 @@ impl Renderer {
 		Ok(Self {
 			scene: Scene::None,
 			visbuffer: VisBuffer::new(device)?,
-			debug: DebugMeshlets::new(device)?,
-			ground_truth: GroundTruth::new(device)?,
-			cpu_path: CpuPath::new(),
+			debug: DebugMesh::new(device)?,
+			// ground_truth: GroundTruth::new(device)?,
+			// cpu_path: CpuPath::new(),
 			tonemap: AcesTonemap::new(device)?,
 			runtime: AssetRuntime::new(device)?,
 			camera: CameraController::new(),
@@ -122,42 +120,16 @@ impl Renderer {
 		self.camera.control(ctx);
 
 		let s = Vec2::new(size.x as u32, size.y as u32);
-		let img = match debug.render_mode() {
-			RenderMode::Realtime => {
-				let visbuffer = self.visbuffer.run(
-					frame,
-					RenderInfo {
-						scene,
-						camera: self.camera.get(),
-						size: s,
-					},
-				);
-				self.debug.run(frame, visbuffer)
+		let visbuffer = self.visbuffer.run(
+			frame,
+			RenderInfo {
+				scene,
+				camera: self.camera.get(),
+				size: s,
 			},
-			RenderMode::GroundTruth => {
-				let rt = self.ground_truth.run(
-					frame,
-					ground_truth::RenderInfo {
-						scene,
-						materials: self.runtime.materials(),
-						camera: self.camera.get(),
-						size: s,
-					},
-				);
-				self.tonemap.run(frame, rt)
-			},
-			RenderMode::CpuPath => {
-				let rt = self.cpu_path.run(
-					frame,
-					cpu_path::RenderInfo {
-						scene,
-						camera: self.camera.get(),
-						size: s,
-					},
-				);
-				self.tonemap.run(frame, rt)
-			},
-		};
+		);
+
+		let img = self.debug.run(frame, debug.debug_vis(), visbuffer);
 		ui.image((to_texture_id(img), size));
 
 		Some(false)
@@ -184,8 +156,6 @@ impl Renderer {
 		self.scene = Scene::None;
 		self.visbuffer.destroy(device);
 		self.debug.destroy(device);
-		self.ground_truth.destroy(device);
-		drop(self.cpu_path);
 		self.runtime.destroy(device);
 		self.tonemap.destroy(device);
 	}

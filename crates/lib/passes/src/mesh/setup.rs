@@ -88,17 +88,19 @@ impl Resources {
 		buf
 	}
 
-	pub fn input_mesh(&self, pass: &mut PassBuilder, buf: Res<BufferHandle>) -> Res<BufferHandle> {
-		pass.reference(
-			buf,
-			BufferUsage {
-				usages: &[
-					BufferUsageType::IndirectBuffer,
-					BufferUsageType::ShaderStorageRead(Shader::Mesh),
-				],
-			},
-		);
-		buf
+	pub fn mesh(&self, pass: &mut PassBuilder) -> [Res<BufferHandle>; 2] {
+		for m in self.meshlet_render_lists {
+			pass.reference(
+				m,
+				BufferUsage {
+					usages: &[
+						BufferUsageType::IndirectBuffer,
+						BufferUsageType::ShaderStorageRead(Shader::Mesh),
+					],
+				},
+			);
+		}
+		self.meshlet_render_lists
 	}
 
 	pub fn output(&self, pass: &mut PassBuilder, buf: Res<BufferHandle>) -> Res<BufferHandle> {

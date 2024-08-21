@@ -52,7 +52,7 @@ pub struct Meshlet {
 	pub error: f32,
 }
 
-/// A mesh consisting of multiple submeshes, each with a material assigned to it.
+/// A mesh.
 #[derive(Encode, Decode)]
 pub struct Mesh {
 	/// Vertices of the mesh.

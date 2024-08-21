@@ -37,6 +37,13 @@ pub struct RenderInfo {
 	pub size: Vec2<u32>,
 }
 
+#[derive(Copy, Clone)]
+pub struct RenderOutput {
+	pub visbuffer: Res<ImageView>,
+	pub early: Res<BufferHandle>,
+	pub late: Res<BufferHandle>,
+}
+
 pub struct VisBuffer {
 	setup: Setup,
 	early_instance_cull: InstanceCull,
@@ -47,7 +54,8 @@ pub struct VisBuffer {
 	late_meshlet_cull: MeshletCull,
 	hzb_gen: HzbGen,
 	layout: vk::PipelineLayout,
-	pipeline: vk::Pipeline,
+	early: vk::Pipeline,
+	late: vk::Pipeline,
 	mesh: ext::mesh_shader::Device,
 }
 
@@ -101,14 +109,16 @@ impl CameraData {
 struct PushConstants {
 	instances: BufferId,
 	camera: BufferId,
-	read: BufferId,
+	early: BufferId,
+	late: BufferId,
 }
 
 #[derive(Copy, Clone)]
 struct PassIO {
+	early: bool,
 	instances: BufferId,
+	meshlets: [Res<BufferHandle>; 2],
 	camera: Res<BufferHandle>,
-	read: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
 	depth: Res<ImageView>,
 }
@@ -124,26 +134,6 @@ impl VisBuffer {
 						.size(std::mem::size_of::<PushConstants>() as u32)]),
 				None,
 			)?;
-			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
-				shaders: &[
-					device.shader(
-						c_str!("radiance-passes/mesh/mesh"),
-						vk::ShaderStageFlags::MESH_EXT,
-						None,
-					),
-					device.shader(
-						c_str!("radiance-passes/mesh/pixel"),
-						vk::ShaderStageFlags::FRAGMENT,
-						None,
-					),
-				],
-				depth: &reverse_depth(),
-				blend: &simple_blend(&[no_blend()]),
-				layout,
-				color_attachments: &[vk::Format::R32_UINT],
-				depth_attachment: vk::Format::D32_SFLOAT,
-				..Default::default()
-			})?;
 
 			Ok(Self {
 				setup: Setup::new(),
@@ -155,13 +145,41 @@ impl VisBuffer {
 				late_meshlet_cull: MeshletCull::new(device, false)?,
 				hzb_gen: HzbGen::new(device)?,
 				layout,
-				pipeline,
+				early: Self::pipeline(device, layout, true)?,
+				late: Self::pipeline(device, layout, false)?,
 				mesh: ext::mesh_shader::Device::new(device.instance(), device.device()),
 			})
 		}
 	}
 
-	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
+	fn pipeline(device: &Device, layout: vk::PipelineLayout, early: bool) -> Result<vk::Pipeline> {
+		device.graphics_pipeline(&GraphicsPipelineDesc {
+			shaders: &[
+				device.shader(
+					if early {
+						c_str!("radiance-passes/mesh/mesh_early")
+					} else {
+						c_str!("radiance-passes/mesh/mesh_late")
+					},
+					vk::ShaderStageFlags::MESH_EXT,
+					None,
+				),
+				device.shader(
+					c_str!("radiance-passes/mesh/pixel"),
+					vk::ShaderStageFlags::FRAGMENT,
+					None,
+				),
+			],
+			depth: &reverse_depth(),
+			blend: &simple_blend(&[no_blend()]),
+			layout,
+			color_attachments: &[vk::Format::R32_UINT],
+			depth_attachment: vk::Format::D32_SFLOAT,
+			..Default::default()
+		})
+	}
+
+	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> RenderOutput {
 		frame.start_region("visbuffer");
 
 		let res = self.setup.run(frame, &info, self.hzb_gen.sampler());
@@ -176,7 +194,7 @@ impl VisBuffer {
 
 		let mut pass = frame.pass("rasterize");
 		let camera = res.camera_mesh(&mut pass);
-		let read = res.input_mesh(&mut pass, res.meshlet_render_lists[0]);
+		let meshlets = res.mesh(&mut pass);
 		let desc = ImageDesc {
 			size: vk::Extent3D {
 				width: info.size.x,
@@ -212,9 +230,10 @@ impl VisBuffer {
 			depth_usage,
 		);
 		let mut io = PassIO {
+			early: true,
 			instances: info.scene.instances(),
+			meshlets,
 			camera,
-			read,
 			visbuffer,
 			depth,
 		};
@@ -231,23 +250,27 @@ impl VisBuffer {
 
 		let mut pass = frame.pass("rasterize");
 		res.camera_mesh(&mut pass);
-
+		res.mesh(&mut pass);
 		pass.reference(visbuffer, visbuffer_usage);
 		pass.reference(depth, depth_usage);
-		io.read = res.input_mesh(&mut pass, res.meshlet_render_lists[1]);
+		io.early = false;
 		pass.build(move |ctx| this.execute(ctx, io, false));
 		frame.end_region();
 
 		this.hzb_gen.run(frame, depth, res.hzb);
 
 		frame.end_region();
-		visbuffer
+		RenderOutput {
+			visbuffer,
+			early: io.meshlets[0],
+			late: io.meshlets[1],
+		}
 	}
 
 	fn execute(&self, mut pass: PassContext, io: PassIO, is_early: bool) {
 		let dev = pass.device.device();
 		let buf = pass.buf;
-		let read = pass.get(io.read);
+		let read = pass.get(if io.early { io.meshlets[0] } else { io.meshlets[1] });
 		let visbuffer = pass.get(io.visbuffer);
 		let depth = pass.get(io.depth);
 		unsafe {
@@ -319,11 +342,16 @@ impl VisBuffer {
 				bytes_of(&PushConstants {
 					instances: io.instances,
 					camera: pass.get(io.camera).id.unwrap(),
-					read: read.id.unwrap(),
+					early: pass.get(io.meshlets[0]).id.unwrap(),
+					late: pass.get(io.meshlets[1]).id.unwrap(),
 				}),
 			);
 
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+			dev.cmd_bind_pipeline(
+				buf,
+				vk::PipelineBindPoint::GRAPHICS,
+				if io.early { self.early } else { self.late },
+			);
 			self.mesh
 				.cmd_draw_mesh_tasks_indirect(buf, read.buffer, 0, 1, std::mem::size_of::<u32>() as u32 * 3);
 
@@ -340,7 +368,8 @@ impl VisBuffer {
 		self.early_meshlet_cull.destroy(device);
 		self.late_meshlet_cull.destroy(device);
 		self.hzb_gen.destroy(device);
-		device.device().destroy_pipeline(self.pipeline, None);
+		device.device().destroy_pipeline(self.early, None);
+		device.device().destroy_pipeline(self.late, None);
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }
