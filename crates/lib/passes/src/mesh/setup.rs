@@ -40,6 +40,7 @@ pub struct Resources {
 	pub bvh_queues: [Res<BufferHandle>; 3],
 	pub meshlet_queues: [Res<BufferHandle>; 2],
 	pub meshlet_render_lists: [Res<BufferHandle>; 2],
+	pub visbuffer: Res<ImageView>,
 	pub overdraw: Option<Res<ImageView>>,
 }
 
@@ -116,6 +117,19 @@ impl Resources {
 			},
 		);
 		buf
+	}
+
+	pub fn visbuffer(&self, pass: &mut PassBuilder) -> Res<ImageView> {
+		pass.reference(
+			self.visbuffer,
+			ImageUsage {
+				format: vk::Format::UNDEFINED,
+				usages: &[ImageUsageType::ShaderStorageWrite(Shader::Fragment)],
+				view_type: Some(vk::ImageViewType::TYPE_2D),
+				subresource: Subresource::default(),
+			},
+		);
+		self.visbuffer
 	}
 
 	pub fn overdraw(&self, pass: &mut PassBuilder) -> Option<Res<ImageView>> {
@@ -218,6 +232,25 @@ impl Setup {
 				},
 			)
 		});
+		let visbuffer = pass.resource(
+			ImageDesc {
+				size: vk::Extent3D {
+					width: info.size.x,
+					height: info.size.y,
+					depth: 1,
+				},
+				format: vk::Format::R64_UINT,
+				levels: 1,
+				layers: 1,
+				samples: vk::SampleCountFlags::TYPE_1,
+			},
+			ImageUsage {
+				format: vk::Format::UNDEFINED,
+				usages: &[ImageUsageType::TransferWrite],
+				view_type: None,
+				subresource: Subresource::default(),
+			},
+		);
 		let overdraw = info.debug_info.then(|| {
 			pass.resource(
 				ImageDesc {
@@ -267,7 +300,20 @@ impl Setup {
 						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
 				);
 			}
-
+			dev.cmd_clear_color_image(
+				buf,
+				pass.get(visbuffer).image,
+				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+				&vk::ClearColorValue {
+					uint32: [u32::MAX, 0, 0, 0],
+				},
+				&[vk::ImageSubresourceRange::default()
+					.aspect_mask(vk::ImageAspectFlags::COLOR)
+					.base_mip_level(0)
+					.level_count(vk::REMAINING_MIP_LEVELS)
+					.base_array_layer(0)
+					.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+			);
 			if let Some(o) = overdraw {
 				dev.cmd_clear_color_image(
 					buf,
@@ -300,6 +346,7 @@ impl Setup {
 			bvh_queues,
 			meshlet_queues,
 			meshlet_render_lists,
+			visbuffer,
 			overdraw,
 		}
 	}

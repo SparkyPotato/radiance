@@ -2,12 +2,12 @@ use ash::{ext, vk};
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
 	device::{
-		descriptor::{BufferId, ImageId},
+		descriptor::{BufferId, StorageImageId},
 		Device,
 	},
-	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
-	resource::{BufferHandle, ImageView, Subresource},
-	util::pipeline::{no_blend, reverse_depth, simple_blend, GraphicsPipelineDesc},
+	graph::{Frame, PassContext, Res},
+	resource::{BufferHandle, ImageView},
+	util::pipeline::GraphicsPipelineDesc,
 	Result,
 };
 use radiance_shader_compiler::c_str;
@@ -118,6 +118,13 @@ struct PushConstants {
 	late: BufferId,
 }
 
+#[repr(C)]
+#[derive(Copy, Clone, NoUninit)]
+struct PixelConstants {
+	output: StorageImageId,
+	overdraw: Option<StorageImageId>,
+}
+
 #[derive(Copy, Clone)]
 struct PassIO {
 	early: bool,
@@ -125,7 +132,6 @@ struct PassIO {
 	meshlets: [Res<BufferHandle>; 2],
 	camera: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
-	depth: Res<ImageView>,
 	overdraw: Option<Res<ImageView>>,
 }
 
@@ -142,7 +148,7 @@ impl VisBuffer {
 						vk::PushConstantRange::default()
 							.stage_flags(vk::ShaderStageFlags::FRAGMENT)
 							.offset(std::mem::size_of::<PushConstants>() as _)
-							.size(std::mem::size_of::<ImageId>() as _),
+							.size(std::mem::size_of::<PixelConstants>() as _),
 					]),
 				None,
 			)?;
@@ -192,11 +198,7 @@ impl VisBuffer {
 					None,
 				),
 			],
-			depth: &reverse_depth(),
-			blend: &simple_blend(&[no_blend()]),
 			layout,
-			color_attachments: &[vk::Format::R32_UINT],
-			depth_attachment: vk::Format::D32_SFLOAT,
 			..Default::default()
 		})
 	}
@@ -217,40 +219,7 @@ impl VisBuffer {
 		let mut pass = frame.pass("rasterize");
 		let camera = res.camera_mesh(&mut pass);
 		let meshlets = res.mesh(&mut pass);
-		let desc = ImageDesc {
-			size: vk::Extent3D {
-				width: info.size.x,
-				height: info.size.y,
-				depth: 1,
-			},
-			format: vk::Format::R32_UINT,
-			levels: 1,
-			layers: 1,
-			samples: vk::SampleCountFlags::TYPE_1,
-		};
-		let visbuffer_usage = ImageUsage {
-			format: vk::Format::R32_UINT,
-			usages: &[ImageUsageType::ColorAttachmentWrite],
-			view_type: Some(vk::ImageViewType::TYPE_2D),
-			subresource: Subresource::default(),
-		};
-		let depth_usage = ImageUsage {
-			format: vk::Format::D32_SFLOAT,
-			usages: &[ImageUsageType::DepthStencilAttachmentWrite],
-			view_type: Some(vk::ImageViewType::TYPE_2D),
-			subresource: Subresource {
-				aspect: vk::ImageAspectFlags::DEPTH,
-				..Default::default()
-			},
-		};
-		let visbuffer = pass.resource(desc, visbuffer_usage);
-		let depth = pass.resource(
-			ImageDesc {
-				format: vk::Format::D32_SFLOAT,
-				..desc
-			},
-			depth_usage,
-		);
+		let visbuffer = res.visbuffer(&mut pass);
 		let overdraw = res.overdraw(&mut pass);
 		let mut io = PassIO {
 			early: true,
@@ -258,13 +227,12 @@ impl VisBuffer {
 			meshlets,
 			camera,
 			visbuffer,
-			depth,
 			overdraw,
 		};
-		pass.build(move |ctx| this.execute(ctx, io, true));
+		pass.build(move |ctx| this.execute(ctx, io));
 		frame.end_region();
 
-		this.hzb_gen.run(frame, depth, res.hzb);
+		this.hzb_gen.run(frame, visbuffer, res.hzb);
 		frame.start_region("late pass");
 		frame.start_region("cull");
 		this.late_instance_cull.run(frame, &info, &res);
@@ -275,14 +243,13 @@ impl VisBuffer {
 		let mut pass = frame.pass("rasterize");
 		res.camera_mesh(&mut pass);
 		res.mesh(&mut pass);
-		pass.reference(visbuffer, visbuffer_usage);
-		pass.reference(depth, depth_usage);
+		res.visbuffer(&mut pass);
 		res.overdraw(&mut pass);
 		io.early = false;
-		pass.build(move |ctx| this.execute(ctx, io, false));
+		pass.build(move |ctx| this.execute(ctx, io));
 		frame.end_region();
 
-		this.hzb_gen.run(frame, depth, res.hzb);
+		this.hzb_gen.run(frame, visbuffer, res.hzb);
 
 		frame.end_region();
 		RenderOutput {
@@ -293,51 +260,17 @@ impl VisBuffer {
 		}
 	}
 
-	fn execute(&self, mut pass: PassContext, io: PassIO, is_early: bool) {
+	fn execute(&self, mut pass: PassContext, io: PassIO) {
 		let dev = pass.device.device();
 		let buf = pass.buf;
 		let read = pass.get(if io.early { io.meshlets[0] } else { io.meshlets[1] });
 		let visbuffer = pass.get(io.visbuffer);
-		let depth = pass.get(io.depth);
 		unsafe {
 			let area = vk::Rect2D::default().extent(vk::Extent2D {
 				width: visbuffer.size.width,
 				height: visbuffer.size.height,
 			});
-			dev.cmd_begin_rendering(
-				buf,
-				&vk::RenderingInfo::default()
-					.render_area(area)
-					.layer_count(1)
-					.color_attachments(&[vk::RenderingAttachmentInfo::default()
-						.image_view(visbuffer.view)
-						.image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-						.load_op(if is_early {
-							vk::AttachmentLoadOp::CLEAR
-						} else {
-							vk::AttachmentLoadOp::LOAD
-						})
-						.clear_value(vk::ClearValue {
-							color: vk::ClearColorValue {
-								uint32: [u32::MAX, 0, 0, 0],
-							},
-						})
-						.store_op(vk::AttachmentStoreOp::STORE)])
-					.depth_attachment(
-						&vk::RenderingAttachmentInfo::default()
-							.image_view(depth.view)
-							.image_layout(vk::ImageLayout::ATTACHMENT_OPTIMAL)
-							.load_op(if is_early {
-								vk::AttachmentLoadOp::CLEAR
-							} else {
-								vk::AttachmentLoadOp::LOAD
-							})
-							.clear_value(vk::ClearValue {
-								depth_stencil: vk::ClearDepthStencilValue { depth: 0.0, stencil: 0 },
-							})
-							.store_op(vk::AttachmentStoreOp::STORE),
-					),
-			);
+			dev.cmd_begin_rendering(buf, &vk::RenderingInfo::default().render_area(area).layer_count(1));
 			let height = visbuffer.size.height as f32;
 			dev.cmd_set_viewport(
 				buf,
@@ -385,13 +318,26 @@ impl VisBuffer {
 					self.layout,
 					vk::ShaderStageFlags::FRAGMENT,
 					std::mem::size_of::<PushConstants>() as _,
-					bytes_of(&id),
+					bytes_of(&PixelConstants {
+						output: visbuffer.storage_id.unwrap(),
+						overdraw: Some(id),
+					}),
 				);
 			} else {
 				dev.cmd_bind_pipeline(
 					buf,
 					vk::PipelineBindPoint::GRAPHICS,
 					if io.early { self.no_debug[0] } else { self.no_debug[1] },
+				);
+				dev.cmd_push_constants(
+					buf,
+					self.layout,
+					vk::ShaderStageFlags::FRAGMENT,
+					std::mem::size_of::<PushConstants>() as _,
+					bytes_of(&PixelConstants {
+						output: visbuffer.storage_id.unwrap(),
+						overdraw: None,
+					}),
 				);
 			}
 			self.mesh

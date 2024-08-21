@@ -7,7 +7,7 @@ use radiance_graph::{
 		descriptor::{BufferId, ImageId},
 		Device,
 	},
-	graph::{Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
+	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{ImageView, Subresource},
 	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
 	Result,
@@ -83,18 +83,22 @@ impl DebugMesh {
 	pub fn run<'pass>(
 		&'pass self, frame: &mut Frame<'pass, '_>, vis: DebugVis, output: RenderOutput,
 	) -> Res<ImageView> {
-		let mut pass = frame.pass("debug meshlets");
+		let mut pass = frame.pass("debug mesh");
 		let usage = ImageUsage {
-			format: vk::Format::R32_UINT,
+			format: vk::Format::UNDEFINED,
 			usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
 			view_type: Some(vk::ImageViewType::TYPE_2D),
 			subresource: Subresource::default(),
 		};
 		pass.reference(output.visbuffer, usage);
+		let desc = pass.desc(output.visbuffer);
 		let out = pass.resource(
-			output.visbuffer,
+			ImageDesc {
+				format: vk::Format::R8G8B8A8_SRGB,
+				..desc
+			},
 			ImageUsage {
-				format: vk::Format::R8G8B8A8_SRGB, // TODO: fix
+				format: vk::Format::UNDEFINED,
 				usages: &[ImageUsageType::ColorAttachmentWrite],
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource::default(),

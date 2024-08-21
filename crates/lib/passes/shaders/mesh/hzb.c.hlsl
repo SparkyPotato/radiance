@@ -3,17 +3,16 @@
 #include "radiance-graph/interface.l.hlsl"
 
 [[vk::binding(2, 0)]] globallycoherent RWTexture2D<f32> Coherents[];
+[[vk::binding(1, 0)]] Texture2D<u64> Inputs[];
 
 struct PushConstants {
-	Tex2D depth;
-	Sampler s;
+	u32 visbuffer;
 	Buf<u32> atomic;
 	STex2D<NonUniform> out1[5];
 	u32 out5;
 	STex2D<NonUniform> out2[6];
 	u32 mips;
 	u32 workgroups;
-	f32 inv_size[2];
 };
 
 PUSH PushConstants Constants;
@@ -64,10 +63,17 @@ void store4(uint2 p, u32 mip, float4 v) {
 }
 
 f32 fetch(uint2 p) {
-	float2 inv = float2(Constants.inv_size);
-	float2 coord = p * inv + inv;
-	f32 v = Constants.depth.sample_mip(Constants.s, coord, 0).x;
-	return v;
+	u64 data = Inputs[Constants.visbuffer].Load(uint3(p, 0));
+	return asfloat(u32(data >> 32));
+}
+
+f32 fetch2x2(uint2 p) {
+	return reduce(float4(
+		fetch(p + uint2(0, 0)),
+		fetch(p + uint2(1, 0)),
+		fetch(p + uint2(0, 1)),
+		fetch(p + uint2(1, 1))
+	));
 }
 
 float4 fetch4x4(uint2 p) {

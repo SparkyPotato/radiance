@@ -372,6 +372,7 @@ impl<'a> DeviceBuilder<'a> {
 
 			features.features.shader_int16 = true as _;
 			features.features.shader_int64 = true as _;
+			features.features.fragment_stores_and_atomics = true as _;
 			let mut next = features.p_next as *mut VkStructHeader;
 			while !next.is_null() {
 				unsafe {

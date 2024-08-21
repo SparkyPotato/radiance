@@ -24,17 +24,15 @@ pub struct HzbGen {
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
-	depth: ImageId,
-	s: SamplerId,
+	visbuffer: ImageId,
 	atomic: BufferId,
 	outs: [Option<StorageImageId>; 12],
 	mips: u32,
 	workgroups: u32,
-	inv_size: Vec2<f32>,
 }
 
 struct PassIO {
-	depth: Res<ImageView>,
+	visbuffer: Res<ImageView>,
 	out: Res<ImageView>,
 	atomic: Res<BufferHandle>,
 	size: Vec2<u32>,
@@ -84,12 +82,12 @@ impl HzbGen {
 
 	pub fn sampler(&self) -> SamplerId { self.hzb_sample_id }
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, depth: Res<ImageView>, out: Res<ImageView>) {
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, visbuffer: Res<ImageView>, out: Res<ImageView>) {
 		let mut pass = frame.pass("generate hzb");
 		pass.reference(
-			depth,
+			visbuffer,
 			ImageUsage {
-				format: vk::Format::D32_SFLOAT,
+				format: vk::Format::UNDEFINED,
 				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Compute)],
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource {
@@ -123,14 +121,14 @@ impl HzbGen {
 			},
 		);
 
-		let desc = pass.desc(depth);
+		let desc = pass.desc(visbuffer);
 		let size = Vec2::new(desc.size.width, desc.size.height);
 		let desc = pass.desc(out);
 		pass.build(move |ctx| {
 			self.execute(
 				ctx,
 				PassIO {
-					depth,
+					visbuffer,
 					out,
 					atomic,
 					size,
@@ -143,7 +141,7 @@ impl HzbGen {
 	fn execute(&self, mut pass: PassContext, io: PassIO) {
 		let dev = pass.device.device();
 		let buf = pass.buf;
-		let depth = pass.get(io.depth);
+		let visbuffer = pass.get(io.visbuffer);
 		let out = pass.get(io.out);
 		let mut atomic = pass.get(io.atomic);
 
@@ -200,13 +198,11 @@ impl HzbGen {
 				vk::ShaderStageFlags::COMPUTE,
 				0,
 				bytes_of(&PushConstants {
-					depth: depth.id.unwrap(),
-					s: self.hzb_sample_id,
+					visbuffer: visbuffer.id.unwrap(),
 					atomic: atomic.id.unwrap(),
 					outs,
 					mips: io.levels,
 					workgroups: x * 2,
-					inv_size: io.size.map(|x| x as f32).recip(),
 				}),
 			);
 			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
