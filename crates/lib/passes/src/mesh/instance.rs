@@ -4,12 +4,12 @@ use radiance_graph::{
 	device::{
 		descriptor::{BufferId, ImageId, SamplerId},
 		Device,
+		Pipeline,
 	},
 	graph::{Frame, PassContext, Res},
 	resource::{BufferHandle, ImageView},
 	Result,
 };
-use radiance_shader_compiler::c_str;
 use vek::Vec2;
 
 use crate::mesh::{setup::Resources, RenderInfo};
@@ -17,7 +17,7 @@ use crate::mesh::{setup::Resources, RenderInfo};
 pub struct InstanceCull {
 	early: bool,
 	layout: vk::PipelineLayout,
-	pipeline: vk::Pipeline,
+	pipeline: Pipeline,
 }
 
 #[repr(C)]
@@ -64,15 +64,11 @@ impl InstanceCull {
 			layout,
 			pipeline: device.compute_pipeline(
 				layout,
-				device.shader(
-					if early {
-						c_str!("radiance-passes/mesh/instance_early")
-					} else {
-						c_str!("radiance-passes/mesh/instance_late")
-					},
-					vk::ShaderStageFlags::COMPUTE,
-					None,
-				),
+				if early {
+					"radiance-passes/mesh/instance_early"
+				} else {
+					"radiance-passes/mesh/instance_late"
+				},
 			)?,
 		})
 	}
@@ -109,7 +105,7 @@ impl InstanceCull {
 		let buf = pass.buf;
 		let late_instances = pass.get(io.late_instances);
 		unsafe {
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline.get());
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::COMPUTE,
@@ -144,7 +140,7 @@ impl InstanceCull {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		device.device().destroy_pipeline(self.pipeline, None);
+		self.pipeline.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

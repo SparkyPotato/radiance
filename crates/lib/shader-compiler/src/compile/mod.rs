@@ -1,4 +1,10 @@
-use std::{borrow::Borrow, collections::HashSet, error::Error, fs::File, io::BufReader, path::Path};
+use std::{
+	borrow::Borrow,
+	error::Error,
+	fs::File,
+	io::BufReader,
+	path::{Path, PathBuf},
+};
 
 use hassle_rs::{Dxc, DxcCompiler, DxcIncludeHandler, DxcLibrary};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -11,22 +17,22 @@ pub mod vfs;
 
 pub struct ShaderBuilder {
 	pub(crate) vfs: VirtualFileSystem,
-	debug: bool,
 	dependencies: DependencyInfo,
 	compiler: DxcCompiler,
 	library: DxcLibrary,
 	_dxc: Dxc,
 }
 
+unsafe impl Send for ShaderBuilder {}
+
 impl ShaderBuilder {
-	pub fn new(_: bool) -> Result<Self, Box<dyn Error>> {
+	pub fn new() -> Result<Self, Box<dyn Error>> {
 		let dxc = Dxc::new(None)?;
 		let compiler = dxc.create_compiler()?;
 		let library = dxc.create_library()?;
 
 		Ok(Self {
 			vfs: VirtualFileSystem::new(),
-			debug: true,
 			dependencies: DependencyInfo::default(),
 			compiler,
 			library,
@@ -53,7 +59,7 @@ impl ShaderBuilder {
 	}
 
 	/// Compile a physical file.
-	pub fn compile_file_physical(&mut self, file: &Path) -> Result<(), String> {
+	pub fn compile_file_physical_value(&mut self, file: &Path) -> Result<Option<Vec<u8>>, String> {
 		let ty = ShaderType::new(file)?;
 		let virtual_path = self.vfs.unresolve_source(file).unwrap();
 
@@ -66,9 +72,9 @@ impl ShaderBuilder {
 				"-ffinite-math-only",
 				"-fvk-use-scalar-layout",
 				"-fspv-reduce-load-size",
+				"-Zi",
 			]
 			.into_iter()
-			.chain(self.debug.then_some("-Zi"))
 			.map(|x| x.to_string())
 			.chain(Some(format!("-T {}", ty.target_profile())))
 			.collect();
@@ -100,18 +106,27 @@ impl ShaderBuilder {
 				},
 			};
 
-			let output = self.vfs.resolve_output(&virtual_path).unwrap();
-			std::fs::create_dir_all(output.parent().unwrap()).unwrap();
-			std::fs::write(output, bytecode).unwrap();
+			Ok(Some(bytecode))
+		} else {
+			Ok(None)
 		}
+	}
 
+	pub fn compile_file_physical(&mut self, file: &Path) -> Result<(), String> {
+		let Some(bytecode) = self.compile_file_physical_value(file)? else {
+			return Ok(());
+		};
+		let virtual_path = self.vfs.unresolve_source(file).unwrap();
+		let output = self.vfs.resolve_output(&virtual_path).unwrap();
+		std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+		std::fs::write(output, bytecode).unwrap();
 		Ok(())
 	}
 
 	/// Compile all shaders in all modules.
 	pub fn compile_all(&mut self) -> Result<(), Vec<String>> {
 		let mut errors = Vec::new();
-		let mut compile_queue = HashSet::new();
+		let mut compile_queue = FxHashSet::default();
 
 		for (_, module_root, _) in self.vfs.compilable_modules() {
 			for file in WalkDir::new(module_root)
@@ -150,6 +165,34 @@ impl ShaderBuilder {
 		} else {
 			Err(errors)
 		}
+	}
+
+	pub fn compile_modified(&mut self, modified: &[PathBuf]) -> FxHashMap<VirtualPathBuf, Result<Vec<u8>, String>> {
+		let mut compile_queue = FxHashSet::default();
+		for path in modified.iter() {
+			let virtual_path = self.vfs.unresolve_source(path).unwrap();
+			compile_queue.insert(path.to_path_buf());
+			compile_queue.extend(self.dependencies.on(&virtual_path).filter_map(|x| {
+				let path = self.vfs.resolve_source(x).unwrap();
+				path.exists().then(|| path)
+			}));
+		}
+
+		let mut ret = FxHashMap::default();
+		for file in compile_queue {
+			match self.compile_file_physical_value(&file) {
+				Ok(Some(b)) => {
+					let virtual_path = self.vfs.unresolve_source(&file).unwrap();
+					ret.insert(virtual_path, Ok(b));
+				},
+				Err(e) => {
+					let virtual_path = self.vfs.unresolve_source(&file).unwrap();
+					ret.insert(virtual_path, Err(e));
+				},
+				_ => {},
+			}
+		}
+		ret
 	}
 
 	pub fn write_deps(&self, path: &Path) -> Result<(), Box<dyn Error>> {
@@ -205,7 +248,7 @@ impl DxcIncludeHandler for IncludeHandler<'_> {
 
 #[derive(Default, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
-struct DependencyInfo {
+pub struct DependencyInfo {
 	inner: FxHashMap<VirtualPathBuf, FxHashSet<VirtualPathBuf>>,
 }
 

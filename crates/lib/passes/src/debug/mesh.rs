@@ -1,18 +1,17 @@
-use std::ffi::CStr;
-
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
 	device::{
 		descriptor::{BufferId, ImageId},
 		Device,
+		GraphicsPipelineDesc,
+		Pipeline,
 	},
 	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{ImageView, Subresource},
-	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
+	util::pipeline::{no_blend, no_cull, simple_blend},
 	Result,
 };
-use radiance_shader_compiler::c_str;
 
 use crate::mesh::RenderOutput;
 
@@ -28,9 +27,9 @@ impl DebugVis {
 }
 
 pub struct DebugMesh {
-	triangles: vk::Pipeline,
-	meshlets: vk::Pipeline,
-	overdraw: vk::Pipeline,
+	triangles: Pipeline,
+	meshlets: Pipeline,
+	overdraw: Pipeline,
 	layout: vk::PipelineLayout,
 }
 
@@ -46,15 +45,12 @@ struct PushConstants {
 }
 
 impl DebugMesh {
-	fn pipeline(device: &Device, layout: vk::PipelineLayout, name: &CStr) -> Result<vk::Pipeline> {
-		device.graphics_pipeline(&GraphicsPipelineDesc {
+	fn pipeline(device: &Device, layout: vk::PipelineLayout, name: &'static str) -> Result<Pipeline> {
+		device.graphics_pipeline(GraphicsPipelineDesc {
 			layout,
-			shaders: &[
-				device.shader(c_str!("radiance-graph/util/screen"), vk::ShaderStageFlags::VERTEX, None),
-				device.shader(name, vk::ShaderStageFlags::FRAGMENT, None),
-			],
-			raster: &no_cull(),
-			blend: &simple_blend(&[no_blend()]),
+			shaders: &["radiance-graph/util/screen", name],
+			raster: no_cull(),
+			blend: simple_blend(&[no_blend()]),
 			color_attachments: &[vk::Format::R8G8B8A8_SRGB],
 			..Default::default()
 		})
@@ -73,9 +69,9 @@ impl DebugMesh {
 
 			Ok(Self {
 				layout,
-				triangles: Self::pipeline(device, layout, c_str!("radiance-passes/debug/triangles"))?,
-				meshlets: Self::pipeline(device, layout, c_str!("radiance-passes/debug/meshlets"))?,
-				overdraw: Self::pipeline(device, layout, c_str!("radiance-passes/debug/overdraw"))?,
+				triangles: Self::pipeline(device, layout, "radiance-passes/debug/triangles")?,
+				meshlets: Self::pipeline(device, layout, "radiance-passes/debug/meshlets")?,
+				overdraw: Self::pipeline(device, layout, "radiance-passes/debug/overdraw")?,
 			})
 		}
 	}
@@ -158,9 +154,9 @@ impl DebugMesh {
 				buf,
 				vk::PipelineBindPoint::GRAPHICS,
 				match vis {
-					DebugVis::Triangles => self.triangles,
-					DebugVis::Meshlets => self.meshlets,
-					DebugVis::Overdraw(..) => self.overdraw,
+					DebugVis::Triangles => self.triangles.get(),
+					DebugVis::Meshlets => self.meshlets.get(),
+					DebugVis::Overdraw(..) => self.overdraw.get(),
 				},
 			);
 			dev.cmd_bind_descriptor_sets(
@@ -197,8 +193,9 @@ impl DebugMesh {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		device.device().destroy_pipeline(self.triangles, None);
-		device.device().destroy_pipeline(self.meshlets, None);
+		self.triangles.destroy();
+		self.meshlets.destroy();
+		self.overdraw.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

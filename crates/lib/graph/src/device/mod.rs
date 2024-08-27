@@ -1,7 +1,6 @@
 //! An abstraction over a raw Vulkan device.
 
 use std::{
-	ffi::CStr,
 	mem::ManuallyDrop,
 	sync::{Mutex, MutexGuard},
 };
@@ -10,6 +9,7 @@ use ash::{ext, khr, vk};
 pub use gpu_allocator::vulkan as alloc;
 use gpu_allocator::vulkan::Allocator;
 use radiance_shader_compiler::runtime::ShaderRuntime;
+pub use radiance_shader_compiler::runtime::{GraphicsPipelineDesc, HotreloadStatus, Pipeline};
 
 pub use crate::device::queue::{
 	Compute,
@@ -55,11 +55,15 @@ impl Device {
 
 	pub fn reset_arena(&mut self) { self.arena.reset() }
 
-	pub fn shader<'a>(
-		&'a self, name: &'a CStr, stage: vk::ShaderStageFlags, specialization: Option<&'a vk::SpecializationInfo>,
-	) -> vk::PipelineShaderStageCreateInfo {
-		self.shaders.shader(name, stage, specialization)
+	pub fn graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<Pipeline> {
+		self.shaders.create_graphics_pipeline(desc).map_err(Into::into)
 	}
+
+	pub fn compute_pipeline(&self, layout: vk::PipelineLayout, shader: &'static str) -> Result<Pipeline> {
+		self.shaders.create_compute_pipeline(layout, shader).map_err(Into::into)
+	}
+
+	pub fn hotreload_status(&self) -> HotreloadStatus { self.shaders.status() }
 
 	pub fn entry(&self) -> &ash::Entry { &self.entry }
 
@@ -101,7 +105,7 @@ impl Drop for Device {
 		unsafe {
 			// Drop the allocator before the device.
 			ManuallyDrop::drop(&mut self.allocator);
-			ManuallyDrop::take(&mut self.shaders).destroy(&self.device);
+			ManuallyDrop::drop(&mut self.shaders);
 			self.descriptors.cleanup(&self.device);
 			self.queues.map_ref(|x| x.destroy(&self.device));
 

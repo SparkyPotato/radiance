@@ -4,12 +4,12 @@ use radiance_graph::{
 	device::{
 		descriptor::{BufferId, ImageId, SamplerId},
 		Device,
+		Pipeline,
 	},
 	graph::{BufferUsage, BufferUsageType, Frame, PassContext, Res},
 	resource::{BufferHandle, ImageView},
 	Result,
 };
-use radiance_shader_compiler::c_str;
 use vek::Vec2;
 
 use crate::mesh::{setup::Resources, RenderInfo};
@@ -17,7 +17,7 @@ use crate::mesh::{setup::Resources, RenderInfo};
 pub struct BvhCull {
 	early: bool,
 	layout: vk::PipelineLayout,
-	pipeline: vk::Pipeline,
+	pipeline: Pipeline,
 }
 
 #[repr(C)]
@@ -66,15 +66,11 @@ impl BvhCull {
 			layout,
 			pipeline: device.compute_pipeline(
 				layout,
-				device.shader(
-					if early {
-						c_str!("radiance-passes/mesh/bvh_early")
-					} else {
-						c_str!("radiance-passes/mesh/bvh_late")
-					},
-					vk::ShaderStageFlags::COMPUTE,
-					None,
-				),
+				if early {
+					"radiance-passes/mesh/bvh_early"
+				} else {
+					"radiance-passes/mesh/bvh_late"
+				},
 			)?,
 		})
 	}
@@ -138,7 +134,7 @@ impl BvhCull {
 		let buf = pass.buf;
 		let read = pass.get(io.read);
 		unsafe {
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline.get());
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::COMPUTE,
@@ -170,7 +166,7 @@ impl BvhCull {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		device.device().destroy_pipeline(self.pipeline, None);
+		self.pipeline.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

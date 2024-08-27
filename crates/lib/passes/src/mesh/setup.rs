@@ -160,6 +160,10 @@ impl Setup {
 		let Persistent {
 			hzb, camera: prev_cam, ..
 		} = self.inner.as_mut().unwrap();
+		let res = info.size;
+		let cam = info.camera;
+		let prev = *prev_cam;
+		*prev_cam = cam;
 
 		let mut pass = frame.pass("setup cull buffers");
 		let camera = pass.resource(
@@ -235,8 +239,8 @@ impl Setup {
 		let visbuffer = pass.resource(
 			ImageDesc {
 				size: vk::Extent3D {
-					width: info.size.x,
-					height: info.size.y,
+					width: res.x,
+					height: res.y,
 					depth: 1,
 				},
 				format: vk::Format::R64_UINT,
@@ -255,8 +259,8 @@ impl Setup {
 			pass.resource(
 				ImageDesc {
 					size: vk::Extent3D {
-						width: info.size.x,
-						height: info.size.y,
+						width: res.x,
+						height: res.y,
 						depth: 1,
 					},
 					format: vk::Format::R32_UINT,
@@ -273,16 +277,13 @@ impl Setup {
 			)
 		});
 
-		let res = info.size;
-		let cam = info.camera;
-		let prev_cam = *prev_cam;
 		pass.build(move |mut pass| unsafe {
 			let dev = pass.device.device();
 			let buf = pass.buf;
 			let mut writer = pass.get(camera).data.as_mut();
 			let aspect = res.x as f32 / res.y as f32;
 			let cd = CameraData::new(aspect, cam);
-			let prev_cd = CameraData::new(aspect, prev_cam);
+			let prev_cd = CameraData::new(aspect, prev);
 			writer.write(bytes_of(&cd)).unwrap();
 			writer.write(bytes_of(&prev_cd)).unwrap();
 
@@ -352,29 +353,30 @@ impl Setup {
 	}
 
 	fn init_persistent(&mut self, frame: &mut Frame, info: &RenderInfo) -> bool {
+		let size = info.size / 2;
 		match &mut self.inner {
 			Some(Persistent { scene, hzb, .. }) => {
-				if hzb.desc().size.width != info.size.x / 2 || hzb.desc().size.height != info.size.y / 2 {
+				let curr_size = hzb.desc().size;
+				if curr_size.width != size.x || curr_size.height != size.y {
 					frame.delete(self.inner.take().unwrap().hzb);
 					self.inner = Some(Persistent {
 						scene: info.scene.clone(),
 						camera: info.camera,
-						hzb: Self::make_hzb(frame.device(), info.size / 2),
+						hzb: Self::make_hzb(frame.device(), size),
 					});
 					true
+				} else if !scene.ptr_eq(&info.scene) {
+					*scene = info.scene.clone();
+					true
 				} else {
-					let r = !scene.ptr_eq(&info.scene);
-					if r {
-						*scene = info.scene.clone();
-					}
-					r
+					false
 				}
 			},
 			None => {
 				self.inner = Some(Persistent {
 					scene: info.scene.clone(),
 					camera: info.camera,
-					hzb: Self::make_hzb(frame.device(), info.size),
+					hzb: Self::make_hzb(frame.device(), size),
 				});
 				true
 			},

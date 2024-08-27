@@ -4,13 +4,13 @@ use radiance_graph::{
 	device::{
 		descriptor::{BufferId, StorageImageId},
 		Device,
+		GraphicsPipelineDesc,
+		Pipeline,
 	},
 	graph::{Frame, PassContext, Res},
 	resource::{BufferHandle, ImageView},
-	util::pipeline::GraphicsPipelineDesc,
 	Result,
 };
-use radiance_shader_compiler::c_str;
 use vek::{Mat4, Vec2, Vec4};
 
 use crate::{
@@ -59,8 +59,8 @@ pub struct VisBuffer {
 	late_meshlet_cull: MeshletCull,
 	hzb_gen: HzbGen,
 	layout: vk::PipelineLayout,
-	no_debug: [vk::Pipeline; 2],
-	debug: [vk::Pipeline; 2],
+	no_debug: [Pipeline; 2],
+	debug: [Pipeline; 2],
 	mesh: ext::mesh_shader::Device,
 }
 
@@ -176,27 +176,19 @@ impl VisBuffer {
 		}
 	}
 
-	fn pipeline(device: &Device, layout: vk::PipelineLayout, early: bool, debug: bool) -> Result<vk::Pipeline> {
-		device.graphics_pipeline(&GraphicsPipelineDesc {
+	fn pipeline(device: &Device, layout: vk::PipelineLayout, early: bool, debug: bool) -> Result<Pipeline> {
+		device.graphics_pipeline(GraphicsPipelineDesc {
 			shaders: &[
-				device.shader(
-					if early {
-						c_str!("radiance-passes/mesh/mesh_early")
-					} else {
-						c_str!("radiance-passes/mesh/mesh_late")
-					},
-					vk::ShaderStageFlags::MESH_EXT,
-					None,
-				),
-				device.shader(
-					if debug {
-						c_str!("radiance-passes/mesh/debug")
-					} else {
-						c_str!("radiance-passes/mesh/pixel")
-					},
-					vk::ShaderStageFlags::FRAGMENT,
-					None,
-				),
+				if early {
+					"radiance-passes/mesh/mesh_early"
+				} else {
+					"radiance-passes/mesh/mesh_late"
+				},
+				if debug {
+					"radiance-passes/mesh/debug"
+				} else {
+					"radiance-passes/mesh/pixel"
+				},
 			],
 			layout,
 			..Default::default()
@@ -310,7 +302,11 @@ impl VisBuffer {
 				dev.cmd_bind_pipeline(
 					buf,
 					vk::PipelineBindPoint::GRAPHICS,
-					if io.early { self.debug[0] } else { self.debug[1] },
+					if io.early {
+						self.debug[0].get()
+					} else {
+						self.debug[1].get()
+					},
 				);
 				let id = pass.get(o).storage_id.unwrap();
 				dev.cmd_push_constants(
@@ -327,7 +323,11 @@ impl VisBuffer {
 				dev.cmd_bind_pipeline(
 					buf,
 					vk::PipelineBindPoint::GRAPHICS,
-					if io.early { self.no_debug[0] } else { self.no_debug[1] },
+					if io.early {
+						self.no_debug[0].get()
+					} else {
+						self.no_debug[1].get()
+					},
 				);
 				dev.cmd_push_constants(
 					buf,
@@ -356,10 +356,12 @@ impl VisBuffer {
 		self.early_meshlet_cull.destroy(device);
 		self.late_meshlet_cull.destroy(device);
 		self.hzb_gen.destroy(device);
-		device.device().destroy_pipeline(self.no_debug[0], None);
-		device.device().destroy_pipeline(self.no_debug[1], None);
-		device.device().destroy_pipeline(self.debug[0], None);
-		device.device().destroy_pipeline(self.debug[1], None);
+		let [p0, p1] = self.no_debug;
+		p0.destroy();
+		p1.destroy();
+		let [p0, p1] = self.debug;
+		p0.destroy();
+		p1.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

@@ -6,17 +6,17 @@ use radiance_graph::{
 	device::{
 		descriptor::{BufferId, ImageId, SamplerId, StorageImageId},
 		Device,
+		Pipeline,
 	},
 	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
 	Result,
 };
-use radiance_shader_compiler::c_str;
 use vek::Vec2;
 
 pub struct HzbGen {
 	layout: vk::PipelineLayout,
-	pipeline: vk::Pipeline,
+	pipeline: Pipeline,
 	hzb_sample: vk::Sampler,
 	hzb_sample_id: SamplerId,
 }
@@ -50,19 +50,17 @@ impl HzbGen {
 						.size(std::mem::size_of::<PushConstants>() as u32)]),
 				None,
 			)?;
-			let pipeline = device.compute_pipeline(
-				layout,
-				device.shader(c_str!("radiance-passes/mesh/hzb"), vk::ShaderStageFlags::COMPUTE, None),
-			)?;
+			let pipeline = device.compute_pipeline(layout, "radiance-passes/mesh/hzb")?;
 
 			let hzb_sample = device.device().create_sampler(
 				&vk::SamplerCreateInfo::default()
-					.mag_filter(vk::Filter::LINEAR)
 					.min_filter(vk::Filter::LINEAR)
+					.mag_filter(vk::Filter::LINEAR)
 					.mipmap_mode(vk::SamplerMipmapMode::NEAREST)
 					.address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
 					.address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
 					.address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+					.max_lod(vk::LOD_CLAMP_NONE)
 					.push_next(
 						&mut vk::SamplerReductionModeCreateInfo::default()
 							.reduction_mode(vk::SamplerReductionMode::MIN),
@@ -182,8 +180,6 @@ impl HzbGen {
 				);
 			}
 
-			let x = (io.size.x + 63) >> 6;
-			let y = (io.size.y + 63) >> 6;
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::COMPUTE,
@@ -192,6 +188,8 @@ impl HzbGen {
 				&[pass.device.descriptors().set()],
 				&[],
 			);
+			let x = (io.size.x + 63) >> 6;
+			let y = (io.size.y + 63) >> 6;
 			dev.cmd_push_constants(
 				buf,
 				self.layout,
@@ -205,14 +203,14 @@ impl HzbGen {
 					workgroups: x * 2,
 				}),
 			);
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline.get());
 			dev.cmd_dispatch(buf, x, y, 1);
 		}
 	}
 
 	pub fn destroy(self, device: &Device) {
 		unsafe {
-			device.device().destroy_pipeline(self.pipeline, None);
+			self.pipeline.destroy();
 			device.device().destroy_pipeline_layout(self.layout, None);
 			device.device().destroy_sampler(self.hzb_sample, None);
 			device.descriptors().return_sampler(self.hzb_sample_id);

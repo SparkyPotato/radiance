@@ -10,8 +10,7 @@ pub fn shader(stream: TokenStream) -> TokenStream {
 	let name = iter.next().expect("expected shader module name");
 	assert!(iter.next().is_none(), "expected only one argument");
 	let name = name.to_string()[1..name.to_string().len() - 1].to_string();
-	let var = format!("{}_OUTPUT_PATH", name);
-	let path = std::env::var(var).expect("shader module not found");
+	let path = std::env::var(format!("{}_OUTPUT_PATH", name)).expect("shader module not found");
 	let path = Path::new(&path);
 
 	let modules = WalkDir::new(path)
@@ -29,9 +28,15 @@ pub fn shader(stream: TokenStream) -> TokenStream {
 				(#name, ::std::include_bytes!(#path))
 			}
 		});
+	let source_path = std::env::var(format!("{}_SOURCE_PATH", name)).expect("shader module not found");
+	let path = path.to_str().unwrap();
 
 	(quote! {
-		::radiance_shader_compiler::runtime::ShaderBlob::new(&[#(#modules),*])
+		::radiance_shader_compiler::runtime::ShaderBlob::new(
+			#source_path,
+			#path,
+			&[#(#modules),*]
+		)
 	})
 	.into()
 }

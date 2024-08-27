@@ -4,7 +4,7 @@ version = "0.0.0"
 edition = "2021"
 
 [features]
-runtime = ["ash"]
+runtime = ["dep:ash", "dep:notify-debouncer-full", "compile"]
 compile = ["dep:hassle-rs", "dep:serde", "dep:serde_json", "dep:cargo_toml"]
 build-script = ["compile"]
 
@@ -12,6 +12,8 @@ build-script = ["compile"]
 radiance-shader-compiler-macros = { path = "../shader-compiler-macros" }
 
 ash = { workspace = true, optional = true  }
+notify-debouncer-full = { workspace = true, optional = true }
+rspirv = { workspace = true }
 rustc-hash = { workspace = true }
 walkdir = { workspace = true }
 cargo_toml = { workspace = true, optional = true }

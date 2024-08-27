@@ -11,10 +11,9 @@ impl ShaderBuilder {
 		println!("cargo:rerun-if-changed=../..");
 
 		let root = std::env::var("CARGO_MANIFEST_DIR").unwrap();
-		let profile = std::env::var("PROFILE").unwrap();
 		let out = std::env::var("OUT_DIR").unwrap();
 
-		let mut builder = ShaderBuilder::new(profile == "debug").unwrap();
+		let mut builder = ShaderBuilder::new().unwrap();
 		let _ = builder.deps(&Path::new(&out).join("dependencies.json"));
 		builder.target(root.as_ref(), out.as_ref()).unwrap();
 
@@ -35,9 +34,13 @@ impl ShaderBuilder {
 			},
 		}
 
-		for (name, _, out) in self.vfs.compilable_modules() {
-			let var_name = format!("{}_OUTPUT_PATH", name);
-			println!("cargo:rustc-env={}={}", var_name, out.display());
+		for (name, source, out) in self.vfs.compilable_modules() {
+			println!("cargo:rustc-env={}={}", format!("{}_OUTPUT_PATH", name), out.display());
+			println!(
+				"cargo:rustc-env={}={}",
+				format!("{}_SOURCE_PATH", name),
+				source.parent().unwrap().display()
+			);
 		}
 
 		self.write_deps(&Path::new(&std::env::var("OUT_DIR").unwrap()).join("dependencies.json"))

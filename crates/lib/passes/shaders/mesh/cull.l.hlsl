@@ -119,12 +119,12 @@ struct Cull {
 	}
 };
 
-template <typename T>
+template<typename T>
 T min8(T p0, T p1, T p2, T p3, T p4, T p5, T p6, T p7) {
 	return min(p0, min(p1, min(p2, min(p3, min(p4, min(p5, min(p6, p7)))))));
 }
 
-template <typename T>
+template<typename T>
 T max8(T p0, T p1, T p2, T p3, T p4, T p5, T p6, T p7) {
 	return max(p0, max(p1, max(p2, max(p3, max(p4, max(p5, max(p6, p7)))))));
 }
@@ -147,7 +147,7 @@ struct OccCull {
 	}
 
 	bool cull(Aabb aabb) {
-		float3 extent = aabb.half_extent * 2.0;
+		float3 extent = aabb.half_extent * 2.f;
 		float4 sx = mul(this.mvp, float4(extent.x, 0.f, 0.f, 0.f));
 		float4 sy = mul(this.mvp, float4(0.f, extent.y, 0.f, 0.f));
 		float4 sz = mul(this.mvp, float4(0.f, 0.f, extent.z, 0.f));
@@ -157,11 +157,11 @@ struct OccCull {
 		float4 p2 = p0 + sy;
 		float4 p3 = p2 + sz;
 		float4 p4 = p0 + sx;
-		float4 p5 = p4 + sx;
+		float4 p5 = p4 + sz;
 		float4 p6 = p4 + sy;
 		float4 p7 = p6 + sz;
 
-		f32 depth = min8(p0.w, p1.w, p2.w, p3.w, p4.w, p5.w, p6.w, p7.w);
+		f32 depth = min8(p0, p1, p2, p3, p4, p5, p6, p7).w;
 		if (depth < this.near) return false;
 
 		float2 dp0 = p0.xy / p0.w;
@@ -182,6 +182,6 @@ struct OccCull {
 		f32 height = (vaabb.w - vaabb.y) * this.screen.y * 0.5f;
 		f32 level = ceil(log2(max(width, height)));
 		f32 curr_depth = this.hzb.sample_mip(this.hzb_sampler, (vaabb.xy + vaabb.zw) * 0.5f, level).x;
-		return this.near / depth <= curr_depth;
+		return (this.near / depth) <= curr_depth;
 	}
 };

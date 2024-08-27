@@ -1,16 +1,15 @@
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
-	device::{descriptor::ImageId, Device},
+	device::{descriptor::ImageId, Device, GraphicsPipelineDesc, Pipeline},
 	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{ImageView, Subresource},
-	util::pipeline::{no_blend, no_cull, simple_blend, GraphicsPipelineDesc},
+	util::pipeline::{no_blend, no_cull, simple_blend},
 	Result,
 };
-use radiance_shader_compiler::c_str;
 
 pub struct AcesTonemap {
-	pipeline: vk::Pipeline,
+	pipeline: Pipeline,
 	layout: vk::PipelineLayout,
 }
 
@@ -32,19 +31,12 @@ impl AcesTonemap {
 				None,
 			)?;
 
-			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
+			let pipeline = device.graphics_pipeline(GraphicsPipelineDesc {
 				layout,
-				shaders: &[
-					device.shader(c_str!("radiance-graph/util/screen"), vk::ShaderStageFlags::VERTEX, None),
-					device.shader(
-						c_str!("radiance-passes/tonemap/aces"),
-						vk::ShaderStageFlags::FRAGMENT,
-						None,
-					),
-				],
+				shaders: &["radiance-graph/util/screen", "radiance-passes/tonemap/aces"],
 				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
-				raster: &no_cull(),
-				blend: &simple_blend(&[no_blend()]),
+				raster: no_cull(),
+				blend: simple_blend(&[no_blend()]),
 				..Default::default()
 			})?;
 
@@ -123,7 +115,7 @@ impl AcesTonemap {
 				}],
 			);
 			dev.cmd_set_scissor(buf, 0, &[area]);
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline.get());
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::GRAPHICS,
@@ -147,7 +139,7 @@ impl AcesTonemap {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		device.device().destroy_pipeline(self.pipeline, None);
+		self.pipeline.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

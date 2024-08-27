@@ -1,5 +1,8 @@
 use egui::{ComboBox, Context, DragValue, Window};
-use radiance_graph::{alloc::AllocatorVisualizer, device::Device};
+use radiance_graph::{
+	alloc::AllocatorVisualizer,
+	device::{Device, HotreloadStatus},
+};
 use radiance_passes::debug::mesh::DebugVis;
 
 pub struct Debug {
@@ -76,6 +79,15 @@ impl Debug {
 				"arena size: {:.2} MB",
 				self.arena_size as f32 / (1024.0 * 1024.0)
 			));
+
+			ui.horizontal(|ui| {
+				ui.label("hotreload: ");
+				match device.hotreload_status() {
+					HotreloadStatus::Waiting => ui.label("ready"),
+					HotreloadStatus::Recompiling => ui.spinner(),
+					HotreloadStatus::Errored => ui.label("errored"),
+				}
+			})
 		});
 
 		let alloc = device.allocator();

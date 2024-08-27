@@ -20,6 +20,8 @@ use radiance_graph::{
 	device::{
 		descriptor::{BufferId, ImageId, SamplerId},
 		Device,
+		GraphicsPipelineDesc,
+		Pipeline,
 	},
 	graph::{
 		util::{ByteReader, ImageStage},
@@ -36,13 +38,10 @@ use radiance_graph::{
 		VirtualResourceDesc,
 	},
 	resource::{BufferHandle, Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, Subresource},
-	util::pipeline::{default_blend, no_cull, simple_blend, GraphicsPipelineDesc},
+	util::pipeline::{default_blend, no_cull, simple_blend},
 	Result,
 };
-use radiance_shader_compiler::{
-	c_str,
-	runtime::{shader, ShaderBlob},
-};
+use radiance_shader_compiler::runtime::{shader, ShaderBlob};
 use rustc_hash::FxHashMap;
 use tracing::{span, Level};
 use vek::{Clamp, Vec2};
@@ -61,7 +60,7 @@ pub struct Renderer {
 	images: FxHashMap<u64, (Image, Vec2<u32>, ImageView, SamplerId)>,
 	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
 	layout: vk::PipelineLayout,
-	pipeline: vk::Pipeline,
+	pipeline: Pipeline,
 	vertex_size: u64,
 	index_size: u64,
 }
@@ -107,15 +106,12 @@ impl Renderer {
 				None,
 			)?;
 
-			let pipeline = device.graphics_pipeline(&GraphicsPipelineDesc {
+			let pipeline = device.graphics_pipeline(GraphicsPipelineDesc {
 				layout,
-				shaders: &[
-					device.shader(c_str!("radiance-egui/vertex"), vk::ShaderStageFlags::VERTEX, None),
-					device.shader(c_str!("radiance-egui/pixel"), vk::ShaderStageFlags::FRAGMENT, None),
-				],
+				shaders: &["radiance-egui/vertex", "radiance-egui/pixel"],
 				color_attachments: &[vk::Format::B8G8R8A8_UNORM],
-				blend: &simple_blend(&[default_blend()]),
-				raster: &no_cull(),
+				blend: simple_blend(&[default_blend()]),
+				raster: no_cull(),
 				..Default::default()
 			})?;
 
@@ -229,7 +225,7 @@ impl Renderer {
 			}
 		}
 		device.device().destroy_pipeline_layout(self.layout, None);
-		device.device().destroy_pipeline(self.pipeline, None);
+		self.pipeline.destroy();
 	}
 
 	unsafe fn execute(
@@ -277,7 +273,7 @@ impl Renderer {
 		);
 		pass.device
 			.device()
-			.cmd_bind_pipeline(pass.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline);
+			.cmd_bind_pipeline(pass.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline.get());
 		pass.device.device().cmd_bind_descriptor_sets(
 			pass.buf,
 			vk::PipelineBindPoint::GRAPHICS,

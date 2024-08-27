@@ -34,6 +34,12 @@ pub struct VirtualPathBuf {
 
 impl VirtualPathBuf {
 	pub fn new(path: impl Into<PathBuf>) -> Self { Self { inner: path.into() } }
+
+	pub fn without_ty(self) -> Self {
+		Self {
+			inner: self.inner.with_extension(""),
+		}
+	}
 }
 
 impl Borrow<VirtualPath> for VirtualPathBuf {
@@ -119,8 +125,7 @@ impl VirtualFileSystem {
 		let mut test = path;
 		loop {
 			if let Some(name) = self.source_reverse.get(test) {
-				let mut path = Path::new(name).join(path.strip_prefix(test).ok()?);
-				path.set_extension("");
+				let path = Path::new(name).join(path.strip_prefix(test).ok()?).with_extension("");
 				let s = path.into_os_string().into_string().unwrap();
 				return Some(VirtualPathBuf::new(s.replace('\\', "/")));
 			}
@@ -174,4 +179,3 @@ fn get_cargo_package_name(root: &Path) -> Result<String, Box<dyn Error>> {
 	let name = manifest.package.ok_or("Cargo.toml has no package")?.name;
 	Ok(name)
 }
-
