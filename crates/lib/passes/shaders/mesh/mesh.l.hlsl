@@ -70,6 +70,7 @@ void main(
 	if (gtid == 0) {
 		SWCount = 0;
 	}
+	// No barrier here because we don't touch SWCount until after the next barrier
 
 	MeshletPointer p = get(gid);
 	Instance instance = Constants.instances.load(p.instance);
@@ -84,12 +85,10 @@ void main(
 	float2 dim = Constants.output.dimensions();
 
 	if (gtid < vert_count) {
-		Vertex vertex = meshlet.vertex(instance.mesh, gtid);
-		float4 clip = mul(mvp, float4(vertex.position, 1.f));
-		float3 ndc = clip.xyz / clip.w;
-		float2 uv = ndc.xy * float2(0.5f, -0.5f) + 0.5f;
-		Positions[gtid] = float3(uv * dim, ndc.z);
-		vertices[gtid].position = clip;
+		Vertex v = meshlet.vertex(instance.mesh, gtid);
+		VertexTransform vt = transform_vertex(mvp, v);
+		Positions[gtid] = float3(vt.uv.xy * dim, vt.uv.z);
+		vertices[gtid].position = vt.clip;
 	}
 	GroupMemoryBarrierWithGroupSync();
 

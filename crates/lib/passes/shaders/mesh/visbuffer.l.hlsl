@@ -1,6 +1,6 @@
 #pragma once
 
-#include "radiance-graph/texture.l.hlsl"
+#include "radiance-passes/asset/data.l.hlsl"
 
 struct VisBufferData {
 	u32 meshlet_id;
@@ -97,3 +97,16 @@ struct VisBufferRead {
 	}
 #endif
 };
+
+struct VertexTransform {
+	float4 clip;
+	float3 uv;
+};
+
+VertexTransform transform_vertex(float4x4 mvp, Vertex vertex) {
+	float4 clip = mul(mvp, float4(vertex.position, 1.f));
+	float3 ndc = clip.xyz / clip.w;
+	float2 uv = ndc.xy * float2(0.5f, -0.5f) + 0.5f;
+	VertexTransform ret = { clip, float3(uv, ndc.z) };
+	return ret;
+}

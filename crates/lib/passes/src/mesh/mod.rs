@@ -50,6 +50,8 @@ pub struct RenderInfo {
 
 #[derive(Copy, Clone)]
 pub struct RenderOutput {
+	pub instances: BufferId,
+	pub camera: Res<BufferHandle>,
 	pub visbuffer: Res<ImageView>,
 	pub debug: Option<DebugRes>,
 	pub early: Res<BufferHandle>,
@@ -249,6 +251,8 @@ impl VisBuffer {
 
 		frame.end_region();
 		RenderOutput {
+			instances: info.scene.instances(),
+			camera,
 			visbuffer,
 			early: io.meshlets[0],
 			late: io.meshlets[1],

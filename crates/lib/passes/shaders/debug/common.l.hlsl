@@ -5,6 +5,8 @@
 #include "radiance-passes/mesh/cull.l.hlsl"
 
 struct PushConstants {
+	Buf<Instance> instances;
+	Buf<Camera> camera;
 	VisBufferRead read;
 	MeshletQueue early;
 	MeshletQueue late;

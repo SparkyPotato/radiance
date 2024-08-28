@@ -7,7 +7,7 @@ use radiance_graph::{
 		GraphicsPipelineDesc,
 		Pipeline,
 	},
-	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
+	graph::{BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{ImageView, Subresource},
 	util::pipeline::{no_blend, no_cull, simple_blend},
 	Result,
@@ -21,6 +21,7 @@ pub enum DebugVis {
 	Meshlets,
 	Overdraw(u32, u32),
 	HwSw,
+	Normals,
 }
 
 impl DebugVis {
@@ -32,12 +33,15 @@ pub struct DebugMesh {
 	meshlets: Pipeline,
 	overdraw: Pipeline,
 	hwsw: Pipeline,
+	normals: Pipeline,
 	layout: vk::PipelineLayout,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
+	instances: BufferId,
+	camera: BufferId,
 	visbuffer: ImageId,
 	debug: Option<DebugResIdRead>,
 	early: BufferId,
@@ -75,6 +79,7 @@ impl DebugMesh {
 				meshlets: Self::pipeline(device, layout, "radiance-passes/debug/meshlets")?,
 				overdraw: Self::pipeline(device, layout, "radiance-passes/debug/overdraw")?,
 				hwsw: Self::pipeline(device, layout, "radiance-passes/debug/hwsw")?,
+				normals: Self::pipeline(device, layout, "radiance-passes/debug/normals")?,
 			})
 		}
 	}
@@ -83,6 +88,12 @@ impl DebugMesh {
 		&'pass self, frame: &mut Frame<'pass, '_>, vis: DebugVis, output: RenderOutput,
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("debug mesh");
+		pass.reference(
+			output.camera,
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
+			},
+		);
 		let usage = ImageUsage {
 			format: vk::Format::UNDEFINED,
 			usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
@@ -162,6 +173,7 @@ impl DebugMesh {
 					DebugVis::Meshlets => self.meshlets.get(),
 					DebugVis::Overdraw(..) => self.overdraw.get(),
 					DebugVis::HwSw => self.hwsw.get(),
+					DebugVis::Normals => self.normals.get(),
 				},
 			);
 			dev.cmd_bind_descriptor_sets(
@@ -182,6 +194,8 @@ impl DebugMesh {
 				vk::ShaderStageFlags::FRAGMENT,
 				0,
 				bytes_of(&PushConstants {
+					instances: output.instances,
+					camera: pass.get(output.camera).id.unwrap(),
 					visbuffer: visbuffer.id.unwrap(),
 					debug: output.debug.map(|d| d.read(&mut pass)),
 					early: pass.get(output.early).id.unwrap(),
