@@ -8,10 +8,10 @@ use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterato
 use rustc_hash::FxHashMap;
 use tracing::{debug_span, field, info_span, trace_span};
 use uuid::Uuid;
-use vek::{Aabb, Sphere, Vec2, Vec3};
+use vek::{Aabb, Vec2, Vec3};
 
 use crate::{
-	import::{ImportError, ImportResult, Importer},
+	import::{mesh::bvh::aabb_to_sphere, ImportError, ImportResult, Importer},
 	mesh::{BvhNode, Mesh, Meshlet, Vertex},
 };
 
@@ -31,7 +31,7 @@ impl Meshlet {
 #[derive(Clone)]
 struct MeshletGroup {
 	aabb: Aabb<f32>,
-	lod_bounds: Sphere<f32, f32>,
+	lod_bounds: Aabb<f32>,
 	parent_error: f32,
 	meshlets: Range<u32>,
 }
@@ -41,6 +41,7 @@ struct Meshlets {
 	tris: Vec<u8>,
 	groups: Vec<MeshletGroup>,
 	meshlets: Vec<Meshlet>,
+	lod_bounds: Vec<Aabb<f32>>,
 }
 
 impl Meshlets {
@@ -53,6 +54,7 @@ impl Meshlets {
 			m.index_offset += tri_offset;
 			m
 		}));
+		self.lod_bounds.extend(other.lod_bounds);
 		self.vertex_remap.extend(other.vertex_remap);
 		self.tris.extend(other.tris);
 		self.groups.extend(other.groups.into_iter().map(|mut g| {
@@ -132,46 +134,40 @@ impl Importer<'_> {
 		Ok(self.convert_meshlets(mesh.vertices, meshlets, bvh, depth))
 	}
 
-	fn generate_meshlets(
-		&self, vertices: &[Vertex], indices: &[u32], error: Option<(Sphere<f32, f32>, f32)>,
-	) -> Meshlets {
+	fn generate_meshlets(&self, vertices: &[Vertex], indices: &[u32], error: Option<(Aabb<f32>, f32)>) -> Meshlets {
 		let s = trace_span!("building meshlets");
 		let _e = s.enter();
 
 		let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
 		let ms = meshopt::build_meshlets(indices, &adapter, 64, 124, 0.0);
-		let meshlets = ms
+		let (meshlets, lod_bounds) = ms
 			.meshlets
 			.iter()
-			.enumerate()
-			.map(|(i, m)| {
+			.map(|m| {
 				let aabb = bvh::calc_aabb(vertices.iter());
-				let mbounds = meshopt::compute_meshlet_bounds(ms.get(i), &adapter);
-				let (lod_bounds, error) = error.unwrap_or((
-					Sphere {
-						center: Vec3::from(mbounds.center),
-						radius: mbounds.radius,
-					},
-					0.0,
-				));
+				let (lod_bounds, error) = error.unwrap_or((aabb, 0.0));
 
-				Meshlet {
-					vert_offset: m.vertex_offset,
-					vert_count: m.vertex_count as _,
-					index_offset: m.triangle_offset,
-					tri_count: m.triangle_count as _,
-					aabb,
+				(
+					Meshlet {
+						vert_offset: m.vertex_offset,
+						vert_count: m.vertex_count as _,
+						index_offset: m.triangle_offset,
+						tri_count: m.triangle_count as _,
+						aabb,
+						lod_bounds: aabb_to_sphere(lod_bounds),
+						error,
+					},
 					lod_bounds,
-					error,
-				}
+				)
 			})
-			.collect();
+			.unzip();
 
 		Meshlets {
 			vertex_remap: ms.vertices,
 			tris: ms.triangles,
 			groups: Vec::new(),
 			meshlets,
+			lod_bounds,
 		}
 	}
 
@@ -212,7 +208,7 @@ impl Importer<'_> {
 		let mut last_group = 0;
 		let mut group = MeshletGroup {
 			aabb: bvh::aabb_default(),
-			lod_bounds: Sphere::default(),
+			lod_bounds: bvh::aabb_default(),
 			parent_error: f32::MAX,
 			meshlets: range.start as u32..0,
 		};
@@ -225,13 +221,13 @@ impl Importer<'_> {
 
 				last_group = next;
 				group.aabb = bvh::aabb_default();
-				group.lod_bounds = Sphere::default();
+				group.lod_bounds = bvh::aabb_default();
 				group.meshlets.start = end;
 			}
 
 			let m = meshlets.meshlets[p];
 			group.aabb = group.aabb.union(m.aabb);
-			group.lod_bounds = bvh::merge_spheres(group.lod_bounds, m.lod_bounds);
+			group.lod_bounds = group.lod_bounds.union(meshlets.lod_bounds[p]);
 			out[i] = m;
 		}
 		group.meshlets.end = (out.len() + range.start) as u32;

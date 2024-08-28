@@ -55,14 +55,16 @@ struct Cull {
 	float4x4 mv;
 	float2 screen;
 	f32 h;
+	f32 near;
 	float4 planes[5];
 	uint3 flips[5];
 
-	static Cull init(float4x4 mv, float4x4 mvp, uint2 res, f32 h) {
+	static Cull init(float4x4 mv, float4x4 mvp, uint2 res, f32 near, f32 h) {
 		Cull ret;
 		ret.mv = mv;
 		ret.screen = float2(res);
 		ret.h = h;
+		ret.near = near;
 		ret.planes[0] = normalize_plane(mvp[3] + mvp[0]);
 		ret.planes[1] = normalize_plane(mvp[3] - mvp[0]);
 		ret.planes[2] = normalize_plane(mvp[3] + mvp[1]);
@@ -85,37 +87,53 @@ struct Cull {
 		return true;
 	}
 
-	float4 transform_sphere(float4 sphere) {
+	f32 max_scale() {
 		float3 x = this.mv._m00_m10_m20;
 		float3 y = this.mv._m01_m11_m21;
 		float3 z = this.mv._m02_m12_m22;
 		f32 m = max(dot(x, x), max(dot(y, y), dot(z, z)));
-		f32 scale = sqrt(m);
-		float3 center = mul(this.mv, float4(sphere.xyz, 1.f)).xyz;
-		return float4(center, sphere.w * scale);
+		return sqrt(m);
 	}
 
-	f32 sphere_diameter_pixels(float4 sphere) {
-		f32 d2 = dot(sphere.xyz, sphere.xyz);
-		f32 r2 = sphere.w * sphere.w;
-		return this.h * max(this.screen.x, this.screen.y) * sphere.w / sqrt(d2 - r2);
+	f32 min_scale() {
+		float3 x = this.mv._m00_m10_m20;
+		float3 y = this.mv._m01_m11_m21;
+		float3 z = this.mv._m02_m12_m22;
+		f32 m = min(dot(x, x), min(dot(y, y), dot(z, z)));
+		return sqrt(m);
 	}
 
-	float4 transform_bounds(float4 lod_bounds, f32 error) {
-		float4 bounds = this.transform_sphere(lod_bounds);
-		// Place the error sphere at the closest point of the view-space lod bounds.
-		f32 dist = max(bounds.z - bounds.w, 0.f);
-		return float4(bounds.xy, dist, error);
+	f32 screenspace_scale(float4 bounds) {
+		float3 center = mul(this.mv, float4(bounds.xyz, 1.f)).xyz;
+		f32 radius = bounds.w * this.max_scale();
+
+		f32 tdist2 = dot(center, center);
+		f32 x2 = tdist2 - center.z * center.z;
+		f32 x = sqrt(max(0.f, x2));
+		f32 dist2 = tdist2 - radius * radius;
+		f32 dist = sqrt(max(0.f, dist2));
+		f32 t = (-radius * x + dist * center.z) / tdist2;
+
+		f32 h = this.near - center.z;
+		if (dist < 0.f || t * dist < this.near) {
+			f32 tx = x + sqrt(radius * radius - h * h);
+			t = this.near * rsqrt(tx * tx + this.near * this.near);
+		}
+
+		if (center.z + radius > this.near) return max(center.z - radius, this.near) * t;
+		else return 0.f;
 	}
 
 	bool is_imperceptible(float4 lod_bounds, f32 error) {
-		float4 test = this.transform_bounds(lod_bounds, error);
-		return this.sphere_diameter_pixels(test) < 1.f;
+		f32 scale = this.screenspace_scale(lod_bounds);
+		f32 thresh = this.min_scale() * error * max(this.screen.x, this.screen.y);
+		return scale > thresh;
 	}
 
 	bool is_perceptible(float4 lod_bounds, f32 error) {
-		float4 test = this.transform_bounds(lod_bounds, error);
-		return this.sphere_diameter_pixels(test) >= 1.f;
+		f32 scale = this.screenspace_scale(lod_bounds);
+		f32 thresh = this.min_scale() * error * max(this.screen.x, this.screen.y);
+		return scale <= thresh;
 	}
 };
 

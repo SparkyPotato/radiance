@@ -514,6 +514,7 @@ impl ShaderRuntime {
 							s.lock().unwrap().recompiling = false;
 						}
 					}
+					println!();
 				}
 			})
 			.ok(),

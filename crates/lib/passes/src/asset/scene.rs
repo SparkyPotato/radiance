@@ -1,30 +1,19 @@
 use ash::vk;
 use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
-use parry3d::{
-	bounding_volume::SimdAabb,
-	math::{Point, SimdReal, Vector},
-	na::{SimdBool, SimdPartialOrd, SimdValue},
-	partitioning::{Qbvh, QbvhDataGenerator, SimdBestFirstVisitStatus, SimdBestFirstVisitor},
-	query::SimdRay,
-};
 use radiance_asset::{scene, util::SliceWriter, Asset, AssetSource};
 use radiance_graph::{
-	device::{
-		descriptor::{ASId, BufferId},
-		Compute,
-	},
+	device::descriptor::BufferId,
 	graph::Resource,
-	resource::{ASDesc, Buffer, BufferDesc, Resource as _, AS},
-	sync::{get_global_barrier, GlobalBarrier, UsageType},
+	resource::{Buffer, BufferDesc, Resource as _},
 };
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::Uuid;
-use vek::{Aabb, Mat4, Ray, Vec3, Vec4};
+use vek::{Mat4, Ray, Vec3, Vec4};
 
 use crate::asset::{
-	mesh::{map_aabb, GpuAabb, Intersection, Mesh},
+	mesh::{map_aabb, GpuAabb, Mesh},
 	rref::{RRef, RuntimeAsset},
 	AssetRuntime,
 	DelRes,
@@ -43,7 +32,6 @@ pub struct Node {
 
 pub struct Scene {
 	instance_buffer: Buffer,
-	acceleration_structure: AS,
 	pub cameras: Vec<scene::Camera>,
 	nodes: Vec<Node>,
 	max_depth: u32,
@@ -80,9 +68,7 @@ impl Scene {
 
 	pub fn max_depth(&self) -> u32 { self.max_depth }
 
-	pub fn acceleration_structure(&self) -> ASId { self.acceleration_structure.id.unwrap() }
-
-	pub fn intersect(&self, _: Ray<f32>, _: f32) -> Option<Intersection> {
+	pub fn intersect(&self, _: Ray<f32>, _: f32) -> bool {
 		// let s = span!(Level::TRACE, "scene intersect");
 		// let _e = s.enter();
 		//
@@ -148,14 +134,13 @@ impl Scene {
 		// self.bvh
 		// 	.traverse_best_first(&mut Visitor { ray, tmax, scene: self })
 		// 	.map(|(_, i)| i)
-		None
+		false
 	}
 }
 
 impl RuntimeAsset for Scene {
 	fn into_resources(self, queue: Sender<DelRes>) {
 		queue.send(Resource::Buffer(self.instance_buffer).into()).unwrap();
-		queue.send(Resource::AS(self.acceleration_structure).into()).unwrap();
 	}
 }
 
@@ -195,23 +180,8 @@ impl<S: AssetSource> Loader<'_, S> {
 			},
 		)
 		.map_err(LoadError::Vulkan)?;
-		// instance_buffer
-		// 	.alloc_size(loader.ctx, loader.queue, size)
-		// 	.map_err(LoadError::Vulkan)?;
 
 		let mut writer = SliceWriter::new(unsafe { instance_buffer.data().as_mut() });
-
-		// let temp_build_buffer = Buffer::create(
-		// 	self.device,
-		// 	BufferDesc {
-		// 		name: "test",
-		// 		size: (std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() * s.nodes.len()) as u64,
-		// 		usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
-		// 		on_cpu: false,
-		// 	},
-		// )
-		// .map_err(LoadError::Vulkan)?;
-		// let mut awriter = SliceWriter::new(unsafe { temp_build_buffer.data().as_mut() });
 
 		let mut max_depth = 0;
 		let nodes: Vec<_> = s
@@ -228,27 +198,7 @@ impl<S: AssetSource> Loader<'_, S> {
 						aabb: map_aabb(mesh.aabb),
 					})
 					.unwrap();
-				// awriter
-				// 	.write(VkAccelerationStructureInstanceKHR {
-				// 		transform: vk::TransformMatrixKHR {
-				// 			matrix: unsafe {
-				// 				std::mem::transmute(
-				// 					n.transform.transposed().cols.xyz().map(|x| x.into_array()).into_array(),
-				// 				)
-				// 			},
-				// 		},
-				// 		instance_custom_index_and_mask: vk::Packed24_8::new(i as _, 0xff),
-				// 		instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(0, 0),
-				// 		acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
-				// 			device_handle: unsafe {
-				// 				self.device.as_ext().get_acceleration_structure_device_address(
-				// 					&vk::AccelerationStructureDeviceAddressInfoKHR::default()
-				// 						.acceleration_structure(mesh.acceleration_structure.handle()),
-				// 				)
-				// 			},
-				// 		},
-				// 	})
-				// 	.unwrap();
+
 				Ok(Node {
 					name: n.name,
 					transform: n.transform,
@@ -258,85 +208,6 @@ impl<S: AssetSource> Loader<'_, S> {
 				})
 			})
 			.collect::<Result<_, LoadError<S>>>()?;
-
-		let acceleration_structure = unsafe {
-			// let ext = self.device.as_ext();
-
-			// let geo = [vk::AccelerationStructureGeometryKHR::default()
-			// 	.geometry_type(vk::GeometryTypeKHR::INSTANCES)
-			// 	.geometry(vk::AccelerationStructureGeometryDataKHR {
-			// 		instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
-			// 			.array_of_pointers(false)
-			// 			.data(vk::DeviceOrHostAddressConstKHR {
-			// 				device_address: temp_build_buffer.addr(),
-			// 			}),
-			// 	})
-			// 	.flags(vk::GeometryFlagsKHR::OPAQUE)];
-			// let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-			// 	.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
-			// 	.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-			// 	.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-			// 	// .geometries(&geo);
-			// 	.geometries(&[]);
-			//
-			// let count = nodes.len() as u32;
-			// let mut size = Default::default();
-			// ext.get_acceleration_structure_build_sizes(
-			// 	vk::AccelerationStructureBuildTypeKHR::DEVICE,
-			// 	&info,
-			// 	// &[count],
-			// 	&[],
-			// 	&mut size,
-			// );
-			//
-			// let as_ = AS::create(
-			// 	self.device,
-			// 	ASDesc {
-			// 		name: &format!("{name} AS"),
-			// 		flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
-			// 		ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
-			// 		size: size.acceleration_structure_size,
-			// 	},
-			// )
-			// .map_err(LoadError::Vulkan)?;
-
-			// let scratch = Buffer::create(
-			// 	self.device,
-			// 	BufferDesc {
-			// 		name: "AS build scratch buffer",
-			// 		size: size.build_scratch_size,
-			// 		usage: vk::BufferUsageFlags::STORAGE_BUFFER,
-			// 		on_cpu: false,
-			// 	},
-			// )
-			// .map_err(LoadError::Vulkan)?;
-
-			// info.dst_acceleration_structure = as_.handle();
-			// info.scratch_data = vk::DeviceOrHostAddressKHR {
-			// 	device_address: scratch.addr(),
-			// };
-
-			// let buf = self.ctx.get_buf::<Compute>();
-
-			// self.device.device().cmd_pipeline_barrier2(
-			// 	buf,
-			// 	&vk::DependencyInfo::default().memory_barriers(&[get_global_barrier(&GlobalBarrier {
-			// 		previous_usages: &[UsageType::AccelerationStructureBuildWrite],
-			// 		next_usages: &[UsageType::AccelerationStructureBuildRead],
-			// 	})]),
-			// );
-			// ext.cmd_build_acceleration_structures(
-			// 	buf,
-			// 	&[info],
-			// 	&[&[vk::AccelerationStructureBuildRangeInfoKHR::default().primitive_count(count)]],
-			// );
-			//
-			// self.ctx.delete::<Compute>(temp_build_buffer);
-			// self.ctx.delete::<Compute>(scratch);
-
-			// as_
-			AS::default()
-		};
 
 		// struct Gen<'a> {
 		// 	nodes: &'a Vec<Node>,
@@ -370,7 +241,6 @@ impl<S: AssetSource> Loader<'_, S> {
 		Ok(RRef::new(
 			Scene {
 				instance_buffer,
-				acceleration_structure,
 				cameras: s.cameras,
 				nodes,
 				max_depth,

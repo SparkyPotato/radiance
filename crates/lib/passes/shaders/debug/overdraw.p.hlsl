@@ -17,8 +17,7 @@ float3 heatmap(f32 heat) {
 }
 
 float4 main(VertexOutput input): SV_Target0 {
-	uint2 pixel = Constants.overdraw.pixel_of_uv(input.uv);
-	u32 value = asuint(Constants.overdraw.load(pixel).x);
+	u32 value = Constants.read.overdraw(input.uv);
 	f32 heat = clamp((f32(value) - f32(Constants.bottom)) / f32(Constants.top - Constants.bottom), 0.f, 1.f);
 	return float4(heatmap(heat), 1.f);
 }

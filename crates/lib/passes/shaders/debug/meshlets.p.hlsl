@@ -1,7 +1,7 @@
 #include "common.l.hlsl"
 
 float4 main(VertexOutput input): SV_Target0 {
-	VisBufferData data = load_visbuffer(input.uv);
+	VisBufferData data = Constants.read.data(input.uv);
 	if (data.meshlet_id == 0xffffffff >> 7) discard;
 	u32 id = data.meshlet_id;
 	u32 len = Constants.early.len();

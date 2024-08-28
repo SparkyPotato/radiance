@@ -13,9 +13,16 @@ use radiance_graph::{
 };
 use vek::{Mat4, Vec2, Vec4};
 
+pub use crate::mesh::setup::{DebugRes, DebugResIdRead};
 use crate::{
 	asset::{rref::RRef, scene::Scene},
-	mesh::{bvh::BvhCull, hzb::HzbGen, instance::InstanceCull, meshlet::MeshletCull, setup::Setup},
+	mesh::{
+		bvh::BvhCull,
+		hzb::HzbGen,
+		instance::InstanceCull,
+		meshlet::MeshletCull,
+		setup::{DebugResId, Setup},
+	},
 };
 
 mod bvh;
@@ -44,7 +51,7 @@ pub struct RenderInfo {
 #[derive(Copy, Clone)]
 pub struct RenderOutput {
 	pub visbuffer: Res<ImageView>,
-	pub overdraw: Option<Res<ImageView>>,
+	pub debug: Option<DebugRes>,
 	pub early: Res<BufferHandle>,
 	pub late: Res<BufferHandle>,
 }
@@ -116,13 +123,8 @@ struct PushConstants {
 	camera: BufferId,
 	early: BufferId,
 	late: BufferId,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
-struct PixelConstants {
 	output: StorageImageId,
-	overdraw: Option<StorageImageId>,
+	debug: Option<DebugResId>,
 }
 
 #[derive(Copy, Clone)]
@@ -132,7 +134,7 @@ struct PassIO {
 	meshlets: [Res<BufferHandle>; 2],
 	camera: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
-	overdraw: Option<Res<ImageView>>,
+	debug: Option<DebugRes>,
 }
 
 impl VisBuffer {
@@ -141,15 +143,9 @@ impl VisBuffer {
 			let layout = device.device().create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[
-						vk::PushConstantRange::default()
-							.stage_flags(vk::ShaderStageFlags::TASK_EXT | vk::ShaderStageFlags::MESH_EXT)
-							.size(std::mem::size_of::<PushConstants>() as _),
-						vk::PushConstantRange::default()
-							.stage_flags(vk::ShaderStageFlags::FRAGMENT)
-							.offset(std::mem::size_of::<PushConstants>() as _)
-							.size(std::mem::size_of::<PixelConstants>() as _),
-					]),
+					.push_constant_ranges(&[vk::PushConstantRange::default()
+						.stage_flags(vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT)
+						.size(std::mem::size_of::<PushConstants>() as _)]),
 				None,
 			)?;
 
@@ -180,12 +176,20 @@ impl VisBuffer {
 		device.graphics_pipeline(GraphicsPipelineDesc {
 			shaders: &[
 				if early {
-					"radiance-passes/mesh/mesh_early"
+					if debug {
+						"radiance-passes/mesh/mesh_early_debug"
+					} else {
+						"radiance-passes/mesh/mesh_early"
+					}
 				} else {
-					"radiance-passes/mesh/mesh_late"
+					if debug {
+						"radiance-passes/mesh/mesh_late_debug"
+					} else {
+						"radiance-passes/mesh/mesh_late"
+					}
 				},
 				if debug {
-					"radiance-passes/mesh/debug"
+					"radiance-passes/mesh/pixel_debug"
 				} else {
 					"radiance-passes/mesh/pixel"
 				},
@@ -212,14 +216,14 @@ impl VisBuffer {
 		let camera = res.camera_mesh(&mut pass);
 		let meshlets = res.mesh(&mut pass);
 		let visbuffer = res.visbuffer(&mut pass);
-		let overdraw = res.overdraw(&mut pass);
+		let debug = res.debug(&mut pass);
 		let mut io = PassIO {
 			early: true,
 			instances: info.scene.instances(),
 			meshlets,
 			camera,
 			visbuffer,
-			overdraw,
+			debug,
 		};
 		pass.build(move |ctx| this.execute(ctx, io));
 		frame.end_region();
@@ -236,7 +240,7 @@ impl VisBuffer {
 		res.camera_mesh(&mut pass);
 		res.mesh(&mut pass);
 		res.visbuffer(&mut pass);
-		res.overdraw(&mut pass);
+		res.debug(&mut pass);
 		io.early = false;
 		pass.build(move |ctx| this.execute(ctx, io));
 		frame.end_region();
@@ -248,7 +252,7 @@ impl VisBuffer {
 			visbuffer,
 			early: io.meshlets[0],
 			late: io.meshlets[1],
-			overdraw,
+			debug,
 		}
 	}
 
@@ -295,51 +299,28 @@ impl VisBuffer {
 					camera: pass.get(io.camera).id.unwrap(),
 					early: pass.get(io.meshlets[0]).id.unwrap(),
 					late: pass.get(io.meshlets[1]).id.unwrap(),
+					output: visbuffer.storage_id.unwrap(),
+					debug: io.debug.map(|d| d.get(&mut pass)),
 				}),
 			);
 
-			if let Some(o) = io.overdraw {
-				dev.cmd_bind_pipeline(
-					buf,
-					vk::PipelineBindPoint::GRAPHICS,
+			dev.cmd_bind_pipeline(
+				buf,
+				vk::PipelineBindPoint::GRAPHICS,
+				if io.debug.is_some() {
 					if io.early {
 						self.debug[0].get()
 					} else {
 						self.debug[1].get()
-					},
-				);
-				let id = pass.get(o).storage_id.unwrap();
-				dev.cmd_push_constants(
-					buf,
-					self.layout,
-					vk::ShaderStageFlags::FRAGMENT,
-					std::mem::size_of::<PushConstants>() as _,
-					bytes_of(&PixelConstants {
-						output: visbuffer.storage_id.unwrap(),
-						overdraw: Some(id),
-					}),
-				);
-			} else {
-				dev.cmd_bind_pipeline(
-					buf,
-					vk::PipelineBindPoint::GRAPHICS,
+					}
+				} else {
 					if io.early {
 						self.no_debug[0].get()
 					} else {
 						self.no_debug[1].get()
-					},
-				);
-				dev.cmd_push_constants(
-					buf,
-					self.layout,
-					vk::ShaderStageFlags::FRAGMENT,
-					std::mem::size_of::<PushConstants>() as _,
-					bytes_of(&PixelConstants {
-						output: visbuffer.storage_id.unwrap(),
-						overdraw: None,
-					}),
-				);
-			}
+					}
+				},
+			);
 			self.mesh
 				.cmd_draw_mesh_tasks_indirect(buf, read.buffer, 0, 1, std::mem::size_of::<u32>() as u32 * 3);
 

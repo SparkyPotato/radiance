@@ -35,6 +35,7 @@ impl Debug {
 			DebugVis::Triangles => 0,
 			DebugVis::Meshlets => 1,
 			DebugVis::Overdraw(..) => 2,
+			DebugVis::HwSw => 3,
 		}
 	}
 
@@ -43,6 +44,7 @@ impl Debug {
 			0 => "triangles",
 			1 => "meshlets",
 			2 => "overdraw",
+			3 => "hw/sw",
 			_ => unreachable!(),
 		}
 	}
@@ -52,11 +54,12 @@ impl Debug {
 			let mut sel = Self::vis_to_index(self.debug_vis);
 			ComboBox::from_label("debug vis")
 				.selected_text(Self::text_of_index(sel))
-				.show_index(ui, &mut sel, 3, Self::text_of_index);
+				.show_index(ui, &mut sel, 4, Self::text_of_index);
 			self.debug_vis = match sel {
 				0 => DebugVis::Triangles,
 				1 => DebugVis::Meshlets,
 				2 => DebugVis::Overdraw(self.bottom, self.top),
+				3 => DebugVis::HwSw,
 				_ => unreachable!(),
 			};
 

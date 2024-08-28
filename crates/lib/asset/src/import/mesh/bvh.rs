@@ -23,20 +23,10 @@ pub fn calc_aabb<'a>(vertices: impl IntoIterator<Item = &'a Vertex>) -> Aabb<f32
 	aabb
 }
 
-pub fn merge_spheres(a: Sphere<f32, f32>, b: Sphere<f32, f32>) -> Sphere<f32, f32> {
-	let sr = a.radius.min(b.radius);
-	let br = a.radius.max(b.radius);
-	let len = (a.center - b.center).magnitude();
-	if len + sr < br || sr == 0.0 || len == 0.0 {
-		if a.radius > b.radius {
-			a
-		} else {
-			b
-		}
-	} else {
-		let radius = (sr + br + len) / 2.0;
-		let center = (a.center + b.center + (a.radius - b.radius) * (a.center - b.center) / len) / 2.0;
-		Sphere { center, radius }
+pub fn aabb_to_sphere(aabb: Aabb<f32>) -> Sphere<f32, f32> {
+	Sphere {
+		center: aabb.center(),
+		radius: aabb.half_size().magnitude(),
 	}
 }
 
@@ -177,50 +167,59 @@ impl BvhBuilder {
 	}
 
 	fn build_inner(
-		&self, groups: &[MeshletGroup], out: &mut Vec<BvhNode>, at: usize, max_depth: &mut u32, node: u32, depth: u32,
+		&self, groups: &[MeshletGroup], out: &mut Vec<BvhNode>, temp: &mut Vec<Aabb<f32>>, at: usize,
+		max_depth: &mut u32, node: u32, depth: u32,
 	) {
 		let node = &self.nodes[node as usize];
-		out[at] = if node.group != u32::MAX {
+		(out[at], temp[at]) = if node.group != u32::MAX {
 			*max_depth = depth.max(*max_depth);
 			let group = &groups[node.group as usize];
 			let child_count = (group.meshlets.len() as u8) | (1 << 7);
-			BvhNode {
-				aabb: group.aabb,
-				lod_bounds: group.lod_bounds,
-				parent_error: group.parent_error,
-				children_offset: group.meshlets.start,
-				child_count,
-			}
+			(
+				BvhNode {
+					aabb: group.aabb,
+					lod_bounds: aabb_to_sphere(group.lod_bounds),
+					parent_error: group.parent_error,
+					children_offset: group.meshlets.start,
+					child_count,
+				},
+				group.lod_bounds,
+			)
 		} else {
 			let base = out.len();
 			let count = node.children.len();
 			out.extend(std::iter::repeat(BvhNode::default()).take(count));
+			temp.extend(std::iter::repeat(aabb_default()).take(count));
 			for (i, &c) in node.children.iter().enumerate() {
-				self.build_inner(groups, out, base + i, max_depth, c, depth + 1)
+				self.build_inner(groups, out, temp, base + i, max_depth, c, depth + 1)
 			}
 			let mut aabb = aabb_default();
-			let mut lod_bounds = Sphere::default();
+			let mut lod_bounds = aabb_default();
 			let mut parent_error = 0.0f32;
-			for n in &out[base..(base + count)] {
+			for (n, &lb) in out[base..(base + count)].iter().zip(&temp[base..(base + count)]) {
 				aabb = aabb.union(n.aabb);
-				lod_bounds = merge_spheres(lod_bounds, n.lod_bounds);
+				lod_bounds = lod_bounds.union(lb);
 				parent_error = parent_error.max(n.parent_error);
 			}
-			BvhNode {
-				aabb,
+			(
+				BvhNode {
+					aabb,
+					lod_bounds: aabb_to_sphere(lod_bounds),
+					parent_error,
+					children_offset: base as u32,
+					child_count: count as u8,
+				},
 				lod_bounds,
-				parent_error,
-				children_offset: base as u32,
-				child_count: count as u8,
-			}
+			)
 		};
 	}
 
 	pub fn build(mut self, groups: &[MeshletGroup]) -> (Vec<BvhNode>, u32) {
 		let root = self.build_temp();
 		let mut out = vec![BvhNode::default()];
+		let mut temp = vec![aabb_default()];
 		let mut max_depth = 0;
-		self.build_inner(groups, &mut out, 0, &mut max_depth, root, 1);
+		self.build_inner(groups, &mut out, &mut temp, 0, &mut max_depth, root, 1);
 		(out, max_depth)
 	}
 }

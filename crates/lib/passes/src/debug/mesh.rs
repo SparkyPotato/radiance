@@ -13,23 +13,25 @@ use radiance_graph::{
 	Result,
 };
 
-use crate::mesh::RenderOutput;
+use crate::mesh::{DebugResIdRead, RenderOutput};
 
 #[derive(Copy, Clone)]
 pub enum DebugVis {
 	Triangles,
 	Meshlets,
 	Overdraw(u32, u32),
+	HwSw,
 }
 
 impl DebugVis {
-	pub fn requires_debug_info(self) -> bool { matches!(self, Self::Overdraw(..)) }
+	pub fn requires_debug_info(self) -> bool { matches!(self, Self::Overdraw(..) | Self::HwSw) }
 }
 
 pub struct DebugMesh {
 	triangles: Pipeline,
 	meshlets: Pipeline,
 	overdraw: Pipeline,
+	hwsw: Pipeline,
 	layout: vk::PipelineLayout,
 }
 
@@ -37,7 +39,7 @@ pub struct DebugMesh {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	visbuffer: ImageId,
-	overdraw: Option<ImageId>,
+	debug: Option<DebugResIdRead>,
 	early: BufferId,
 	late: BufferId,
 	bottom: u32,
@@ -72,6 +74,7 @@ impl DebugMesh {
 				triangles: Self::pipeline(device, layout, "radiance-passes/debug/triangles")?,
 				meshlets: Self::pipeline(device, layout, "radiance-passes/debug/meshlets")?,
 				overdraw: Self::pipeline(device, layout, "radiance-passes/debug/overdraw")?,
+				hwsw: Self::pipeline(device, layout, "radiance-passes/debug/hwsw")?,
 			})
 		}
 	}
@@ -100,8 +103,9 @@ impl DebugMesh {
 				subresource: Subresource::default(),
 			},
 		);
-		if let Some(o) = output.overdraw {
-			pass.reference(o, usage);
+		if let Some(d) = output.debug {
+			pass.reference(d.overdraw, usage);
+			pass.reference(d.hwsw, usage);
 		}
 
 		pass.build(move |ctx| self.execute(ctx, vis, output, out));
@@ -157,6 +161,7 @@ impl DebugMesh {
 					DebugVis::Triangles => self.triangles.get(),
 					DebugVis::Meshlets => self.meshlets.get(),
 					DebugVis::Overdraw(..) => self.overdraw.get(),
+					DebugVis::HwSw => self.hwsw.get(),
 				},
 			);
 			dev.cmd_bind_descriptor_sets(
@@ -178,7 +183,7 @@ impl DebugMesh {
 				0,
 				bytes_of(&PushConstants {
 					visbuffer: visbuffer.id.unwrap(),
-					overdraw: output.overdraw.map(|x| pass.get(x).id.unwrap()),
+					debug: output.debug.map(|d| d.read(&mut pass)),
 					early: pass.get(output.early).id.unwrap(),
 					late: pass.get(output.late).id.unwrap(),
 					bottom,
@@ -196,6 +201,7 @@ impl DebugMesh {
 		self.triangles.destroy();
 		self.meshlets.destroy();
 		self.overdraw.destroy();
+		self.hwsw.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

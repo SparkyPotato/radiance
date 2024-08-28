@@ -1,9 +1,12 @@
 use std::io::Write;
 
 use ash::vk;
-use bytemuck::bytes_of;
+use bytemuck::{bytes_of, NoUninit, PodInOption, ZeroableInOption};
 use radiance_graph::{
-	device::{descriptor::SamplerId, Device},
+	device::{
+		descriptor::{ImageId, SamplerId, StorageImageId},
+		Device,
+	},
 	graph::{
 		BufferDesc,
 		BufferUsage,
@@ -14,6 +17,7 @@ use radiance_graph::{
 		ImageUsage,
 		ImageUsageType,
 		PassBuilder,
+		PassContext,
 		Res,
 	},
 	resource::{self, BufferHandle, Image, ImageView, Resource, Subresource},
@@ -32,6 +36,47 @@ struct Persistent {
 	hzb: Image,
 }
 
+#[derive(Copy, Clone)]
+pub struct DebugRes {
+	pub overdraw: Res<ImageView>,
+	pub hwsw: Res<ImageView>,
+}
+
+impl DebugRes {
+	pub fn get(self, pass: &mut PassContext) -> DebugResId {
+		DebugResId {
+			overdraw: pass.get(self.overdraw).storage_id.unwrap(),
+			hwsw: pass.get(self.hwsw).storage_id.unwrap(),
+		}
+	}
+
+	pub fn read(self, pass: &mut PassContext) -> DebugResIdRead {
+		DebugResIdRead {
+			overdraw: pass.get(self.overdraw).id.unwrap(),
+			hwsw: pass.get(self.hwsw).id.unwrap(),
+		}
+	}
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct DebugResId {
+	pub overdraw: StorageImageId,
+	pub hwsw: StorageImageId,
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct DebugResIdRead {
+	pub overdraw: ImageId,
+	pub hwsw: ImageId,
+}
+
+unsafe impl PodInOption for DebugResId {}
+unsafe impl PodInOption for DebugResIdRead {}
+unsafe impl ZeroableInOption for DebugResId {}
+unsafe impl ZeroableInOption for DebugResIdRead {}
+
 pub struct Resources {
 	pub camera: Res<BufferHandle>,
 	pub hzb: Res<ImageView>,
@@ -41,7 +86,7 @@ pub struct Resources {
 	pub meshlet_queues: [Res<BufferHandle>; 2],
 	pub meshlet_render_lists: [Res<BufferHandle>; 2],
 	pub visbuffer: Res<ImageView>,
-	pub overdraw: Option<Res<ImageView>>,
+	pub debug: Option<DebugRes>,
 }
 
 impl Resources {
@@ -132,10 +177,19 @@ impl Resources {
 		self.visbuffer
 	}
 
-	pub fn overdraw(&self, pass: &mut PassBuilder) -> Option<Res<ImageView>> {
-		if let Some(o) = self.overdraw {
+	pub fn debug(&self, pass: &mut PassBuilder) -> Option<DebugRes> {
+		if let Some(d) = self.debug {
 			pass.reference(
-				o,
+				d.overdraw,
+				ImageUsage {
+					format: vk::Format::UNDEFINED,
+					usages: &[ImageUsageType::ShaderStorageWrite(Shader::Fragment)],
+					view_type: Some(vk::ImageViewType::TYPE_2D),
+					subresource: Subresource::default(),
+				},
+			);
+			pass.reference(
+				d.hwsw,
 				ImageUsage {
 					format: vk::Format::UNDEFINED,
 					usages: &[ImageUsageType::ShaderStorageWrite(Shader::Fragment)],
@@ -144,7 +198,7 @@ impl Resources {
 				},
 			);
 		}
-		self.overdraw
+		self.debug
 	}
 }
 
@@ -236,45 +290,40 @@ impl Setup {
 				},
 			)
 		});
-		let visbuffer = pass.resource(
-			ImageDesc {
-				size: vk::Extent3D {
-					width: res.x,
-					height: res.y,
-					depth: 1,
-				},
-				format: vk::Format::R64_UINT,
-				levels: 1,
-				layers: 1,
-				samples: vk::SampleCountFlags::TYPE_1,
+		let desc = ImageDesc {
+			size: vk::Extent3D {
+				width: res.x,
+				height: res.y,
+				depth: 1,
 			},
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::TransferWrite],
-				view_type: None,
-				subresource: Subresource::default(),
-			},
-		);
-		let overdraw = info.debug_info.then(|| {
-			pass.resource(
+			format: vk::Format::R64_UINT,
+			levels: 1,
+			layers: 1,
+			samples: vk::SampleCountFlags::TYPE_1,
+		};
+		let usage = ImageUsage {
+			format: vk::Format::UNDEFINED,
+			usages: &[ImageUsageType::TransferWrite],
+			view_type: None,
+			subresource: Subresource::default(),
+		};
+		let visbuffer = pass.resource(desc, usage);
+		let debug = info.debug_info.then(|| {
+			let overdraw = pass.resource(
 				ImageDesc {
-					size: vk::Extent3D {
-						width: res.x,
-						height: res.y,
-						depth: 1,
-					},
 					format: vk::Format::R32_UINT,
-					levels: 1,
-					layers: 1,
-					samples: vk::SampleCountFlags::TYPE_1,
+					..desc
 				},
-				ImageUsage {
-					format: vk::Format::UNDEFINED,
-					usages: &[ImageUsageType::TransferWrite],
-					view_type: None,
-					subresource: Subresource::default(),
+				usage,
+			);
+			let hwsw = pass.resource(
+				ImageDesc {
+					format: vk::Format::R64_UINT,
+					..desc
 				},
-			)
+				usage,
+			);
+			DebugRes { overdraw, hwsw }
 		});
 
 		pass.build(move |mut pass| unsafe {
@@ -315,10 +364,22 @@ impl Setup {
 					.base_array_layer(0)
 					.layer_count(vk::REMAINING_ARRAY_LAYERS)],
 			);
-			if let Some(o) = overdraw {
+			if let Some(d) = debug {
 				dev.cmd_clear_color_image(
 					buf,
-					pass.get(o).image,
+					pass.get(d.overdraw).image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&vk::ClearColorValue::default(),
+					&[vk::ImageSubresourceRange::default()
+						.aspect_mask(vk::ImageAspectFlags::COLOR)
+						.base_mip_level(0)
+						.level_count(vk::REMAINING_MIP_LEVELS)
+						.base_array_layer(0)
+						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+				);
+				dev.cmd_clear_color_image(
+					buf,
+					pass.get(d.hwsw).image,
 					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
 					&vk::ClearColorValue::default(),
 					&[vk::ImageSubresourceRange::default()
@@ -348,7 +409,7 @@ impl Setup {
 			meshlet_queues,
 			meshlet_render_lists,
 			visbuffer,
-			overdraw,
+			debug,
 		}
 	}
 

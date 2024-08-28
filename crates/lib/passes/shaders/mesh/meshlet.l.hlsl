@@ -52,16 +52,13 @@ void main(u32 id: SV_DispatchThreadID) {
 	float4x4 mvp = mul(camera.view_proj, transform);
 	float4x4 omvp = occ_camera(mvp, transform);
 
-	Cull c = Cull::init(mv, mvp, Constants.res, camera.h);
+	Cull c = Cull::init(mv, mvp, Constants.res, camera.near, camera.h);
 	OccCull oc = OccCull::init(omvp, Constants.res, camera.near, Constants.hzb, Constants.hzb_sampler);
 
-	Aabb aabb = meshlet.aabb;
-	float4 lod_bounds = meshlet.lod_bounds;
-	f32 error = meshlet.error;
-	if (c.is_perceptible(lod_bounds, error) || c.frustum_cull(aabb)) return;
+	if (c.frustum_cull(meshlet.aabb) || c.is_perceptible(meshlet.lod_bounds, meshlet.error)) return;
 
 	MeshletPointer ret;
 	ret.instance = p.instance;
 	ret.meshlet_offset = p.node;
-	write(!oc.cull(aabb), ret);
+	write(!oc.cull(meshlet.aabb), ret);
 }

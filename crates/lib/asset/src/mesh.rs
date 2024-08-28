@@ -45,7 +45,7 @@ pub struct Meshlet {
 	/// The AABB of the meshlet.
 	#[bincode(with_serde)]
 	pub aabb: Aabb<f32>,
-	/// The bounding sphere to use for LOD decisions.
+	/// The bounds to use for LOD decisions.
 	#[bincode(with_serde)]
 	pub lod_bounds: Sphere<f32, f32>,
 	/// The error of this meshlet.

@@ -70,13 +70,10 @@ void main(u32 id: SV_DispatchThreadID) {
 	float4x4 mvp = mul(camera.view_proj, transform);
 	float4x4 omvp = occ_camera(mvp, transform);
 
-	Cull c = Cull::init(mv, mvp, Constants.res, camera.h);
+	Cull c = Cull::init(mv, mvp, Constants.res, camera.near, camera.h);
 	OccCull oc = OccCull::init(omvp, Constants.res, camera.near, Constants.hzb, Constants.hzb_sampler);
-	Aabb aabb = node.aabb;
-	float4 lod_bounds = node.lod_bounds;
-	f32 parent_error = node.parent_error;
-	if (c.is_imperceptible(lod_bounds, parent_error) || c.frustum_cull(aabb)) return;
+	if (c.frustum_cull(node.aabb) || c.is_imperceptible(node.lod_bounds, node.parent_error)) return;
 
 	p.node = node.children_offset;
-	write(!oc.cull(aabb), node.child_count, p);
+	write(!oc.cull(node.aabb), node.child_count, p);
 }

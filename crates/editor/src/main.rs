@@ -27,13 +27,7 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 			.device_extensions(&[ext::mesh_shader::NAME])
 			.features(
 				vk::PhysicalDeviceFeatures2::default()
-					.features(
-						vk::PhysicalDeviceFeatures::default()
-							.sampler_anisotropy(true)
-							.geometry_shader(true)
-							.multi_draw_indirect(true)
-							.draw_indirect_first_instance(true),
-					)
+					.features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true))
 					.push_next(
 						&mut vk::PhysicalDeviceVulkan12Features::default()
 							.draw_indirect_count(true)
@@ -44,11 +38,7 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 							.dynamic_rendering(true)
 							.shader_demote_to_helper_invocation(true),
 					)
-					.push_next(
-						&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::default()
-							.task_shader(true)
-							.mesh_shader(true),
-					),
+					.push_next(&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::default().mesh_shader(true)),
 			)
 			.shaders(&[radiance_egui::SHADERS, radiance_passes::SHADERS])
 			.build()

@@ -11,16 +11,6 @@ struct Vertex {
 struct Aabb {
 	float3 center;
 	float3 half_extent;
-
-	float3 get_corner(u32 id) {
-		f32 x = this.half_extent.x;
-		f32 y = this.half_extent.y;
-		f32 z = this.half_extent.z;
-		x = ((id >> 0) & 1) == 0 ? x : -x;
-		y = ((id >> 1) & 1) == 0 ? y : -y;
-		z = ((id >> 2) & 1) == 0 ? z : -z;
-		return this.center + float3(x, y, z);
-	}
 };
 
 struct BvhNodePointer {
