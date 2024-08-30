@@ -1,17 +1,12 @@
 [workspace]
-members = [
-    "crates/lib/*",
-    "crates/editor",
-]
-default-members = ["crates/editor", "crates/lib/*"]
-
+members = ["crates/*"]
 resolver = "2"
 
+[profile.dev.build-override]
+opt-level = 3
 [profile.release.build-override]
 opt-level = 3
 codegen-units = 24
-[profile.dev.build-override]
-opt-level = 3
 
 [profile.dev]
 debug = true
@@ -22,17 +17,17 @@ debug = true
 ash = "0.38.0"
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 bytemuck = { version = "1.15.0", features = ["derive"] }
+clap = { version = "4.5.16", features = ["derive"] }
 cargo_toml = { version = "0.19.2" }
 crossbeam-channel = "0.5.12"
 dashmap = "5.5.3"
-egui = { version = "0.27.2", features = ["bytemuck"] }
+egui = { version = "0.27.2" }
 egui_extras = "0.27.2"
 egui_grid = "0.5.1"
 egui-winit = "0.27.2"
 gltf = { version = "1.4.0" }
 gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", features = ["vulkan", "visualizer"] }
 half = { version = "2.4.1", features = ["bytemuck", "num-traits"] }
-hassle-rs = { version = "0.11.0" }
 hashbrown = { version = "0.14.3", features = ["nightly"] }
 metis = "0.2.1"
 meshopt = { git = "https://github.com/gwihlidal/meshopt-rs" }
@@ -49,6 +44,7 @@ rspirv = "0.12.0"
 rustc-hash = "1.1.0"
 serde = { version = "1.0.197", features = ["derive"] }
 serde_json = { version = "1.0.114" }
+slang = { path = "../slang-rs" }
 static_assertions = "1.1.0"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }

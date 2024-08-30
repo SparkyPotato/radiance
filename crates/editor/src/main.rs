@@ -40,7 +40,6 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 					)
 					.push_next(&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::default().mesh_shader(true)),
 			)
-			.shaders(&[radiance_egui::SHADERS, radiance_passes::SHADERS])
 			.build()
 	}
 }
@@ -110,7 +109,6 @@ fn main() {
 		.run(move |event, t| match event {
 			Event::NewEvents(StartCause::Init) => state.window.window.set_visible(true),
 			Event::AboutToWait => state.window.request_redraw(),
-
 			Event::WindowEvent { event, .. } => {
 				match event {
 					WindowEvent::RedrawRequested => {

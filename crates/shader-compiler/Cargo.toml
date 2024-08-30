@@ -1,0 +1,12 @@
+[package]
+name = "radiance-shader-compiler"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+ash = { workspace = true  }
+notify-debouncer-full = { workspace = true }
+rspirv = { workspace = true }
+rustc-hash = { workspace = true }
+slang = { workspace = true, features = ["static"] }
+

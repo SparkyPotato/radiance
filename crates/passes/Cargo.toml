@@ -1,0 +1,22 @@
+[package]
+name = "radiance-passes"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+radiance-asset = { path = "../asset" }
+radiance-graph = { path = "../graph", features = ["bytemuck"] }
+
+ash = { workspace = true }
+bytemuck = { workspace = true }
+crossbeam-channel = { workspace = true }
+half = { workspace = true }
+parry3d = { workspace = true }
+rand = { workspace = true, features = ["small_rng"] }
+rayon = { workspace = true }
+rustc-hash = { workspace = true }
+static_assertions = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+vek = { workspace = true }
+

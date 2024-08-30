@@ -1,0 +1,15 @@
+[package]
+name = "radiance-egui"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+radiance-graph = { path = "../graph", features = ["bytemuck"] }
+
+ash = { workspace = true } 
+bytemuck = { workspace = true }
+egui = { workspace = true, features = ["bytemuck"] }
+rustc-hash = { workspace = true } 
+tracing = { workspace = true }
+vek = { workspace = true }
+

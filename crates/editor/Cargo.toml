@@ -3,14 +3,11 @@ name = "radiance-editor"
 version = "0.0.0"
 edition = "2021"
 
-[build-dependencies]
-radiance-shader-compiler = { path = "../lib/shader-compiler", features = ["build-script"] }
-
 [dependencies]
-radiance-asset = { path = "../lib/asset", features = ["fs", "import"] }
-radiance-egui = { path = "../lib/egui" }
-radiance-graph = { path = "../lib/graph", features = ["bytemuck"] }
-radiance-passes = { path = "../lib/passes" }
+radiance-asset = { path = "../asset", features = ["fs", "import"] }
+radiance-egui = { path = "../egui" }
+radiance-graph = { path = "../graph", features = ["bytemuck"] }
+radiance-passes = { path = "../passes" }
 
 ash = { workspace = true }
 bytemuck = { workspace = true }

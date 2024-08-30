@@ -10,7 +10,6 @@ use radiance_passes::{
 	asset::{rref::RRef, scene, AssetRuntime},
 	debug::mesh::DebugMesh,
 	mesh::{RenderInfo, VisBuffer},
-	tonemap::aces::AcesTonemap,
 };
 use tracing::{event, Level};
 use vek::Vec2;
@@ -36,7 +35,6 @@ pub struct Renderer {
 	scene: Scene,
 	visbuffer: VisBuffer,
 	debug: DebugMesh,
-	tonemap: AcesTonemap,
 	runtime: AssetRuntime,
 	camera: CameraController,
 }
@@ -47,7 +45,6 @@ impl Renderer {
 			scene: Scene::None,
 			visbuffer: VisBuffer::new(device)?,
 			debug: DebugMesh::new(device)?,
-			tonemap: AcesTonemap::new(device)?,
 			runtime: AssetRuntime::new(device)?,
 			camera: CameraController::new(),
 		})
@@ -154,6 +151,5 @@ impl Renderer {
 		self.visbuffer.destroy(device);
 		self.debug.destroy(device);
 		self.runtime.destroy(device);
-		self.tonemap.destroy(device);
 	}
 }

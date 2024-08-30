@@ -1,0 +1,19 @@
+[package]
+name = "radiance-graph"
+version = "0.0.0"
+edition = "2021"
+
+[features]
+bytemuck = ["dep:bytemuck"]
+
+[dependencies]
+radiance-shader-compiler = { path = "../shader-compiler" }
+
+ash = { workspace = true }
+bytemuck = { workspace = true, optional = true }
+rustc-hash = { workspace = true }
+tracing = { workspace = true }
+gpu-allocator = { workspace = true }
+hashbrown = { workspace = true }
+raw-window-handle = { workspace = true }
+
