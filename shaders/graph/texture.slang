@@ -76,21 +76,27 @@ public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coh
 	public T load(vector<u32, Shape.dimensions> pixel) {
 		if (C.is_coherent()) {
 			let img = this.get();
+			u32 sc = Scope.Queue;
 			return spirv_asm {
-				result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible 1;
+				// OpCapability VulkanMemoryModel;
+				result:$$T = OpImageRead $img $pixel MakeTexelVisible | NonPrivateTexel $sc;
 			};
-		} else
+		} else {
 			return this.get().Load(pixel);
+		}
 	}
 
 	public void store(vector<u32, Shape.dimensions> pixel, T value) {
 		if (C.is_coherent()) {
 			let img = this.get();
+			u32 sc = Scope.Queue;
 			spirv_asm {
-				OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable 1;
+				// OpCapability VulkanMemoryModel;
+				OpImageWrite $img $pixel $value MakeTexelAvailable | NonPrivateTexel $sc;
 			};
-		} else
+		} else {
 			this.get()[pixel] = value;
+		}
 	}
 
 	public T atomic_add(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = Scope.Device, constexpr Semantics se = Semantics.Relaxed) {

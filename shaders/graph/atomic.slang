@@ -5,6 +5,8 @@ public enum Scope : u32 {
 	Workgroup = 2,
 	Subgroup = 3,
 	Invocation = 4,
+	Queue = 5,
+	ShaderCall = 6,
 }
 
 public enum Semantics : u32 {

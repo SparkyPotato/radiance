@@ -276,10 +276,16 @@ impl RuntimeShared {
 
 		let mut dec = Dec(vk::ShaderStageFlags::empty());
 		let _ = Parser::new(spirv.as_slice(), &mut dec).parse();
-		Ok((
-			ash::util::read_spv(&mut std::io::Cursor::new(spirv.as_slice())).expect("failed to read spirv"),
-			dec.0,
-		))
+		let mut spirv = ash::util::read_spv(&mut std::io::Cursor::new(spirv.as_slice())).expect("failed to read spirv");
+		let mut iter = spirv.iter_mut();
+		while let Some(w) = iter.next() {
+			if *w == 14 | (3 << 16) {
+				break;
+			}
+		}
+		iter.next().unwrap();
+		*iter.next().unwrap() = 3;
+		Ok((spirv, dec.0))
 	}
 
 	fn create_compute_pipeline(

@@ -9,7 +9,7 @@ struct PushConstants {
 	u32* atomic;
 	VisBufferTex visbuffer;
 	STex<f32, D2, Incoherent, NonUniform> out1[5];
-	STex<f32, D2, Incoherent, NonUniform> out5;
+	STex<f32, D2, Coherent, NonUniform> out5;
 	STex<f32, D2, Incoherent, NonUniform> out2[6];
 	u32 mips;
 	u32 workgroups;
@@ -213,7 +213,7 @@ void main(u32x2 gid: SV_GroupID) {
 
 	all_sync_barrier();
 	if (lid == 0)
-		is_last = atomic_add(*Constants.atomic, 1) + 1 == Constants.workgroups;
+		is_last = atomic_add(*Constants.atomic, 1, Scope.Device, Semantics.AcqRel) + 1 == Constants.workgroups;
 	all_sync_barrier();
 	if (!is_last)
 		return;
