@@ -75,22 +75,89 @@ f32x4 normalize_plane(f32x4 p) {
 	return p / length(p.xyz);
 }
 
+public extern static const bool EARLY = false;
+
+Camera occ_camera(Camera* cam) {
+	if (EARLY)
+		return cam[1];
+	else
+		return cam[0];
+}
+
+vector<T, N> min8<T : __BuiltinFloatingPointType, let N : int>(vector<T, N> p0, vector<T, N> p1, vector<T, N> p2,
+															   vector<T, N> p3, vector<T, N> p4, vector<T, N> p5,
+															   vector<T, N> p6, vector<T, N> p7) {
+	return min(p0, min(p1, min(p2, min(p3, min(p4, min(p5, min(p6, p7)))))));
+}
+
+vector<T, N> max8<T : __BuiltinFloatingPointType, let N : int>(vector<T, N> p0, vector<T, N> p1, vector<T, N> p2,
+															   vector<T, N> p3, vector<T, N> p4, vector<T, N> p5,
+															   vector<T, N> p6, vector<T, N> p7) {
+	return max(p0, max(p1, max(p2, max(p3, max(p4, max(p5, max(p6, p7)))))));
+}
+
+public struct ScreenAabb {
+	public f32x3 min;
+	public f32x3 max;
+}
+
+public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
+	let extent = aabb.half_extent * 2.f;
+	let sx = mul(mvp, f32x4(extent.x, 0.f, 0.f, 0.f));
+	let sy = mul(mvp, f32x4(0.f, extent.y, 0.f, 0.f));
+	let sz = mul(mvp, f32x4(0.f, 0.f, extent.z, 0.f));
+
+	let p0 = mul(mvp, f32x4(aabb.center - aabb.half_extent, 1.f));
+	let p1 = p0 + sz;
+	let p2 = p0 + sy;
+	let p3 = p2 + sz;
+	let p4 = p0 + sx;
+	let p5 = p4 + sz;
+	let p6 = p4 + sy;
+	let p7 = p6 + sz;
+
+	let depth = min8(p0, p1, p2, p3, p4, p5, p6, p7).w;
+	let max_depth = max8(p0, p1, p2, p3, p4, p5, p6, p7).w;
+	if (depth < near)
+		return none;
+
+	let dp0 = p0.xy / p0.w;
+	let dp1 = p1.xy / p1.w;
+	let dp2 = p2.xy / p2.w;
+	let dp3 = p3.xy / p3.w;
+	let dp4 = p4.xy / p4.w;
+	let dp5 = p5.xy / p5.w;
+	let dp6 = p6.xy / p6.w;
+	let dp7 = p7.xy / p7.w;
+	var vaabb = f32x4(min8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7), max8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7));
+	vaabb = vaabb.xwzy * f32x4(0.5f, -0.5f, 0.5f, -0.5f) + 0.5f;
+	ScreenAabb ret = { f32x3(vaabb.xy, depth), f32x3(vaabb.zw, max_depth) };
+	return ret;
+}
+
 // https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
 // https://fgiesen.wordpress.com/2010/10/17/view-frustum-culling/
 public struct Cull {
 	f32x4x4 mv;
+	f32x4x4 mvp;
 	f32x2 screen;
 	f32 h;
 	f32 near;
+	Tex<f32, D2> hzb;
+	Sampler hzb_sampler;
 	f32x4 planes[5];
 	u32x3 flips[5];
 
-	public __init(f32x4x4 mv, f32x4x4 mvp, u32x2 res, f32 near, f32 h) {
+	public __init(Camera* camera, f32x4x4 transform, u32x2 res, Tex<f32, D2> hzb, Sampler hzb_sampler) {
 		Cull ret;
-		ret.mv = mv;
+		ret.mv = mul(camera[0].view, transform);
+		ret.mvp = mul(occ_camera(camera).view_proj, transform);
 		ret.screen = f32x2(res);
-		ret.h = h;
-		ret.near = near;
+		ret.h = camera[0].h;
+		ret.near = camera[0].near;
+		ret.hzb = hzb;
+		ret.hzb_sampler = hzb_sampler;
+		let mvp = mul(camera[0].view_proj, transform);
 		ret.planes[0] = normalize_plane(mvp[3] + mvp[0]);
 		ret.planes[1] = normalize_plane(mvp[3] - mvp[0]);
 		ret.planes[2] = normalize_plane(mvp[3] + mvp[1]);
@@ -164,83 +231,13 @@ public struct Cull {
 		let thresh = this.min_scale() * error * max(this.screen.x, this.screen.y);
 		return scale <= thresh;
 	}
-}
 
-vector<T, N> min8<T : __BuiltinFloatingPointType, let N : int>(vector<T, N> p0, vector<T, N> p1, vector<T, N> p2,
-															   vector<T, N> p3, vector<T, N> p4, vector<T, N> p5,
-															   vector<T, N> p6, vector<T, N> p7) {
-	return min(p0, min(p1, min(p2, min(p3, min(p4, min(p5, min(p6, p7)))))));
-}
-
-vector<T, N> max8<T : __BuiltinFloatingPointType, let N : int>(vector<T, N> p0, vector<T, N> p1, vector<T, N> p2,
-															   vector<T, N> p3, vector<T, N> p4, vector<T, N> p5,
-															   vector<T, N> p6, vector<T, N> p7) {
-	return max(p0, max(p1, max(p2, max(p3, max(p4, max(p5, max(p6, p7)))))));
-}
-
-public struct ScreenAabb {
-	public f32x3 min;
-	public f32x3 max;
-}
-
-public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
-	let extent = aabb.half_extent * 2.f;
-	let sx = mul(mvp, f32x4(extent.x, 0.f, 0.f, 0.f));
-	let sy = mul(mvp, f32x4(0.f, extent.y, 0.f, 0.f));
-	let sz = mul(mvp, f32x4(0.f, 0.f, extent.z, 0.f));
-
-	let p0 = mul(mvp, f32x4(aabb.center - aabb.half_extent, 1.f));
-	let p1 = p0 + sz;
-	let p2 = p0 + sy;
-	let p3 = p2 + sz;
-	let p4 = p0 + sx;
-	let p5 = p4 + sz;
-	let p6 = p4 + sy;
-	let p7 = p6 + sz;
-
-	let depth = min8(p0, p1, p2, p3, p4, p5, p6, p7).w;
-	let max_depth = max8(p0, p1, p2, p3, p4, p5, p6, p7).w;
-	if (depth < near)
-		return none;
-
-	let dp0 = p0.xy / p0.w;
-	let dp1 = p1.xy / p1.w;
-	let dp2 = p2.xy / p2.w;
-	let dp3 = p3.xy / p3.w;
-	let dp4 = p4.xy / p4.w;
-	let dp5 = p5.xy / p5.w;
-	let dp6 = p6.xy / p6.w;
-	let dp7 = p7.xy / p7.w;
-	var vaabb = f32x4(min8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7), max8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7));
-	vaabb = vaabb.xwzy * f32x4(0.5f, -0.5f, 0.5f, -0.5f) + 0.5f;
-	ScreenAabb ret = { f32x3(vaabb.xy, depth), f32x3(vaabb.zw, max_depth) };
-	return ret;
-}
-
-public struct OccCull {
-	f32x4x4 mvp;
-	f32x2 screen;
-	f32 near;
-	Tex<f32, D2> hzb;
-	Sampler hzb_sampler;
-
-	public __init(f32x4x4 mvp, u32x2 res, f32 near, Tex<f32, D2> hzb, Sampler hzb_sampler) {
-		OccCull ret;
-		ret.mvp = mvp;
-		ret.screen = f32x2(res);
-		ret.near = near;
-		ret.hzb = hzb;
-		ret.hzb_sampler = hzb_sampler;
-		return ret;
-	}
-
-	public bool cull(Aabb aabb) {
+	public bool oc_cull(Aabb aabb) {
 		if (let saabb = project_aabb(this.mvp, this.near, aabb)) {
-			let width = (saabb.max.x - saabb.min.x) * this.screen.x * 0.5f;
-			let height = (saabb.max.y - saabb.min.y) * this.screen.y * 0.5f;
-			let level = ceil(log2(max(width, height)));
-			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, (saabb.min + saabb.max).xy * 0.5f, level).x;
-			return (this.near / saabb.min.z) <= curr_depth;
+			let size = (saabb.max - saabb.min).xy * this.screen * 0.5f;
+			let level = ceil(log2(max(size.x, size.y)));
+			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, (saabb.min + saabb.max).xy * 0.5f, level);
+			return (this.near / saabb.min.z) < curr_depth;
 		}
 		return false;
 	}

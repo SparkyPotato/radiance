@@ -6,7 +6,7 @@ import cull;
 import visbuffer;
 
 struct VertexOutput {
-	float4 position : SV_Position;
+	f32x4 position : SV_Position;
 };
 
 struct PrimitiveOutput {
@@ -24,8 +24,6 @@ struct PushConstants {
 
 [vk::push_constant]
 PushConstants Constants;
-
-extern static const bool EARLY;
 
 MeshletPointer get(u32 gid) {
 	if (EARLY)
@@ -45,7 +43,7 @@ u32 meshlet_id(u32 gid) {
 [outputtopology("triangle")]
 [numthreads(128, 1, 1)]
 void main(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput vertices[64],
-		  out indices uint3 triangles[124], out primitives PrimitiveOutput visbuffer[124]) {
+		  out indices u32x3 triangles[124], out primitives PrimitiveOutput visbuffer[124]) {
 	let p = get(gid);
 	let instance = Constants.instances[p.instance];
 	let meshlet = instance.meshlet(p.meshlet_offset);
@@ -67,6 +65,6 @@ void main(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutpu
 		let i = meshlet.tri(instance.mesh, gtid);
 		triangles[gtid] = i;
 		VisBufferData data = { mid, gtid };
-		visbuffer[gtid].data = data.encode();	
-	}	
+		visbuffer[gtid].data = data.encode();
+	}
 }

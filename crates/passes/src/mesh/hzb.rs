@@ -11,6 +11,7 @@ use radiance_graph::{
 	},
 	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{BufferHandle, GpuPtr, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
+	sync::{GlobalBarrier, UsageType},
 	Result,
 };
 use vek::Vec2;
@@ -18,6 +19,7 @@ use vek::Vec2;
 pub struct HzbGen {
 	layout: vk::PipelineLayout,
 	pipeline: Pipeline,
+	pipeline2: Pipeline,
 	hzb_sample: vk::Sampler,
 	hzb_sample_id: SamplerId,
 }
@@ -25,18 +27,22 @@ pub struct HzbGen {
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
-	atomic: GpuPtr<u32>,
 	visbuffer: StorageImageId,
-	outs: [Option<StorageImageId>; 12],
+	outs: [Option<StorageImageId>; 6],
 	mips: u32,
-	workgroups: u32,
-	_pad: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, NoUninit)]
+struct PushConstants2 {
+	mip5: StorageImageId,
+	outs: [Option<StorageImageId>; 6],
+	mips: u32,
 }
 
 struct PassIO {
 	visbuffer: Res<ImageView>,
 	out: Res<ImageView>,
-	atomic: Res<BufferHandle>,
 	size: Vec2<u32>,
 	levels: u32,
 }
@@ -56,6 +62,13 @@ impl HzbGen {
 				layout,
 				ShaderInfo {
 					shader: "passes.mesh.hzb.main",
+					..Default::default()
+				},
+			)?;
+			let pipeline2 = device.compute_pipeline(
+				layout,
+				ShaderInfo {
+					shader: "passes.mesh.hzb2.main",
 					..Default::default()
 				},
 			)?;
@@ -80,6 +93,7 @@ impl HzbGen {
 			Ok(Self {
 				layout,
 				pipeline,
+				pipeline2,
 				hzb_sample,
 				hzb_sample_id,
 			})
@@ -111,18 +125,6 @@ impl HzbGen {
 				subresource: Subresource::default(),
 			},
 		);
-		let atomic = pass.resource(
-			BufferDesc {
-				size: std::mem::size_of::<u32>() as u64,
-				upload: true,
-			},
-			BufferUsage {
-				usages: &[
-					BufferUsageType::ShaderStorageRead(Shader::Compute),
-					BufferUsageType::ShaderStorageWrite(Shader::Compute),
-				],
-			},
-		);
 
 		let desc = pass.desc(visbuffer);
 		let size = Vec2::new(desc.size.width, desc.size.height);
@@ -133,7 +135,6 @@ impl HzbGen {
 				PassIO {
 					visbuffer,
 					out,
-					atomic,
 					size,
 					levels: desc.levels,
 				},
@@ -146,11 +147,8 @@ impl HzbGen {
 		let buf = pass.buf;
 		let visbuffer = pass.get(io.visbuffer);
 		let out = pass.get(io.out);
-		let mut atomic = pass.get(io.atomic);
 
 		unsafe {
-			atomic.data.as_mut().write_all(&[0, 0, 0, 0]).unwrap();
-
 			let mut outs = [None; 12];
 			let mut s = io.size;
 			for i in 0..io.levels {
@@ -201,22 +199,49 @@ impl HzbGen {
 				vk::ShaderStageFlags::COMPUTE,
 				0,
 				bytes_of(&PushConstants {
-					atomic: atomic.ptr(),
 					visbuffer: visbuffer.storage_id.unwrap(),
-					outs,
+					outs: [outs[0], outs[1], outs[2], outs[3], outs[4], outs[5]],
 					mips: io.levels,
-					workgroups: x * 2,
-					_pad: 0,
 				}),
 			);
 			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline.get());
 			dev.cmd_dispatch(buf, x, y, 1);
+			if io.levels > 6 {
+				dev.cmd_pipeline_barrier2(
+					buf,
+					&vk::DependencyInfo::default().memory_barriers(&[GlobalBarrier {
+						previous_usages: &[
+							UsageType::ShaderStorageRead(Shader::Compute),
+							UsageType::ShaderStorageWrite(Shader::Compute),
+						],
+						next_usages: &[
+							UsageType::ShaderStorageRead(Shader::Compute),
+							UsageType::ShaderStorageWrite(Shader::Compute),
+						],
+					}
+					.into()]),
+				);
+				dev.cmd_push_constants(
+					buf,
+					self.layout,
+					vk::ShaderStageFlags::COMPUTE,
+					0,
+					bytes_of(&PushConstants2 {
+						mip5: outs[5].unwrap(),
+						outs: [outs[6], outs[7], outs[8], outs[9], outs[10], outs[11]],
+						mips: io.levels,
+					}),
+				);
+				dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline2.get());
+				dev.cmd_dispatch(buf, 1, 1, 1);
+			}
 		}
 	}
 
 	pub fn destroy(self, device: &Device) {
 		unsafe {
 			self.pipeline.destroy();
+			self.pipeline2.destroy();
 			device.device().destroy_pipeline_layout(self.layout, None);
 			device.device().destroy_sampler(self.hzb_sample, None);
 			device.descriptors().return_sampler(self.hzb_sample_id);

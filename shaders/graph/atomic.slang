@@ -9,31 +9,38 @@ public enum Scope : u32 {
 	ShaderCall = 6,
 }
 
-public enum Semantics : u32 {
+public enum Sem : u32 {
 	Relaxed = 0x0,
 	Acquire = 0x2,
 	Release = 0x4,
 	AcqRel = 0x8,
-	SeqCst = 0x10,
-	Buffer = 0x40,
-	Subgroup = 0x80,
-	Workgroup = 0x100,
-	Image = 0x800,
 	MakeAvailable = 0x2000,
 	MakeVisible = 0x4000,
 }
 
-// clang-format off
-public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = Scope.Device, constexpr Semantics se = Semantics.Relaxed) {
-	// clang-format on
+public enum Loc : u32 {
+	None = 0x0,
+	Buffer = 0x40,
+	Subgroup = 0x80,
+	Workgroup = 0x100,
+	Image = 0x800,
+}
+
+public static const Scope DEFAULT_SCOPE = Scope.Queue;
+public static const Sem DEFAULT_SEM = Sem.Relaxed;
+public static const Loc DEFAULT_LOC = Loc.None;
+
+public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+												 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	u32 sem = loc | se;
 	if (__isFloat<T>()) {
 		return spirv_asm {
-			result:$$T = OpAtomicFAddEXT &dest $sc $se $value;
+			result:$$T = OpAtomicFAddEXT &dest $sc $sem $value;
 		};
 	} else if (__isUnsignedInt<T>() || __isInt<T>()) {
 		return spirv_asm {
 			OpCapability Int64Atomics;
-			result:$$T = OpAtomicIAdd &dest $sc $se $value;
+			result:$$T = OpAtomicIAdd &dest $sc $sem $value;
 		};
 	} else {
 		spirv_asm { "<invalid atomic_add>" };
@@ -41,22 +48,22 @@ public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	return {};
 }
 
-// clang-format off
-public T atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = Scope.Device, constexpr Semantics se = Semantics.Relaxed) {
-	// clang-format on
+public T atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+												 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	u32 sem = loc | se;
 	if (__isFloat<T>()) {
 		return spirv_asm {
-			result:$$T = OpAtomicFMaxEXT &dest $sc $se $value;
+			result:$$T = OpAtomicFMaxEXT &dest $sc $sem $value;
 		};
 	} else if (__isUnsignedInt<T>()) {
 		return spirv_asm {
 			OpCapability Int64Atomics;
-			result:$$T = OpAtomicUMax &dest $sc $se $value;
+			result:$$T = OpAtomicUMax &dest $sc $sem $value;
 		};
 	} else if (__isInt<T>()) {
 		return spirv_asm {
 			OpCapability Int64Atomics;
-			result:$$T = OpAtomicSMax &dest $sc $se $value
+			result:$$T = OpAtomicSMax &dest $sc $sem $value
 		};
 	} else {
 		spirv_asm { "<invalid atomic_max>" };
@@ -64,23 +71,29 @@ public T atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	return {};
 }
 
-public void barrier(constexpr Scope sc, constexpr Semantics se) {
+public void barrier(constexpr Scope sc, constexpr Loc loc, constexpr Sem se) {
+	u32 sem = loc | se;
 	spirv_asm {
-		OpMemoryBarrier $sc $se;
+		OpMemoryBarrier $sc $sem;
 	};
 }
 
-public void sync_barrier(constexpr Scope esc, constexpr Scope sc, constexpr Semantics se) {
+public void sync_barrier(constexpr Scope esc, constexpr Scope sc, constexpr Loc loc, constexpr Sem se) {
+	u32 sem = loc | se;
 	spirv_asm {
-		OpControlBarrier $esc $sc $se;
+		OpControlBarrier $esc $sc $sem;
 	};
 }
 
 public void workgroup_sync_barrier() {
-	sync_barrier(Scope::Workgroup, Scope::Workgroup, Semantics::Workgroup | Semantics::AcqRel);
+	sync_barrier(Scope.Workgroup, Scope.Workgroup, Loc.Workgroup, Sem.MakeAvailable | Sem.MakeVisible | Sem.AcqRel);
 }
 
 public void all_sync_barrier() {
-	sync_barrier(Scope::Workgroup, Scope::Device,
-				 Semantics::Buffer | Semantics::Image | Semantics::Workgroup | Semantics::AcqRel);
+	sync_barrier(Scope.Workgroup, DEFAULT_SCOPE, Loc.Buffer | Loc.Image | Loc.Workgroup,
+				 Sem.MakeAvailable | Sem.MakeVisible | Sem.AcqRel);
+}
+
+public void barrier_acqrel(constexpr Loc loc) {
+	barrier(DEFAULT_SCOPE, loc, Sem.MakeAvailable | Sem.MakeVisible | Sem.AcqRel);
 }

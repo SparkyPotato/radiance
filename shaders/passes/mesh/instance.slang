@@ -25,8 +25,6 @@ struct PushConstants {
 [vk::push_constant]
 PushConstants Constants;
 
-extern static const bool EARLY;
-
 u32 instance_count() {
 	if (EARLY)
 		return Constants.instance_count;
@@ -41,24 +39,10 @@ u32 instance_id(u32 id) {
 		return Constants.late_instances->instances[id];
 }
 
-f32x4x4 occ_camera(f32x4x4 mvp, f32x4x4 transform) {
-	if (EARLY)
-		return mul(Constants.camera[1].view_proj, transform);
-	else
-		return mvp;
-}
-
-bool frustum_cull(Cull c, Aabb aabb) {
-	if (EARLY)
-		return c.frustum_cull(aabb);
-	else
-		return false;
-}
-
 void write(bool visible, u32 id) {
 	if (EARLY) {
 		if (visible) {
-			Constants.early.push({ id, 0 });
+			Constants.early.push( { id, 0 });
 		} else {
 			let off = atomic_add(Constants.late_instances->count, 1);
 			Constants.late_instances->instances[off] = id;
@@ -67,7 +51,7 @@ void write(bool visible, u32 id) {
 		}
 	} else {
 		if (visible) {
-			Constants.late.push({ id, 0 });
+			Constants.late.push( { id, 0 });
 		}
 	}
 }
@@ -80,16 +64,8 @@ void main(u32 tid: SV_DispatchThreadID) {
 
 	let id = instance_id(tid);
 	let instance = Constants.instances[id];
-	let camera = Constants.camera[0];
-
-	let transform = instance.get_transform();
-	let mv = mul(camera.view, transform);
-	let mvp = mul(camera.view_proj, transform);
-	let omvp = occ_camera(mvp, transform);
-
-	let c = Cull(mv, mvp, Constants.res, camera.near, camera.h);
-	let oc = OccCull(omvp, Constants.res, camera.near, Constants.hzb, Constants.hzb_sampler);
-	if (frustum_cull(c, instance.aabb))
+	let c = Cull(Constants.camera, instance.get_transform(), Constants.res, Constants.hzb, Constants.hzb_sampler);
+	if (c.frustum_cull(instance.aabb))
 		return;
-	write(!oc.cull(instance.aabb), id);
+	write(!c.oc_cull(instance.aabb), id);
 }

@@ -25,9 +25,7 @@ struct PushConstants {
 PushConstants Constants;
 
 f32x4 unpack_color(u32 color) {
-	return f32x4(float(color & 255), float((color >> 8) & 255), float((color >> 16) & 255),
-				 float((color >> 24) & 255)) /
-		   255.f;
+	return f32x4(f32(color & 255), f32((color >> 8) & 255), f32((color >> 16) & 255), f32((color >> 24) & 255)) / 255.f;
 }
 
 f32x4 project_screenspace(f32x2 screenspace) {
@@ -54,7 +52,11 @@ f32x3 srgb_gamma_from_linear(f32x3 rgb) {
 }
 
 // 0-1 sRGBA gamma  from  0-1 linear
-f32x4 srgba_gamma_from_linear(f32x4 rgba) { return f32x4(srgb_gamma_from_linear(rgba.rgb), rgba.a); }
+f32x4 srgba_gamma_from_linear(f32x4 rgba) {
+	return f32x4(srgb_gamma_from_linear(rgba.rgb), rgba.a);
+}
 
 [shader("pixel")]
-f32x4 pixel(VertexOutput input) { return Constants.image.sample(Constants.sampler, input.uv) * input.color; }
+f32x4 pixel(VertexOutput input) {
+	return Constants.image.sample(Constants.sampler, input.uv) * input.color;
+}

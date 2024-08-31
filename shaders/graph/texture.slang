@@ -66,7 +66,8 @@ __generic<T, U : Uniformity> public extension Tex<T, D3, U> {
 [vk::binding(1, 0)]
 __DynamicResource STextures[];
 
-public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coherency = Incoherent, U : Uniformity = Uniform> {
+public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coherency = Incoherent,
+				   U : Uniformity = Uniform> {
 	u32 index;
 
 	__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0> get() {
@@ -76,10 +77,10 @@ public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coh
 	public T load(vector<u32, Shape.dimensions> pixel) {
 		if (C.is_coherent()) {
 			let img = this.get();
-			u32 sc = Scope.Queue;
+			u32 sc = DEFAULT_SCOPE;
 			return spirv_asm {
-				// OpCapability VulkanMemoryModel;
-				result:$$T = OpImageRead $img $pixel MakeTexelVisible | NonPrivateTexel $sc;
+				OpCapability VulkanMemoryModel;
+				result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
 			};
 		} else {
 			return this.get().Load(pixel);
@@ -89,22 +90,24 @@ public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coh
 	public void store(vector<u32, Shape.dimensions> pixel, T value) {
 		if (C.is_coherent()) {
 			let img = this.get();
-			u32 sc = Scope.Queue;
+			u32 sc = DEFAULT_SCOPE;
 			spirv_asm {
-				// OpCapability VulkanMemoryModel;
-				OpImageWrite $img $pixel $value MakeTexelAvailable | NonPrivateTexel $sc;
+				OpCapability VulkanMemoryModel;
+				OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
 			};
 		} else {
 			this.get()[pixel] = value;
 		}
 	}
 
-	public T atomic_add(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = Scope.Device, constexpr Semantics se = Semantics.Relaxed) {
-		return ::atomic_add(this.get()[pixel], value, sc, se);
+	public T atomic_add(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
+						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+		return ::atomic_add(this.get()[pixel], value, sc, loc, se);
 	}
-	
-	public T atomic_max(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = Scope.Device, constexpr Semantics se = Semantics.Relaxed) {
-		return ::atomic_max(this.get()[pixel], value, sc, se);
+
+	public T atomic_max(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
+						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+		return ::atomic_max(this.get()[pixel], value, sc, loc, se);
 	}
 }
 

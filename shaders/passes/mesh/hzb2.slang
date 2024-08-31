@@ -1,4 +1,4 @@
-module hzb;
+module hzb2;
 
 /// Stolen from https://github.com/Themaister/Granite/blob/master/assets/shaders/post/hiz.comp
 
@@ -6,7 +6,7 @@ import graph;
 import visbuffer;
 
 struct PushConstants {
-	VisBufferTex visbuffer;
+	STex<f32, D2, Incoherent, NonUniform> mip5;
 	STex<f32, D2, Incoherent, NonUniform> out[6];
 	u32 mips;
 }
@@ -26,7 +26,7 @@ f32 reduce(f32x4 v) {
 }
 
 u32x2 mip_size(u32 mip) {
-	return Constants.out[mip].size();
+	return Constants.out[mip - 6].size();
 }
 
 void store(u32x2 p, u32 mip, f32 v) {
@@ -34,7 +34,7 @@ void store(u32x2 p, u32 mip, f32 v) {
 	if (any(p >= dim)) {
 		return;
 	}
-	Constants.out[mip].store(p, v);
+	Constants.out[mip - 6].store(p, v);
 }
 
 void store4(u32x2 p, u32 mip, f32x4 v) {
@@ -44,12 +44,13 @@ void store4(u32x2 p, u32 mip, f32x4 v) {
 	store(p + u32x2(1, 1), mip, v.w);
 }
 
-f32 fetch(u32x2 p) {
-	return Constants.visbuffer.decode(p).depth;
-}
-
 f32x4 fetch2x2(u32x2 p) {
-	return f32x4(fetch(p + u32x2(0, 0)), fetch(p + u32x2(1, 0)), fetch(p + u32x2(0, 1)), fetch(p + u32x2(1, 1)));
+	let minc = Constants.mip5.size() - 1;
+	let x = Constants.mip5.load(min(p + u32x2(0, 0), minc));
+	let y = Constants.mip5.load(min(p + u32x2(1, 0), minc));
+	let z = Constants.mip5.load(min(p + u32x2(0, 1), minc));
+	let w = Constants.mip5.load(min(p + u32x2(1, 1), minc));
+	return f32x4(x, y, z, w);
 }
 
 f32x4x4 fetch4x4(u32x2 p) {
@@ -143,24 +144,22 @@ void main(u32x2 gid: SV_GroupID) {
 	let lid = wave_id() * WaveGetLaneCount() + WaveGetLaneIndex();
 	let p = unswizzle(lid);
 
-	var base = gid * 64 + p * 4;
-	var m = fetch4x4(base);
-	f32 d = reduce_mip_reg(m, base >> 1, 0, true);
-	if (Constants.mips <= 1)
+	let base = p * 4;
+	var d = reduce_mip_reg(fetch4x4(base), base >> 1, 6, false);
+	if (Constants.mips <= 7)
 		return;
 
-	d = reduce_mip_simd(base >> 2, lid, 1, d, true);
-	if (Constants.mips <= 3)
+	d = reduce_mip_simd(p, lid, 7, d, false);
+	if (Constants.mips <= 9)
 		return;
-
 	if ((lid & 15) == 0)
 		inter[lid >> 4] = d;
 	workgroup_sync_barrier();
 	if (lid < 16)
-		d = reduce_mip_simd(gid * 4 + p, lid, 3, inter[lid], true);
-	if (Constants.mips <= 5)
+		d = reduce_mip_simd(p, lid, 9, inter[lid], false);
+	if (Constants.mips <= 11)
 		return;
 
 	if (lid == 0)
-		store(gid.xy, 5, d);
+		store(u32x2(0, 0), 11, d);
 }

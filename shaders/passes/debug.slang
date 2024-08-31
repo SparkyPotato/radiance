@@ -156,9 +156,8 @@ f32x4 hzb_mip(ScreenOutput input) : SV_Target0 {
 
 	if (let aabb = project_aabb(mvp, camera.near, meshlet.aabb)) {
 		let size = Constants.read.size();
-		let width = (aabb.max.x - aabb.min.x) * size.x * 0.5f;
-		let height = (aabb.max.y - aabb.min.y) * size.y * 0.5f;
-		let heat = log2(max(width, height)) / log2(max(size.x, size.y));
+		let asize = (aabb.max - aabb.min).xy * size * 0.5f;
+		let heat = log2(max(asize.x, asize.y)) / log2(max(size.x, size.y));
 		return f32x4(heatmap(heat), 1.f);
 	}
 	return f32x4(1.f, 0.f, 1.f, 1.f);
