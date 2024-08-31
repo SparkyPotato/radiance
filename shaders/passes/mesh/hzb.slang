@@ -60,7 +60,7 @@ f32x4x4 fetch4x4(u32x2 p) {
 	return f32x4x4(x, y, z, w);
 }
 
-f32 reduce_mip_reg(f32x4x4 m, u32x2 p, u32 mip, bool full) {
+f32 reduce_mip_reg(f32x4x4 m, u32x2 p, u32 mip) {
 	let q0 = m[0];
 	let q1 = m[1];
 	let q2 = m[2];
@@ -71,37 +71,16 @@ f32 reduce_mip_reg(f32x4x4 m, u32x2 p, u32 mip, bool full) {
 	var d2 = reduce(q2);
 	var d3 = reduce(q3);
 
-	if (!full) {
-		if (p.x + 1 == res.x) {
-			d0 = reduce(d0, d1);
-			d2 = reduce(d2, d3);
-		}
-		if (p.y + 1 == res.y) {
-			d2 = reduce(d2, d0);
-			d3 = reduce(d3, d1);
-		}
-	}
-
 	let ret = f32x4(d0, d1, d2, d3);
 	store4(p, mip, ret);
 	return reduce(ret);
 }
 
-f32 reduce_mip_simd(u32x2 p, u32 lid, u32 mip, f32 d, bool full) {
+f32 reduce_mip_simd(u32x2 p, u32 lid, u32 mip, f32 d) {
 	var res = mip_size(mip);
 	var horiz = QuadReadAcrossX(d);
 	var vert = QuadReadAcrossY(d);
 	var diag = QuadReadAcrossDiagonal(d);
-	if (!full) {
-		bool shoriz = p.x + 1 == res.x;
-		bool svert = p.y + 1 == res.y;
-		if (shoriz)
-			d = reduce(d, horiz);
-		if (svert)
-			d = reduce(d, vert);
-		if (shoriz && svert)
-			d = reduce(d, diag);
-	}
 	store(p, mip, d);
 
 	if (Constants.mips > mip + 1) {
@@ -111,16 +90,6 @@ f32 reduce_mip_simd(u32x2 p, u32 lid, u32 mip, f32 d, bool full) {
 		horiz = wave_shuffle_xor(d, 0b1000);
 		vert = wave_shuffle_xor(d, 0b100);
 		diag = wave_shuffle_xor(d, 0b1100);
-		if (!full) {
-			bool shoriz = p.x + 1 == res.x;
-			bool svert = p.y + 1 == res.y;
-			if (shoriz)
-				d = reduce(d, horiz);
-			if (svert)
-				d = reduce(d, vert);
-			if (shoriz && svert)
-				d = reduce(d, diag);
-		}
 		if ((lid & 3) == 0)
 			store(p, mip + 1, d);
 	}
@@ -145,11 +114,11 @@ void main(u32x2 gid: SV_GroupID) {
 
 	var base = gid * 64 + p * 4;
 	var m = fetch4x4(base);
-	f32 d = reduce_mip_reg(m, base >> 1, 0, true);
+	f32 d = reduce_mip_reg(m, base >> 1, 0);
 	if (Constants.mips <= 1)
 		return;
 
-	d = reduce_mip_simd(base >> 2, lid, 1, d, true);
+	d = reduce_mip_simd(base >> 2, lid, 1, d);
 	if (Constants.mips <= 3)
 		return;
 
@@ -157,7 +126,7 @@ void main(u32x2 gid: SV_GroupID) {
 		inter[lid >> 4] = d;
 	workgroup_sync_barrier();
 	if (lid < 16)
-		d = reduce_mip_simd(gid * 4 + p, lid, 3, inter[lid], true);
+		d = reduce_mip_simd(gid * 4 + p, lid, 3, inter[lid]);
 	if (Constants.mips <= 5)
 		return;
 
