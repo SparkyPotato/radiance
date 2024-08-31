@@ -62,8 +62,8 @@ public struct Meshlet {
 	}
 
 	public u32x3 tri(u8* mesh, u32 id) {
-		let i = ((u32*)(mesh + this.index_offset))[id];
-		return u32x3(u8(i >> 0), u8(i >> 8), u8(i >> 16));
+		let i = mesh + this.index_offset + id * 3;
+		return u32x3(i[0], i[1], i[2]);
 	}
 }
 

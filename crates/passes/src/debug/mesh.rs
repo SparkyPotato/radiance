@@ -20,6 +20,7 @@ pub enum DebugVis {
 	Overdraw(u32, u32),
 	HwSw,
 	Normals,
+	HzbMip,
 }
 
 impl DebugVis {
@@ -32,6 +33,7 @@ pub struct DebugMesh {
 	overdraw: Pipeline,
 	hwsw: Pipeline,
 	normals: Pipeline,
+	hzb_mip: Pipeline,
 	layout: vk::PipelineLayout,
 }
 
@@ -88,6 +90,7 @@ impl DebugMesh {
 				overdraw: Self::pipeline(device, layout, "passes.debug.overdraw")?,
 				hwsw: Self::pipeline(device, layout, "passes.debug.hwsw")?,
 				normals: Self::pipeline(device, layout, "passes.debug.normals")?,
+				hzb_mip: Self::pipeline(device, layout, "passes.debug.hzb_mip")?,
 			})
 		}
 	}
@@ -183,6 +186,7 @@ impl DebugMesh {
 					DebugVis::Overdraw(..) => self.overdraw.get(),
 					DebugVis::HwSw => self.hwsw.get(),
 					DebugVis::Normals => self.normals.get(),
+					DebugVis::HzbMip => self.hzb_mip.get(),
 				},
 			);
 			dev.cmd_bind_descriptor_sets(
@@ -227,6 +231,7 @@ impl DebugMesh {
 		self.overdraw.destroy();
 		self.hwsw.destroy();
 		self.normals.destroy();
+		self.hzb_mip.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

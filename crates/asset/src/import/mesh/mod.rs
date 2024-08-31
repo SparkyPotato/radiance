@@ -139,12 +139,16 @@ impl Importer<'_> {
 		let _e = s.enter();
 
 		let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
-		let ms = meshopt::build_meshlets(indices, &adapter, 64, 124, 0.0);
+		let ms = meshopt::build_meshlets(indices, &adapter, 128, 124, 0.0);
 		let (meshlets, lod_bounds) = ms
 			.meshlets
 			.iter()
 			.map(|m| {
-				let aabb = bvh::calc_aabb(vertices.iter());
+				let aabb = bvh::calc_aabb(
+					ms.vertices[m.vertex_offset as usize..(m.vertex_offset + m.vertex_count) as usize]
+						.iter()
+						.map(|&x| &vertices[x as usize]),
+				);
 				let (lod_bounds, error) = error.unwrap_or((aabb, 0.0));
 
 				(

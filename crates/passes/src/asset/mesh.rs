@@ -158,7 +158,7 @@ impl<S: AssetSource> Loader<'_, S> {
 		let vertex_byte_offset = meshlet_byte_offset + meshlet_byte_len;
 		let vertex_byte_len = (m.vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
 		let index_byte_offset = vertex_byte_offset + vertex_byte_len;
-		let index_byte_len = (m.indices.len() / 3 * std::mem::size_of::<u32>()) as u64;
+		let index_byte_len = (m.indices.len() * std::mem::size_of::<u8>()) as u64;
 		let size = index_byte_offset + index_byte_len;
 
 		let name = self.sys.human_name(mesh).unwrap_or("unnamed mesh".to_string());
@@ -227,8 +227,7 @@ impl<S: AssetSource> Loader<'_, S> {
 					error: me.error,
 					vertex_byte_offset: vertex_byte_offset as u32
 						+ (me.vert_offset * std::mem::size_of::<GpuVertex>() as u32),
-					index_byte_offset: index_byte_offset as u32
-						+ (me.index_offset / 3 * std::mem::size_of::<u32>() as u32),
+					index_byte_offset: index_byte_offset as u32 + (me.index_offset * std::mem::size_of::<u8>() as u32),
 					vertex_count: me.vert_count,
 					triangle_count: me.tri_count,
 					_pad: 0,
@@ -237,10 +236,7 @@ impl<S: AssetSource> Loader<'_, S> {
 		}
 
 		writer.write_slice(&m.vertices).unwrap();
-		for tri in m.indices.chunks(3) {
-			writer.write_slice(tri).unwrap();
-			writer.write(0u8).unwrap();
-		}
+		writer.write_slice(&m.indices).unwrap();
 
 		Ok(RRef::new(
 			Mesh {

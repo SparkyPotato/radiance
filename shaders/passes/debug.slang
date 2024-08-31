@@ -133,3 +133,33 @@ f32x4 normals(ScreenOutput input) : SV_Target0 {
 	let norm = depth * (v0f.normal * u / v0.z + v1f.normal * v / v1.z + v2f.normal * w / v2.z);
 	return f32x4(abs(norm), 1.f);
 }
+
+[shader("pixel")]
+f32x4 hzb_mip(ScreenOutput input) : SV_Target0 {
+	let visbuf = Constants.read.decode(input.uv);
+	if (visbuf.data == 0xffffffff)
+		return f32x4(0.f, 0.f, 0.f, 1.f);
+	let data = VisBufferData(visbuf.data);
+	let id = data.meshlet_id;
+	let len = Constants.early.len();
+	MeshletPointer p;
+	if (id < len) {
+		p = Constants.early.get(id);
+	} else {
+		p = Constants.late.get(id - len);
+	}
+
+	let instance = Constants.instances[p.instance];
+	let meshlet = instance.meshlet(p.meshlet_offset);
+	let camera = Constants.camera[0];
+	let mvp = mul(camera.view_proj, instance.get_transform());
+
+	if (let aabb = project_aabb(mvp, camera.near, meshlet.aabb)) {
+		let size = Constants.read.size();
+		let width = (aabb.max.x - aabb.min.x) * size.x * 0.5f;
+		let height = (aabb.max.y - aabb.min.y) * size.y * 0.5f;
+		let heat = log2(max(width, height)) / log2(max(size.x, size.y));
+		return f32x4(heatmap(heat), 1.f);
+	}
+	return f32x4(1.f, 0.f, 1.f, 1.f);
+}
