@@ -4,7 +4,7 @@ use ash::vk;
 use bytemuck::{bytes_of, NoUninit, PodInOption, ZeroableInOption};
 use radiance_graph::{
 	device::{
-		descriptor::{ImageId, SamplerId, StorageImageId},
+		descriptor::{SamplerId, StorageImageId},
 		Device,
 	},
 	graph::{
@@ -66,6 +66,7 @@ pub struct Resources {
 	pub hzb: Res<ImageView>,
 	pub hzb_sampler: SamplerId,
 	pub late_instances: Res<BufferHandle>,
+	pub len: u32,
 	pub bvh_queues: [Res<BufferHandle>; 3],
 	pub meshlet_queues: [Res<BufferHandle>; 2],
 	pub meshlet_render_lists: [Res<BufferHandle>; 2],
@@ -241,12 +242,10 @@ impl Setup {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
+		let size = ((50 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
 		let bvh_queues = [(); 3].map(|_| {
 			pass.resource(
-				BufferDesc {
-					size: ((6 * 1024 * 1024 + 4) * std::mem::size_of::<u32>()) as _,
-					upload: false,
-				},
+				BufferDesc { size, upload: false },
 				BufferUsage {
 					usages: &[BufferUsageType::TransferWrite],
 				},
@@ -254,10 +253,7 @@ impl Setup {
 		});
 		let meshlet_queues = [(); 2].map(|_| {
 			pass.resource(
-				BufferDesc {
-					size: ((6 * 1024 * 1024 + 4) * std::mem::size_of::<u32>()) as _,
-					upload: false,
-				},
+				BufferDesc { size, upload: false },
 				BufferUsage {
 					usages: &[BufferUsageType::TransferWrite],
 				},
@@ -265,10 +261,7 @@ impl Setup {
 		});
 		let meshlet_render_lists = [(); 2].map(|_| {
 			pass.resource(
-				BufferDesc {
-					size: ((6 * 1024 * 1024 + 3) * std::mem::size_of::<u32>()) as _,
-					upload: false,
-				},
+				BufferDesc { size, upload: false },
 				BufferUsage {
 					usages: &[BufferUsageType::TransferWrite],
 				},
@@ -389,6 +382,7 @@ impl Setup {
 			hzb,
 			hzb_sampler,
 			late_instances,
+			len: size as _,
 			bvh_queues,
 			meshlet_queues,
 			meshlet_render_lists,

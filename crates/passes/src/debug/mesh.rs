@@ -21,6 +21,7 @@ pub enum DebugVis {
 	HwSw,
 	Normals,
 	HzbMip,
+	HzbUv,
 }
 
 impl DebugVis {
@@ -34,6 +35,7 @@ pub struct DebugMesh {
 	hwsw: Pipeline,
 	normals: Pipeline,
 	hzb_mip: Pipeline,
+	hzb_uv: Pipeline,
 	layout: vk::PipelineLayout,
 }
 
@@ -91,6 +93,7 @@ impl DebugMesh {
 				hwsw: Self::pipeline(device, layout, "passes.debug.hwsw")?,
 				normals: Self::pipeline(device, layout, "passes.debug.normals")?,
 				hzb_mip: Self::pipeline(device, layout, "passes.debug.hzb_mip")?,
+				hzb_uv: Self::pipeline(device, layout, "passes.debug.hzb_uv")?,
 			})
 		}
 	}
@@ -187,6 +190,7 @@ impl DebugMesh {
 					DebugVis::HwSw => self.hwsw.get(),
 					DebugVis::Normals => self.normals.get(),
 					DebugVis::HzbMip => self.hzb_mip.get(),
+					DebugVis::HzbUv => self.hzb_uv.get(),
 				},
 			);
 			dev.cmd_bind_descriptor_sets(
@@ -232,6 +236,7 @@ impl DebugMesh {
 		self.hwsw.destroy();
 		self.normals.destroy();
 		self.hzb_mip.destroy();
+		self.hzb_uv.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

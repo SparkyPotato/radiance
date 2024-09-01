@@ -1,8 +1,4 @@
-use std::{
-	error::Error,
-	ffi::CString,
-	path::{Path, PathBuf},
-};
+use std::{error::Error, ffi::CString, path::PathBuf};
 
 use slang::{
 	Blob,

@@ -162,3 +162,31 @@ f32x4 hzb_mip(ScreenOutput input) : SV_Target0 {
 	}
 	return f32x4(1.f, 0.f, 1.f, 1.f);
 }
+
+[shader("pixel")]
+f32x4 hzb_uv(ScreenOutput input) : SV_Target0 {
+	let visbuf = Constants.read.decode(input.uv);
+	if (visbuf.data == 0xffffffff)
+		return f32x4(0.f, 0.f, 0.f, 1.f);
+	let data = VisBufferData(visbuf.data);
+	let id = data.meshlet_id;
+	let len = Constants.early.len();
+	MeshletPointer p;
+	if (id < len) {
+		p = Constants.early.get(id);
+	} else {
+		p = Constants.late.get(id - len);
+	}
+
+	let instance = Constants.instances[p.instance];
+	let meshlet = instance.meshlet(p.meshlet_offset);
+	let camera = Constants.camera[0];
+	let mvp = mul(camera.view_proj, instance.get_transform());
+
+	if (let aabb = project_aabb(mvp, camera.near, meshlet.aabb)) {
+		let us = f32x3(input.uv, visbuf.depth);
+		let norm = (us - aabb.min) / (aabb.max - aabb.min);
+		return f32x4(norm, 1.f);
+	}
+	return f32x4(0.f, 0.f, 0.f, 1.f);
+}

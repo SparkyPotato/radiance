@@ -1,5 +1,3 @@
-use std::io::Write;
-
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
 use radiance_graph::{
@@ -9,8 +7,8 @@ use radiance_graph::{
 		Pipeline,
 		ShaderInfo,
 	},
-	graph::{BufferDesc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
-	resource::{BufferHandle, GpuPtr, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
+	graph::{Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
+	resource::{ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
 	sync::{GlobalBarrier, UsageType},
 	Result,
 };

@@ -32,8 +32,10 @@ public struct BvhQueue {
 			atomic_add(this.data.dispatch.x, 1);
 	}
 
-	public void push(BvhNodePointer pointer, u32 count, u32 size) {
+	public void push(u32 len, BvhNodePointer pointer, u32 count, u32 size) {
 		let base = atomic_add(this.data->len, count);
+		if ((base + count) * sizeof(BvhNodePointer) + sizeof(u32x4) >= len)
+			return;
 		for (int i = 0; i < count; i++) {
 			this.data->pointers[base + i] = pointer;
 			pointer.node += size;
@@ -65,8 +67,10 @@ public struct MeshletQueue {
 		return this.data->pointers[id];
 	}
 
-	public void push(MeshletPointer pointer) {
+	public void push(u32 len, MeshletPointer pointer) {
 		let id = atomic_add(this.data.dispatch.x, 1u);
+		if ((id + 1) * sizeof(MeshletPointer) + sizeof(u32x3) >= len)
+			return;
 		this.data.pointers[id] = pointer;
 	}
 }
@@ -117,21 +121,22 @@ public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
 	let p7 = p6 + sz;
 
 	let depth = min8(p0, p1, p2, p3, p4, p5, p6, p7).w;
-	let max_depth = max8(p0, p1, p2, p3, p4, p5, p6, p7).w;
 	if (depth < near)
 		return none;
 
-	let dp0 = p0.xy / p0.w;
-	let dp1 = p1.xy / p1.w;
-	let dp2 = p2.xy / p2.w;
-	let dp3 = p3.xy / p3.w;
-	let dp4 = p4.xy / p4.w;
-	let dp5 = p5.xy / p5.w;
-	let dp6 = p6.xy / p6.w;
-	let dp7 = p7.xy / p7.w;
-	var vaabb = f32x4(min8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7), max8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7));
+	let dp0 = p0.xyz / p0.w;
+	let dp1 = p1.xyz / p1.w;
+	let dp2 = p2.xyz / p2.w;
+	let dp3 = p3.xyz / p3.w;
+	let dp4 = p4.xyz / p4.w;
+	let dp5 = p5.xyz / p5.w;
+	let dp6 = p6.xyz / p6.w;
+	let dp7 = p7.xyz / p7.w;
+	let min = min8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7);
+	let max = max8(dp0, dp1, dp2, dp3, dp4, dp5, dp6, dp7);
+	var vaabb = f32x4(min.xy, max.xy);
 	vaabb = vaabb.xwzy * f32x4(0.5f, -0.5f, 0.5f, -0.5f) + 0.5f;
-	ScreenAabb ret = { f32x3(vaabb.xy, depth), f32x3(vaabb.zw, max_depth) };
+	ScreenAabb ret = { f32x3(vaabb.xy, min.z), f32x3(vaabb.zw, max.z) };
 	return ret;
 }
 
@@ -237,7 +242,7 @@ public struct Cull {
 			let size = (saabb.max - saabb.min).xy * this.screen * 0.5f;
 			let level = ceil(log2(max(size.x, size.y)));
 			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, (saabb.min + saabb.max).xy * 0.5f, level);
-			return (this.near / saabb.min.z) < curr_depth;
+			return saabb.min.z < curr_depth;
 		}
 		return false;
 	}

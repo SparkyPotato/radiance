@@ -37,6 +37,8 @@ struct PushConstants {
 	late: GpuPtr<u8>,
 	late_meshlet: GpuPtr<u8>,
 	res: Vec2<u32>,
+	len: u32,
+	_pad: u32,
 }
 
 #[derive(Copy, Clone)]
@@ -45,6 +47,7 @@ struct PassIO {
 	camera: Res<BufferHandle>,
 	hzb: Res<ImageView>,
 	hzb_sampler: SamplerId,
+	len: u32,
 	read: Res<BufferHandle>,
 	next: Res<BufferHandle>,
 	meshlet: Res<BufferHandle>,
@@ -111,6 +114,7 @@ impl BvhCull {
 				late,
 				late_meshlet,
 				res: info.size,
+				len: resources.len,
 			};
 			pass.build(move |pass| self.execute(pass, io));
 
@@ -166,6 +170,8 @@ impl BvhCull {
 					late: pass.get(io.late).ptr(),
 					late_meshlet: pass.get(io.late_meshlet).ptr(),
 					res: io.res,
+					len: io.len,
+					_pad: 0,
 				}),
 			);
 			dev.cmd_dispatch_indirect(buf, read.buffer, std::mem::size_of::<u32>() as _);

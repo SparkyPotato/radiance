@@ -15,6 +15,7 @@ struct PushConstants {
 	BvhQueue late;
 	BvhQueue late_meshlet;
 	u32x2 res;
+	u32 len;
 };
 
 [vk::push_constant]
@@ -23,26 +24,27 @@ PushConstants Constants;
 void write(bool visible, u32 count, BvhNodePointer p) {
 	let is_meshlet = (count >> 7) == 1;
 	count = count & 0b01111111;
+	let len = Constants.len;
 	if (EARLY) {
 		if (visible) {
 			if (is_meshlet) {
-				Constants.meshlet.push(p, count, sizeof(Meshlet));
+				Constants.meshlet.push(len, p, count, sizeof(Meshlet));
 			} else {
-				Constants.next.push(p, count, sizeof(BvhNode));
+				Constants.next.push(len, p, count, sizeof(BvhNode));
 			}
 		} else {
 			if (is_meshlet) {
-				Constants.late_meshlet.push(p, count, sizeof(Meshlet));
+				Constants.late_meshlet.push(len, p, count, sizeof(Meshlet));
 			} else {
-				Constants.late.push(p, count, sizeof(BvhNode));
+				Constants.late.push(len, p, count, sizeof(BvhNode));
 			}
 		}
 	} else {
 		if (visible) {
 			if (is_meshlet) {
-				Constants.late_meshlet.push(p, count, sizeof(Meshlet));
+				Constants.late_meshlet.push(len, p, count, sizeof(Meshlet));
 			} else {
-				Constants.next.push(p, count, sizeof(BvhNode));
+				Constants.next.push(len, p, count, sizeof(BvhNode));
 			}
 		}
 	}

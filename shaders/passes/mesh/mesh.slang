@@ -42,7 +42,7 @@ u32 meshlet_id(u32 gid) {
 [shader("mesh")]
 [outputtopology("triangle")]
 [numthreads(128, 1, 1)]
-void main(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput vertices[64],
+void main(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput vertices[128],
 		  out indices u32x3 triangles[124], out primitives PrimitiveOutput visbuffer[124]) {
 	let p = get(gid);
 	let instance = Constants.instances[p.instance];

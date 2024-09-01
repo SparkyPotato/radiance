@@ -38,6 +38,7 @@ impl Debug {
 			DebugVis::HwSw => 3,
 			DebugVis::Normals => 4,
 			DebugVis::HzbMip => 5,
+			DebugVis::HzbUv => 6,
 		}
 	}
 
@@ -49,6 +50,7 @@ impl Debug {
 			3 => "hw/sw",
 			4 => "normals",
 			5 => "hzb mip",
+			6 => "hzb uv",
 			_ => unreachable!(),
 		}
 	}
@@ -58,7 +60,7 @@ impl Debug {
 			let mut sel = Self::vis_to_index(self.debug_vis);
 			ComboBox::from_label("debug vis")
 				.selected_text(Self::text_of_index(sel))
-				.show_index(ui, &mut sel, 6, Self::text_of_index);
+				.show_index(ui, &mut sel, 7, Self::text_of_index);
 			self.debug_vis = match sel {
 				0 => DebugVis::Triangles,
 				1 => DebugVis::Meshlets,
@@ -66,6 +68,7 @@ impl Debug {
 				3 => DebugVis::HwSw,
 				4 => DebugVis::Normals,
 				5 => DebugVis::HzbMip,
+				6 => DebugVis::HzbUv,
 				_ => unreachable!(),
 			};
 

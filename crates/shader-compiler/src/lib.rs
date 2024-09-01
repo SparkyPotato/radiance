@@ -34,7 +34,6 @@ use rspirv::{
 	dr::{Instruction, ModuleHeader, Operand},
 	spirv::{ExecutionModel, Op},
 };
-use rustc_hash::FxHashMap;
 
 use crate::compile::ShaderBuilder;
 

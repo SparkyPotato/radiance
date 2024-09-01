@@ -13,21 +13,23 @@ struct PushConstants {
 	MeshletQueue early;
 	MeshletQueue late;
 	u32x2 res;
+	u32 len;
 }
 
 [vk::push_constant]
 PushConstants Constants;
 
 void write(bool visible, MeshletPointer p) {
+	let len = Constants.len;
 	if (EARLY) {
 		if (visible) {
-			Constants.early.push(p);
+			Constants.early.push(len, p);
 		} else {
-			Constants.late.push(p);
+			Constants.late.push(len, p);
 		}
 	} else {
 		if (visible) {
-			Constants.late.push(p);
+			Constants.late.push(len, p);
 		}
 	}
 }

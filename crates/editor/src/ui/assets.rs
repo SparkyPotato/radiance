@@ -124,12 +124,16 @@ impl AssetManager {
 			.name("importer".to_string())
 			.spawn(move || import_thread(recv, isend))
 			.unwrap();
-		Self {
+		let mut this = Self {
 			system: None,
 			cursor: PathBuf::new(),
 			send,
 			recv: irecv,
+		};
+		if let Some(s) = std::env::args().nth(1) {
+			this.open(s);
 		}
+		this
 	}
 
 	pub fn open(&mut self, path: impl Into<PathBuf>) {
