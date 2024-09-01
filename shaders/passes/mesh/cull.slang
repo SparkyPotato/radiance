@@ -3,15 +3,15 @@ module cull;
 import graph;
 import passes.asset;
 
-public struct BvhNodePointer {
+public struct NodePointer {
 	public u32 instance;
-	public u32 node;
+	public u32 node_offset;
 }
 
 struct BvhQueueData {
 	u32 len;
 	u32x3 dispatch;
-	BvhNodePointer pointers[];
+	NodePointer pointers[];
 }
 
 public struct BvhQueue {
@@ -21,39 +21,44 @@ public struct BvhQueue {
 		return this.data->len;
 	}
 
-	public BvhNodePointer get(u32 id) {
+	public NodePointer get(u32 id) {
 		return this.data->pointers[id];
 	}
 
-	public void push(BvhNodePointer pointer) {
+	public void push(NodePointer pointer) {
 		let id = atomic_add(this.data->len, 1);
 		this.data->pointers[id] = pointer;
-		if ((id & 63) == 0)
+		if ((id & 7) == 0)
 			atomic_add(this.data.dispatch.x, 1);
 	}
 
-	public void push(u32 len, BvhNodePointer pointer, u32 count, u32 size) {
-		let base = atomic_add(this.data->len, count);
-		if ((base + count) * sizeof(BvhNodePointer) + sizeof(u32x4) >= len)
+	public void push(u32 len, NodePointer pointer) {
+		let id = atomic_add(this.data->len, 1);
+		if ((id + 1) * sizeof(NodePointer) + sizeof(u32x4) >= len)
 			return;
-		for (int i = 0; i < count; i++) {
-			this.data->pointers[base + i] = pointer;
-			pointer.node += size;
+		this.data->pointers[id] = pointer;
+		if ((id & 7) == 0)
+			atomic_add(this.data.dispatch.x, 1);
+	}
+
+	public void push_meshlets(u32 len, NodePointer pointer, u8 count) {
+		let base = atomic_add(this.data->len, count);
+		let end = base + count;
+		if (end * sizeof(NodePointer) + sizeof(u32x4) >= len)
+			return;
+		for (int i = base; i < end; i++) {
+			this.data->pointers[i] = pointer;
+			pointer.node_offset += sizeof(Meshlet);
 		}
 		let next_mul = ((base + 63) / 64) * 64;
-		if (next_mul - base < count)
+		if (next_mul < end)
 			atomic_add(this.data.dispatch.x, 1);
 	}
-}
-
-public struct MeshletPointer {
-	public u32 instance;
-	public u32 meshlet_offset;
 }
 
 struct MeshletQueueData {
 	u32x3 dispatch;
-	MeshletPointer pointers[];
+	NodePointer pointers[];
 }
 
 public struct MeshletQueue {
@@ -63,13 +68,13 @@ public struct MeshletQueue {
 		return this.data->dispatch.x;
 	}
 
-	public MeshletPointer get(u32 id) {
+	public NodePointer get(u32 id) {
 		return this.data->pointers[id];
 	}
 
-	public void push(u32 len, MeshletPointer pointer) {
+	public void push(u32 len, NodePointer pointer) {
 		let id = atomic_add(this.data.dispatch.x, 1u);
-		if ((id + 1) * sizeof(MeshletPointer) + sizeof(u32x3) >= len)
+		if ((id + 1) * sizeof(NodePointer) + sizeof(u32x3) >= len)
 			return;
 		this.data.pointers[id] = pointer;
 	}
@@ -194,47 +199,17 @@ public struct Cull {
 		return sqrt(m);
 	}
 
-	f32 min_scale() {
-		let x = this.mv._m00_m10_m20;
-		let y = this.mv._m01_m11_m21;
-		let z = this.mv._m02_m12_m22;
-		let m = min(dot(x, x), min(dot(y, y), dot(z, z)));
-		return sqrt(m);
-	}
-
 	f32 screenspace_scale(f32x4 bounds) {
+		let scale = this.max_scale();
 		let center = mul(this.mv, f32x4(bounds.xyz, 1.f)).xyz;
-		let radius = bounds.w * this.max_scale();
-
-		let tdist2 = dot(center, center);
-		let x2 = tdist2 - center.z * center.z;
-		let x = sqrt(max(0.f, x2));
-		let dist2 = tdist2 - radius * radius;
-		let dist = sqrt(max(0.f, dist2));
-		var t = (-radius * x + dist * center.z) / tdist2;
-
-		let h = this.near - center.z;
-		if (dist < 0.f || t * dist < this.near) {
-			let tx = x + sqrt(radius * radius - h * h);
-			t = this.near * rsqrt(tx * tx + this.near * this.near);
-		}
-
-		if (center.z + radius > this.near)
-			return max(center.z - radius, this.near) * t;
-		else
-			return 0.f;
+		let radius = bounds.w * scale;
+		let d = max(center.z - radius, this.near);
+		return (max(this.screen.x, this.screen.y) * this.h * scale) / (2.f * d);
 	}
 
-	public bool is_imperceptible(f32x4 lod_bounds, f32 error) {
+	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge_length) {
 		let scale = this.screenspace_scale(lod_bounds);
-		let thresh = this.min_scale() * error * max(this.screen.x, this.screen.y);
-		return scale > thresh;
-	}
-
-	public bool is_perceptible(f32x4 lod_bounds, f32 error) {
-		let scale = this.screenspace_scale(lod_bounds);
-		let thresh = this.min_scale() * error * max(this.screen.x, this.screen.y);
-		return scale <= thresh;
+		return bool2(error * scale < 1.f, edge_length * scale > 1024.f);
 	}
 
 	public bool oc_cull(Aabb aabb) {

@@ -69,7 +69,7 @@ pub struct Resources {
 	pub len: u32,
 	pub bvh_queues: [Res<BufferHandle>; 3],
 	pub meshlet_queues: [Res<BufferHandle>; 2],
-	pub meshlet_render_lists: [Res<BufferHandle>; 2],
+	pub meshlet_render_lists: [Res<BufferHandle>; 4],
 	pub visbuffer: Res<ImageView>,
 	pub debug: Option<DebugRes>,
 }
@@ -121,7 +121,7 @@ impl Resources {
 		buf
 	}
 
-	pub fn mesh(&self, pass: &mut PassBuilder) -> [Res<BufferHandle>; 2] {
+	pub fn mesh(&self, pass: &mut PassBuilder) -> [Res<BufferHandle>; 4] {
 		for m in self.meshlet_render_lists {
 			pass.reference(
 				m,
@@ -129,6 +129,7 @@ impl Resources {
 					usages: &[
 						BufferUsageType::IndirectBuffer,
 						BufferUsageType::ShaderStorageRead(Shader::Mesh),
+						BufferUsageType::ShaderStorageRead(Shader::Compute),
 					],
 				},
 			);
@@ -259,7 +260,7 @@ impl Setup {
 				},
 			)
 		});
-		let meshlet_render_lists = [(); 2].map(|_| {
+		let meshlet_render_lists = [(); 4].map(|_| {
 			pass.resource(
 				BufferDesc { size, upload: false },
 				BufferUsage {

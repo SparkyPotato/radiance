@@ -10,8 +10,9 @@ struct PushConstants {
 	Tex<f32, D2> hzb;
 	Sampler hzb_sampler;
 	BvhQueue read;
-	MeshletQueue early;
-	MeshletQueue late;
+	BvhQueue late;
+	MeshletQueue hw;
+	MeshletQueue sw;
 	u32x2 res;
 	u32 len;
 }
@@ -19,18 +20,16 @@ struct PushConstants {
 [vk::push_constant]
 PushConstants Constants;
 
-void write(bool visible, MeshletPointer p) {
+void write(bool visible, bool hw, NodePointer p) {
 	let len = Constants.len;
-	if (EARLY) {
-		if (visible) {
-			Constants.early.push(len, p);
+	if (visible) {
+		if (hw) {
+			Constants.hw.push(len, p);
 		} else {
-			Constants.late.push(len, p);
+			Constants.sw.push(len, p);
 		}
-	} else {
-		if (visible) {
-			Constants.late.push(len, p);
-		}
+	} else if (EARLY) {
+		Constants.late.push(len, p);
 	}
 }
 
@@ -42,9 +41,10 @@ void main(u32 id: SV_DispatchThreadID) {
 
 	let p = Constants.read.get(id);
 	let instance = Constants.instances[p.instance];
-	let meshlet = instance.meshlet(p.node);
+	let meshlet = instance.meshlet(p.node_offset);
 	let c = Cull(Constants.camera, instance.get_transform(), Constants.res, Constants.hzb, Constants.hzb_sampler);
-	if (c.frustum_cull(meshlet.aabb) || c.is_perceptible(meshlet.lod_bounds, meshlet.error))
+	let should_render = c.should_render(meshlet.lod_bounds, meshlet.error, meshlet.max_edge_length);
+	if (c.frustum_cull(meshlet.aabb) || !should_render.x)
 		return;
-	write(!c.oc_cull(meshlet.aabb), { p.instance, p.node });
+	write(!c.oc_cull(meshlet.aabb), should_render.y, { p.instance, p.node_offset });
 }

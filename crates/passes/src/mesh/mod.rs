@@ -6,7 +6,7 @@ use radiance_graph::{
 	resource::{BufferHandle, GpuPtr, ImageView},
 	Result,
 };
-use vek::{Mat4, Vec2, Vec4};
+use vek::{Mat4, Vec2};
 
 pub use crate::mesh::setup::{DebugRes, DebugResId};
 use crate::{
@@ -46,8 +46,10 @@ pub struct RenderOutput {
 	pub camera: Res<BufferHandle>,
 	pub visbuffer: Res<ImageView>,
 	pub debug: Option<DebugRes>,
-	pub early: Res<BufferHandle>,
-	pub late: Res<BufferHandle>,
+	pub early_hw: Res<BufferHandle>,
+	pub early_sw: Res<BufferHandle>,
+	pub late_hw: Res<BufferHandle>,
+	pub late_sw: Res<BufferHandle>,
 }
 
 pub struct VisBuffer {
@@ -60,8 +62,8 @@ pub struct VisBuffer {
 	late_meshlet_cull: MeshletCull,
 	hzb_gen: HzbGen,
 	layout: vk::PipelineLayout,
-	no_debug: [Pipeline; 2],
-	debug: [Pipeline; 2],
+	no_debug: [Pipeline; 4],
+	debug: [Pipeline; 4],
 	mesh: ext::mesh_shader::Device,
 }
 
@@ -102,8 +104,10 @@ impl CameraData {
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
 	camera: GpuPtr<CameraData>,
-	early: GpuPtr<u8>,
-	late: GpuPtr<u8>,
+	early_hw: GpuPtr<u8>,
+	early_sw: GpuPtr<u8>,
+	late_hw: GpuPtr<u8>,
+	late_sw: GpuPtr<u8>,
 	output: StorageImageId,
 	debug: Option<DebugResId>,
 	_pad: u32,
@@ -113,7 +117,7 @@ struct PushConstants {
 struct PassIO {
 	early: bool,
 	instances: GpuPtr<GpuInstance>,
-	meshlets: [Res<BufferHandle>; 2],
+	meshlets: [Res<BufferHandle>; 4],
 	camera: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
 	debug: Option<DebugRes>,
@@ -126,7 +130,11 @@ impl VisBuffer {
 				&vk::PipelineLayoutCreateInfo::default()
 					.set_layouts(&[device.descriptors().layout()])
 					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT)
+						.stage_flags(
+							vk::ShaderStageFlags::COMPUTE
+								| vk::ShaderStageFlags::MESH_EXT
+								| vk::ShaderStageFlags::FRAGMENT,
+						)
 						.size(std::mem::size_of::<PushConstants>() as _)]),
 				None,
 			)?;
@@ -142,45 +150,60 @@ impl VisBuffer {
 				hzb_gen: HzbGen::new(device)?,
 				layout,
 				no_debug: [
-					Self::pipeline(device, layout, true, false)?,
-					Self::pipeline(device, layout, false, false)?,
+					Self::pipeline(device, layout, false, true, false)?,
+					Self::pipeline(device, layout, true, true, false)?,
+					Self::pipeline(device, layout, false, false, false)?,
+					Self::pipeline(device, layout, true, false, false)?,
 				],
 				debug: [
-					Self::pipeline(device, layout, true, true)?,
-					Self::pipeline(device, layout, false, true)?,
+					Self::pipeline(device, layout, false, true, true)?,
+					Self::pipeline(device, layout, true, true, true)?,
+					Self::pipeline(device, layout, false, false, true)?,
+					Self::pipeline(device, layout, true, false, true)?,
 				],
 				mesh: ext::mesh_shader::Device::new(device.instance(), device.device()),
 			})
 		}
 	}
 
-	fn pipeline(device: &Device, layout: vk::PipelineLayout, early: bool, debug: bool) -> Result<Pipeline> {
-		device.graphics_pipeline(GraphicsPipelineDesc {
-			shaders: &[
+	fn pipeline(device: &Device, layout: vk::PipelineLayout, sw: bool, early: bool, debug: bool) -> Result<Pipeline> {
+		let spec: &[&str] = if debug {
+			if early {
+				&["passes.mesh.debug", "passes.mesh.early"]
+			} else {
+				&["passes.mesh.debug", "passes.mesh.late"]
+			}
+		} else {
+			if early {
+				&["passes.mesh.early"]
+			} else {
+				&["passes.mesh.late"]
+			}
+		};
+		if sw {
+			device.compute_pipeline(
+				layout,
 				ShaderInfo {
-					shader: "passes.mesh.mesh.main",
-					spec: if debug {
-						if early {
-							&["passes.mesh.debug", "passes.mesh.early"]
-						} else {
-							&["passes.mesh.debug", "passes.mesh.late"]
-						}
-					} else {
-						if early {
-							&["passes.mesh.early"]
-						} else {
-							&["passes.mesh.late"]
-						}
+					shader: "passes.mesh.mesh.sw",
+					spec,
+				},
+			)
+		} else {
+			device.graphics_pipeline(GraphicsPipelineDesc {
+				shaders: &[
+					ShaderInfo {
+						shader: "passes.mesh.mesh.hw",
+						spec,
 					},
-				},
-				ShaderInfo {
-					shader: "passes.mesh.pixel.main",
-					spec: if debug { &["passes.mesh.debug"] } else { &[] },
-				},
-			],
-			layout,
-			..Default::default()
-		})
+					ShaderInfo {
+						shader: "passes.mesh.pixel.main",
+						spec: if debug { &["passes.mesh.debug"] } else { &[] },
+					},
+				],
+				layout,
+				..Default::default()
+			})
+		}
 	}
 
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> RenderOutput {
@@ -236,8 +259,10 @@ impl VisBuffer {
 			instances: info.scene.instances(),
 			camera,
 			visbuffer,
-			early: io.meshlets[0],
-			late: io.meshlets[1],
+			early_hw: io.meshlets[0],
+			early_sw: io.meshlets[1],
+			late_hw: io.meshlets[2],
+			late_sw: io.meshlets[3],
 			debug,
 		}
 	}
@@ -245,7 +270,8 @@ impl VisBuffer {
 	fn execute(&self, mut pass: PassContext, io: PassIO) {
 		let dev = pass.device.device();
 		let buf = pass.buf;
-		let read = pass.get(if io.early { io.meshlets[0] } else { io.meshlets[1] });
+		let read_hw = pass.get(if io.early { io.meshlets[0] } else { io.meshlets[2] });
+		let read_sw = pass.get(if io.early { io.meshlets[1] } else { io.meshlets[3] });
 		let visbuffer = pass.get(io.visbuffer);
 		unsafe {
 			let area = vk::Rect2D::default().extent(vk::Extent2D {
@@ -275,16 +301,26 @@ impl VisBuffer {
 				&[pass.device.descriptors().set()],
 				&[],
 			);
+			dev.cmd_bind_descriptor_sets(
+				buf,
+				vk::PipelineBindPoint::COMPUTE,
+				self.layout,
+				0,
+				&[pass.device.descriptors().set()],
+				&[],
+			);
 			dev.cmd_push_constants(
 				buf,
 				self.layout,
-				vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT,
+				vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT,
 				0,
 				bytes_of(&PushConstants {
 					instances: io.instances,
 					camera: pass.get(io.camera).ptr(),
-					early: pass.get(io.meshlets[0]).ptr(),
-					late: pass.get(io.meshlets[1]).ptr(),
+					early_hw: pass.get(io.meshlets[0]).ptr(),
+					early_sw: pass.get(io.meshlets[1]).ptr(),
+					late_hw: pass.get(io.meshlets[2]).ptr(),
+					late_sw: pass.get(io.meshlets[3]).ptr(),
 					output: visbuffer.storage_id.unwrap(),
 					debug: io.debug.map(|d| d.get(&mut pass)),
 					_pad: 0,
@@ -298,20 +334,39 @@ impl VisBuffer {
 					if io.early {
 						self.debug[0].get()
 					} else {
-						self.debug[1].get()
+						self.debug[2].get()
 					}
 				} else {
 					if io.early {
 						self.no_debug[0].get()
 					} else {
-						self.no_debug[1].get()
+						self.no_debug[2].get()
 					}
 				},
 			);
 			self.mesh
-				.cmd_draw_mesh_tasks_indirect(buf, read.buffer, 0, 1, std::mem::size_of::<u32>() as u32 * 3);
+				.cmd_draw_mesh_tasks_indirect(buf, read_hw.buffer, 0, 1, std::mem::size_of::<u32>() as u32 * 3);
 
 			dev.cmd_end_rendering(buf);
+
+			dev.cmd_bind_pipeline(
+				buf,
+				vk::PipelineBindPoint::COMPUTE,
+				if io.debug.is_some() {
+					if io.early {
+						self.debug[1].get()
+					} else {
+						self.debug[3].get()
+					}
+				} else {
+					if io.early {
+						self.no_debug[1].get()
+					} else {
+						self.no_debug[3].get()
+					}
+				},
+			);
+			dev.cmd_dispatch_indirect(buf, read_sw.buffer, 0);
 		}
 	}
 
@@ -324,12 +379,16 @@ impl VisBuffer {
 		self.early_meshlet_cull.destroy(device);
 		self.late_meshlet_cull.destroy(device);
 		self.hzb_gen.destroy(device);
-		let [p0, p1] = self.no_debug;
+		let [p0, p1, p2, p3] = self.no_debug;
 		p0.destroy();
 		p1.destroy();
-		let [p0, p1] = self.debug;
+		p2.destroy();
+		p3.destroy();
+		let [p0, p1, p2, p3] = self.debug;
 		p0.destroy();
 		p1.destroy();
+		p2.destroy();
+		p3.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

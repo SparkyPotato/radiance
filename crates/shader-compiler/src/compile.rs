@@ -22,7 +22,7 @@ pub struct ShaderBuilder {
 	session: GlobalSession,
 	sesh: Session,
 	source: PathBuf,
-	cache: PathBuf,
+	pub cache: PathBuf,
 }
 
 unsafe impl Send for ShaderBuilder {}
@@ -37,7 +37,7 @@ impl ShaderBuilder {
 			SessionDescBuilder::default()
 				.targets(&[TargetDescBuilder::default()
 					.format(CompileTarget::SPIRV)
-					.profile(session.find_profile("sm_6_7"))
+					.profile(session.find_profile("spirv_1_6"))
 					.flags(TargetFlags::GENERATE_SPIRV_DIRECTLY)
 					.floating_point_mode(FloatingPointMode::FAST)
 					.line_directive_mode(LineDirectiveMode::STANDARD)
@@ -64,7 +64,7 @@ impl ShaderBuilder {
 		let mut module = self.sesh.load_module(&path).map_err(fmt_error)?;
 		let path = self.cache.join(path).with_extension("slang-module");
 		let _ = std::fs::create_dir_all(path.parent().unwrap());
-		// let _ = module.write_to_file(path.as_os_str().to_str().unwrap());
+		let _ = module.write_to_file(path.as_os_str().to_str().unwrap());
 		Ok(module)
 	}
 

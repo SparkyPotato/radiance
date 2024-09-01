@@ -33,7 +33,8 @@ struct PushConstants {
 	hzb_sampler: SamplerId,
 	read: GpuPtr<u8>,
 	late: GpuPtr<u8>,
-	write: GpuPtr<u8>,
+	hw: GpuPtr<u8>,
+	sw: GpuPtr<u8>,
 	res: Vec2<u32>,
 	len: u32,
 	_pad: u32,
@@ -48,7 +49,8 @@ struct PassIO {
 	len: u32,
 	read: Res<BufferHandle>,
 	late: Res<BufferHandle>,
-	write: Res<BufferHandle>,
+	hw: Res<BufferHandle>,
+	sw: Res<BufferHandle>,
 	res: Vec2<u32>,
 }
 
@@ -95,12 +97,20 @@ impl MeshletCull {
 			},
 		);
 		let late = resources.output(&mut pass, resources.meshlet_queues[1]);
-		let write = resources.output(
+		let hw = resources.output(
 			&mut pass,
 			if self.early {
 				resources.meshlet_render_lists[0]
 			} else {
+				resources.meshlet_render_lists[2]
+			},
+		);
+		let sw = resources.output(
+			&mut pass,
+			if self.early {
 				resources.meshlet_render_lists[1]
+			} else {
+				resources.meshlet_render_lists[3]
 			},
 		);
 
@@ -112,7 +122,8 @@ impl MeshletCull {
 			len: resources.len,
 			read,
 			late,
-			write,
+			hw,
+			sw,
 			res: info.size,
 		};
 		pass.build(move |ctx| self.execute(ctx, io));
@@ -144,7 +155,8 @@ impl MeshletCull {
 					hzb_sampler: io.hzb_sampler,
 					read: read.ptr(),
 					late: pass.get(io.late).ptr(),
-					write: pass.get(io.write).ptr(),
+					hw: pass.get(io.hw).ptr(),
+					sw: pass.get(io.sw).ptr(),
 					res: io.res,
 					len: io.len,
 					_pad: 0,

@@ -21,31 +21,19 @@ struct PushConstants {
 [vk::push_constant]
 PushConstants Constants;
 
-void write(bool visible, u32 count, BvhNodePointer p) {
-	let is_meshlet = (count >> 7) == 1;
-	count = count & 0b01111111;
+void write(bool visible, u8 count, NodePointer p) {
 	let len = Constants.len;
-	if (EARLY) {
-		if (visible) {
-			if (is_meshlet) {
-				Constants.meshlet.push(len, p, count, sizeof(Meshlet));
-			} else {
-				Constants.next.push(len, p, count, sizeof(BvhNode));
-			}
+	if (visible) {
+		if (count == 255) {
+			Constants.next.push(len, p);
 		} else {
-			if (is_meshlet) {
-				Constants.late_meshlet.push(len, p, count, sizeof(Meshlet));
-			} else {
-				Constants.late.push(len, p, count, sizeof(BvhNode));
-			}
+			Constants.meshlet.push_meshlets(len, p, count);
 		}
-	} else {
-		if (visible) {
-			if (is_meshlet) {
-				Constants.late_meshlet.push(len, p, count, sizeof(Meshlet));
-			} else {
-				Constants.next.push(len, p, count, sizeof(BvhNode));
-			}
+	} else if (EARLY) {
+		if (count == 255) {
+			Constants.late.push(len, p);
+		} else {
+			Constants.late_meshlet.push_meshlets(len, p, count);
 		}
 	}
 }
@@ -53,15 +41,22 @@ void write(bool visible, u32 count, BvhNodePointer p) {
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void main(u32 id: SV_DispatchThreadID) {
-	if (id >= Constants.read.len())
+	let node = id >> 3;
+	let subnode = id & 7;
+
+	if (node >= Constants.read.len())
 		return;
 
-	var p = Constants.read.get(id);
+	var p = Constants.read.get(node);
 	let instance = Constants.instances[p.instance];
-	let node = instance.node(p.node);
+	let n = instance.node(p.node_offset);
 	let c = Cull(Constants.camera, instance.get_transform(), Constants.res, Constants.hzb, Constants.hzb_sampler);
-	if (c.frustum_cull(node.aabb) || c.is_imperceptible(node.lod_bounds, node.parent_error))
+
+	let aabb = n.aabbs[subnode];
+	let lod_bounds = n.lod_bounds[subnode];
+	let parent_error = n.parent_errors[subnode];
+	if (c.frustum_cull(aabb) || c.should_render(lod_bounds, parent_error, 0.f).x)
 		return;
-	p.node = node.children_offset;
-	write(!c.oc_cull(node.aabb), node.child_count, p);
+	p.node_offset = n.child_offsets[subnode];
+	write(!c.oc_cull(aabb), n.child_counts[subnode], p);
 }

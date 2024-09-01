@@ -14,11 +14,11 @@ public struct Aabb {
 }
 
 public struct BvhNode {
-	public Aabb aabb;
-	public f32x4 lod_bounds;
-	public f32 parent_error;
-	public u32 children_offset;
-	public u32 child_count;
+	public Aabb aabbs[8];
+	public f32x4 lod_bounds[8];
+	public f32 parent_errors[8];
+	public u32 child_offsets[8];
+	public u8 child_counts[8];
 }
 
 public struct Instance {
@@ -56,6 +56,7 @@ public struct Meshlet {
 	public u8 vertex_count;
 	public u8 tri_count;
 	u16 _pad;
+	public f32 max_edge_length;
 
 	public Vertex vertex(u8* mesh, u32 id) {
 		return ((Vertex*)(mesh + this.vertex_offset))[id];
@@ -70,9 +71,6 @@ public struct Meshlet {
 public struct Camera {
 	public f32x4x4 view;
 	public f32x4x4 view_proj;
-	public f32 w;
 	public f32 h;
 	public f32 near;
-	f32 _pad;
-	public f32x4 frustum;
 }

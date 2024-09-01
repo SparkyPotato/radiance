@@ -7,8 +7,10 @@ import passes.mesh.visbuffer;
 public struct PushConstants {
 	public Instance* instances;
 	public Camera* camera;
-	public MeshletQueue early;
-	public MeshletQueue late;
+	public MeshletQueue early_hw;
+	public MeshletQueue early_sw;
+	public MeshletQueue late_hw;
+	public MeshletQueue late_sw;
 	public VisBufferTex read;
 	public u32 bottom;
 	public u32 top;
@@ -29,6 +31,23 @@ public u32 hash(u32 a) {
 	return a;
 }
 
+NodePointer get_meshlet(u32 id) {
+	let early_hw = Constants.early_hw.len();
+	let early_sw = Constants.early_sw.len();
+	let late_hw = Constants.late_hw.len();
+	let late_sw = Constants.late_sw.len();
+	if (id < early_hw)
+		return Constants.early_hw.get(id);
+	id -= early_hw;
+	if (id < early_sw)
+		return Constants.early_sw.get(id);
+	id -= early_sw;
+	if (id < late_hw)
+		return Constants.late_hw.get(id);
+	id -= late_hw;
+	return Constants.late_sw.get(id);
+}
+
 [shader("pixel")]
 f32x4 triangles(ScreenOutput input) : SV_Target0 {
 	let visbuf = Constants.read.decode(input.uv);
@@ -46,15 +65,8 @@ f32x4 meshlets(ScreenOutput input) : SV_Target0 {
 	if (visbuf.data == 0xffffffff)
 		return f32x4(0.f, 0.f, 0.f, 1.f);
 	let data = VisBufferData(visbuf.data);
-	let id = data.meshlet_id;
-	let len = Constants.early.len();
-	MeshletPointer p;
-	if (id < len) {
-		p = Constants.early.get(id);
-	} else {
-		p = Constants.late.get(id - len);
-	}
-	let h = hash(p.instance) ^ hash(p.meshlet_offset);
+	NodePointer p = get_meshlet(data.meshlet_id);
+	let h = hash(p.instance) ^ hash(p.node_offset);
 	let color = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255));
 	return f32x4(color / 255.f, 1.f);
 }
@@ -94,17 +106,10 @@ f32x4 normals(ScreenOutput input) : SV_Target0 {
 	if (visbuf.data == 0xffffffff)
 		return f32x4(0.f, 0.f, 0.f, 1.f);
 	let data = VisBufferData(visbuf.data);
-	let id = data.meshlet_id;
-	let len = Constants.early.len();
-	MeshletPointer p;
-	if (id < len) {
-		p = Constants.early.get(id);
-	} else {
-		p = Constants.late.get(id - len);
-	}
+	NodePointer p = get_meshlet(data.meshlet_id);
 
 	let instance = Constants.instances[p.instance];
-	let meshlet = instance.meshlet(p.meshlet_offset);
+	let meshlet = instance.meshlet(p.node_offset);
 	let camera = Constants.camera[0];
 	let mvp = mul(camera.view_proj, instance.get_transform());
 
@@ -140,17 +145,10 @@ f32x4 hzb_mip(ScreenOutput input) : SV_Target0 {
 	if (visbuf.data == 0xffffffff)
 		return f32x4(0.f, 0.f, 0.f, 1.f);
 	let data = VisBufferData(visbuf.data);
-	let id = data.meshlet_id;
-	let len = Constants.early.len();
-	MeshletPointer p;
-	if (id < len) {
-		p = Constants.early.get(id);
-	} else {
-		p = Constants.late.get(id - len);
-	}
+	NodePointer p = get_meshlet(data.meshlet_id);
 
 	let instance = Constants.instances[p.instance];
-	let meshlet = instance.meshlet(p.meshlet_offset);
+	let meshlet = instance.meshlet(p.node_offset);
 	let camera = Constants.camera[0];
 	let mvp = mul(camera.view_proj, instance.get_transform());
 
@@ -169,17 +167,10 @@ f32x4 hzb_uv(ScreenOutput input) : SV_Target0 {
 	if (visbuf.data == 0xffffffff)
 		return f32x4(0.f, 0.f, 0.f, 1.f);
 	let data = VisBufferData(visbuf.data);
-	let id = data.meshlet_id;
-	let len = Constants.early.len();
-	MeshletPointer p;
-	if (id < len) {
-		p = Constants.early.get(id);
-	} else {
-		p = Constants.late.get(id - len);
-	}
+	NodePointer p = get_meshlet(data.meshlet_id);
 
 	let instance = Constants.instances[p.instance];
-	let meshlet = instance.meshlet(p.meshlet_offset);
+	let meshlet = instance.meshlet(p.node_offset);
 	let camera = Constants.camera[0];
 	let mvp = mul(camera.view_proj, instance.get_transform());
 

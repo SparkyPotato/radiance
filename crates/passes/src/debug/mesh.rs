@@ -44,8 +44,10 @@ pub struct DebugMesh {
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
 	camera: GpuPtr<CameraData>,
-	early: GpuPtr<u8>,
-	late: GpuPtr<u8>,
+	early_hw: GpuPtr<u8>,
+	early_sw: GpuPtr<u8>,
+	late_hw: GpuPtr<u8>,
+	late_sw: GpuPtr<u8>,
 	visbuffer: StorageImageId,
 	debug: Option<DebugResId>,
 	bottom: u32,
@@ -106,8 +108,10 @@ impl DebugMesh {
 			usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
 		};
 		pass.reference(output.camera, usage);
-		pass.reference(output.early, usage);
-		pass.reference(output.late, usage);
+		pass.reference(output.early_hw, usage);
+		pass.reference(output.early_sw, usage);
+		pass.reference(output.late_hw, usage);
+		pass.reference(output.late_sw, usage);
 
 		let usage = ImageUsage {
 			format: vk::Format::UNDEFINED,
@@ -213,8 +217,10 @@ impl DebugMesh {
 				bytes_of(&PushConstants {
 					instances: output.instances,
 					camera: pass.get(output.camera).ptr(),
-					early: pass.get(output.early).ptr(),
-					late: pass.get(output.late).ptr(),
+					early_hw: pass.get(output.early_hw).ptr(),
+					early_sw: pass.get(output.early_sw).ptr(),
+					late_hw: pass.get(output.late_hw).ptr(),
+					late_sw: pass.get(output.late_sw).ptr(),
 					visbuffer: visbuffer.storage_id.unwrap(),
 					debug: output.debug.map(|d| d.get(&mut pass)),
 					bottom,

@@ -271,11 +271,12 @@ impl RuntimeShared {
 		}
 
 		let (module, entry) = info.shader.rsplit_once('.').unwrap();
-		let spirv = b.load_module(module, entry, info.spec)?;
+		let ospirv = b.load_module(module, entry, info.spec)?;
 
 		let mut dec = Dec(vk::ShaderStageFlags::empty());
-		let _ = Parser::new(spirv.as_slice(), &mut dec).parse();
-		let mut spirv = ash::util::read_spv(&mut std::io::Cursor::new(spirv.as_slice())).expect("failed to read spirv");
+		let _ = Parser::new(ospirv.as_slice(), &mut dec).parse();
+		let mut spirv =
+			ash::util::read_spv(&mut std::io::Cursor::new(ospirv.as_slice())).expect("failed to read spirv");
 		let mut iter = spirv.iter_mut();
 		while let Some(w) = iter.next() {
 			if *w == 14 | (3 << 16) {
@@ -284,6 +285,11 @@ impl RuntimeShared {
 		}
 		iter.next().unwrap();
 		*iter.next().unwrap() = 3;
+
+		let path = format!("{}+{}.spv", info.shader, info.spec.join(","));
+		let f = b.cache.join("spirv/");
+		let _ = std::fs::create_dir_all(&f);
+		let _ = std::fs::write(f.join(path), ospirv.as_slice());
 		Ok((spirv, dec.0))
 	}
 
