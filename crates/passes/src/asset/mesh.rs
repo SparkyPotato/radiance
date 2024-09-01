@@ -1,4 +1,4 @@
-use std::usize;
+use std::{array, usize};
 
 use ash::vk;
 use bytemuck::{NoUninit, Pod, Zeroable};
@@ -43,13 +43,13 @@ pub(super) fn map_aabb(aabb: Aabb<f32>) -> GpuAabb {
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuBvhNode {
-	pub aabb: GpuAabb,
-	pub lod_bounds: Vec4<f32>,
-	pub parent_error: f32,
-	pub children_offset: u32,
-	pub child_count: u32,
+	pub aabbs: [GpuAabb; 8],
+	pub lod_bounds: [Vec4<f32>; 8],
+	pub parent_errors: [f32; 8],
+	pub child_offsets: [u32; 8],
+	pub child_counts: [u8; 8],
 }
-const_assert_eq!(std::mem::size_of::<GpuBvhNode>(), 52);
+const_assert_eq!(std::mem::size_of::<GpuBvhNode>(), 392);
 const_assert_eq!(std::mem::align_of::<GpuBvhNode>(), 4);
 
 #[derive(Copy, Clone, NoUninit)]
@@ -63,8 +63,9 @@ pub struct GpuMeshlet {
 	pub vertex_count: u8,
 	pub triangle_count: u8,
 	pub _pad: u16,
+	pub max_edge_length: f32,
 }
-const_assert_eq!(std::mem::size_of::<GpuMeshlet>(), 56);
+const_assert_eq!(std::mem::size_of::<GpuMeshlet>(), 60);
 const_assert_eq!(std::mem::align_of::<GpuMeshlet>(), 4);
 
 pub(super) fn map_sphere(sphere: Sphere<f32, f32>) -> Vec4<f32> { sphere.center.with_w(sphere.radius) }
@@ -183,18 +184,20 @@ impl<S: AssetSource> Loader<'_, S> {
 		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
 
 		for node in m.bvh {
-			let is_meshlet = (node.child_count >> 7) == 1;
 			writer
 				.write(GpuBvhNode {
-					aabb: map_aabb(node.aabb),
-					lod_bounds: map_sphere(node.lod_bounds),
-					parent_error: node.parent_error,
-					children_offset: if is_meshlet {
-						meshlet_byte_offset as u32 + node.children_offset * std::mem::size_of::<GpuMeshlet>() as u32
-					} else {
-						bvh_byte_offset as u32 + node.children_offset * std::mem::size_of::<GpuBvhNode>() as u32
-					},
-					child_count: node.child_count as _,
+					aabbs: node.aabbs.map(map_aabb),
+					lod_bounds: node.lod_bounds.map(map_sphere),
+					parent_errors: node.parent_errors,
+					child_offsets: array::from_fn(|i| {
+						if node.child_counts[i] == u8::MAX {
+							bvh_byte_offset as u32 + node.child_offsets[i] * std::mem::size_of::<GpuBvhNode>() as u32
+						} else {
+							meshlet_byte_offset as u32
+								+ node.child_offsets[i] * std::mem::size_of::<GpuMeshlet>() as u32
+						}
+					}),
+					child_counts: node.child_counts,
 				})
 				.unwrap();
 		}
@@ -231,6 +234,7 @@ impl<S: AssetSource> Loader<'_, S> {
 					vertex_count: me.vert_count,
 					triangle_count: me.tri_count,
 					_pad: 0,
+					max_edge_length: me.max_edge_length,
 				})
 				.unwrap();
 		}

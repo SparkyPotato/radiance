@@ -93,7 +93,8 @@ impl BvhCull {
 		};
 		let mut next = resources.bvh_queues[1];
 		for i in 0..info.scene.max_depth() {
-			let mut pass = frame.pass("bvh cull");
+			frame.start_region("bvh cull");
+			let mut pass = frame.pass("cull");
 
 			let camera = resources.camera(&mut pass);
 			let hzb = resources.hzb(&mut pass);
@@ -119,7 +120,7 @@ impl BvhCull {
 			pass.build(move |pass| self.execute(pass, io));
 
 			if i != info.scene.max_depth() - 1 {
-				let mut pass = frame.pass("clear buf");
+				let mut pass = frame.pass("clear next");
 				pass.reference(
 					read,
 					BufferUsage {
@@ -135,6 +136,7 @@ impl BvhCull {
 					);
 				})
 			}
+			frame.end_region();
 
 			(read, next) = (next, read);
 		}

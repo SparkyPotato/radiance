@@ -70,14 +70,9 @@ pub struct VisBuffer {
 pub struct CameraData {
 	view: Mat4<f32>,
 	view_proj: Mat4<f32>,
-	w: f32,
 	h: f32,
 	near: f32,
-	_pad: f32,
-	frustum: Vec4<f32>,
 }
-
-fn normalize_plane(p: Vec4<f32>) -> Vec4<f32> { p / p.xyz().magnitude() }
 
 impl CameraData {
 	fn new(aspect: f32, camera: Camera) -> Self {
@@ -93,19 +88,11 @@ impl CameraData {
 		let view = camera.view;
 		let view_proj = proj * view;
 
-		let pt = proj.transposed();
-		let px = normalize_plane(pt.cols[3] + pt.cols[0]);
-		let py = normalize_plane(pt.cols[3] + pt.cols[1]);
-		let frustum = Vec4::new(px.x, px.z, py.y, py.z);
-
 		Self {
 			view,
 			view_proj,
-			w,
 			h,
 			near,
-			_pad: 0.0,
-			frustum,
 		}
 	}
 }

@@ -144,12 +144,22 @@ impl Importer<'_> {
 			.meshlets
 			.iter()
 			.map(|m| {
-				let aabb = bvh::calc_aabb(
-					ms.vertices[m.vertex_offset as usize..(m.vertex_offset + m.vertex_count) as usize]
-						.iter()
-						.map(|&x| &vertices[x as usize]),
-				);
+				let m_vertices = &ms.vertices[m.vertex_offset as usize..(m.vertex_offset + m.vertex_count) as usize];
+				let m_indices =
+					&ms.triangles[m.triangle_offset as usize..(m.triangle_offset + m.triangle_count * 3) as usize];
+				let aabb = bvh::calc_aabb(m_vertices.iter().map(|&x| &vertices[x as usize]));
 				let (lod_bounds, error) = error.unwrap_or((aabb, 0.0));
+				let mut max_edge_length = 0.0f32;
+				for t in m_indices.chunks(3) {
+					for (v1, v2) in [(t[0], t[1]), (t[1], t[2]), (t[0], t[2])] {
+						max_edge_length = max_edge_length.max(
+							(vertices[m_vertices[v1 as usize] as usize].position
+								- vertices[m_vertices[v2 as usize] as usize].position)
+								.magnitude_squared(),
+						);
+					}
+				}
+				max_edge_length = max_edge_length.sqrt();
 
 				(
 					Meshlet {
@@ -160,6 +170,7 @@ impl Importer<'_> {
 						aabb,
 						lod_bounds: aabb_to_sphere(lod_bounds),
 						error,
+						max_edge_length,
 					},
 					lod_bounds,
 				)

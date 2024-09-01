@@ -167,59 +167,63 @@ impl BvhBuilder {
 	}
 
 	fn build_inner(
-		&self, groups: &[MeshletGroup], out: &mut Vec<BvhNode>, temp: &mut Vec<Aabb<f32>>, at: usize,
-		max_depth: &mut u32, node: u32, depth: u32,
-	) {
+		&self, groups: &[MeshletGroup], out: &mut Vec<BvhNode>, temp: &mut Vec<Aabb<f32>>, max_depth: &mut u32,
+		node: u32, depth: u32,
+	) -> u32 {
+		*max_depth = depth.max(*max_depth);
 		let node = &self.nodes[node as usize];
-		(out[at], temp[at]) = if node.group != u32::MAX {
-			*max_depth = depth.max(*max_depth);
-			let group = &groups[node.group as usize];
-			let child_count = (group.meshlets.len() as u8) | (1 << 7);
-			(
-				BvhNode {
-					aabb: group.aabb,
-					lod_bounds: aabb_to_sphere(group.lod_bounds),
-					parent_error: group.parent_error,
-					children_offset: group.meshlets.start,
-					child_count,
-				},
-				group.lod_bounds,
-			)
-		} else {
-			let base = out.len();
-			let count = node.children.len();
-			out.extend(std::iter::repeat(BvhNode::default()).take(count));
-			temp.extend(std::iter::repeat(aabb_default()).take(count));
-			for (i, &c) in node.children.iter().enumerate() {
-				self.build_inner(groups, out, temp, base + i, max_depth, c, depth + 1)
+		let onode = out.len();
+		out.push(BvhNode::default());
+		temp.push(aabb_default());
+
+		let mut lod_aabb = aabb_default();
+		for (i, &child_id) in node.children.iter().enumerate() {
+			let child = &self.nodes[child_id as usize];
+			if child.group != u32::MAX {
+				let group = &groups[child.group as usize];
+				let out = &mut out[onode];
+				out.aabbs[i] = group.aabb;
+				out.lod_bounds[i] = aabb_to_sphere(group.lod_bounds);
+				out.parent_errors[i] = group.parent_error;
+				out.child_offsets[i] = group.meshlets.start;
+				out.child_counts[i] = group.meshlets.len() as u8;
+				lod_aabb = lod_aabb.union(group.lod_bounds);
+			} else {
+				let child_id = self.build_inner(groups, out, temp, max_depth, child_id, depth + 1);
+				let child = &out[child_id as usize];
+				let mut aabb = aabb_default();
+				let mut child_lod_aabb = aabb_default();
+				let mut parent_error = 0.0f32;
+				for i in 0..8 {
+					if child.child_counts[i] == 0 {
+						break;
+					}
+
+					aabb = aabb.union(child.aabbs[i]);
+					child_lod_aabb = child_lod_aabb.union(temp[child_id as usize]);
+					parent_error = parent_error.max(child.parent_errors[i]);
+				}
+				let out = &mut out[onode];
+				out.aabbs[i] = aabb;
+				out.lod_bounds[i] = aabb_to_sphere(child_lod_aabb);
+				out.parent_errors[i] = parent_error;
+				out.child_offsets[i] = child_id;
+				out.child_counts[i] = u8::MAX;
+				lod_aabb = lod_aabb.union(child_lod_aabb);
 			}
-			let mut aabb = aabb_default();
-			let mut lod_bounds = aabb_default();
-			let mut parent_error = 0.0f32;
-			for (n, &lb) in out[base..(base + count)].iter().zip(&temp[base..(base + count)]) {
-				aabb = aabb.union(n.aabb);
-				lod_bounds = lod_bounds.union(lb);
-				parent_error = parent_error.max(n.parent_error);
-			}
-			(
-				BvhNode {
-					aabb,
-					lod_bounds: aabb_to_sphere(lod_bounds),
-					parent_error,
-					children_offset: base as u32,
-					child_count: count as u8,
-				},
-				lod_bounds,
-			)
-		};
+		}
+		temp[onode] = lod_aabb;
+
+		onode as _
 	}
 
 	pub fn build(mut self, groups: &[MeshletGroup]) -> (Vec<BvhNode>, u32) {
 		let root = self.build_temp();
-		let mut out = vec![BvhNode::default()];
-		let mut temp = vec![aabb_default()];
+		let mut out = vec![];
+		let mut temp = vec![];
 		let mut max_depth = 0;
-		self.build_inner(groups, &mut out, &mut temp, 0, &mut max_depth, root, 1);
+		let root = self.build_inner(groups, &mut out, &mut temp, &mut max_depth, root, 1);
+		assert_eq!(root, 0, "root must be 0");
 		(out, max_depth)
 	}
 }

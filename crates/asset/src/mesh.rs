@@ -20,16 +20,12 @@ const_assert_eq!(std::mem::align_of::<Vertex>(), 4);
 #[derive(Copy, Clone, Encode, Decode, Default)]
 pub struct BvhNode {
 	#[bincode(with_serde)]
-	pub aabb: Aabb<f32>,
+	pub aabbs: [Aabb<f32>; 8],
 	#[bincode(with_serde)]
-	pub lod_bounds: Sphere<f32, f32>,
-	pub parent_error: f32,
-	/// The first child.
-	pub children_offset: u32,
-	/// The number of children of this node.
-	/// If the MSB is set, the children are meshlets.
-	/// Otherwise, they are BVH nodes.
-	pub child_count: u8,
+	pub lod_bounds: [Sphere<f32, f32>; 8],
+	pub parent_errors: [f32; 8],
+	pub child_offsets: [u32; 8],
+	pub child_counts: [u8; 8],
 }
 
 #[derive(Copy, Clone, Default, Encode, Decode)]
@@ -50,6 +46,8 @@ pub struct Meshlet {
 	pub lod_bounds: Sphere<f32, f32>,
 	/// The error of this meshlet.
 	pub error: f32,
+	/// The length of the longest edge in this meshlet.
+	pub max_edge_length: f32,
 }
 
 /// A mesh.
