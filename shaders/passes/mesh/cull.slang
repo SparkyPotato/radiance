@@ -195,21 +195,23 @@ public struct Cull {
 		let x = this.mv._m00_m10_m20;
 		let y = this.mv._m01_m11_m21;
 		let z = this.mv._m02_m12_m22;
-		let m = max(dot(x, x), max(dot(y, y), dot(z, z)));
-		return sqrt(m);
+		return sqrt(max3(dot(x, x), dot(y, y), dot(z, z)));
 	}
 
-	f32 screenspace_scale(f32x4 bounds) {
+	f32 project_error(f32x4 bounds, f32 error) {
 		let scale = this.max_scale();
 		let center = mul(this.mv, f32x4(bounds.xyz, 1.f)).xyz;
 		let radius = bounds.w * scale;
-		let d = max(center.z - radius, this.near);
-		return (max(this.screen.x, this.screen.y) * this.h * scale) / (2.f * d);
+		let closest = f32x3(center.xy, max(center.z - radius, this.near));
+		let d2 = dot(closest, closest);
+		let r = error * scale;
+		return (this.h * r * max(this.screen.x, this.screen.y)) / sqrt(max(d2 - r * r, 0.f));
 	}
 
 	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge_length) {
-		let scale = this.screenspace_scale(lod_bounds);
-		return bool2(error * scale < 1.f, edge_length * scale > 1024.f);
+		let err = this.project_error(lod_bounds, error);
+		let edge = abs(this.project_error(lod_bounds, edge_length));
+		return bool2(err < 1.f, edge >= 0.f);
 	}
 
 	public bool oc_cull(Aabb aabb) {

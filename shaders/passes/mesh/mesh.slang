@@ -27,53 +27,39 @@ struct PushConstants {
 [vk::push_constant]
 PushConstants Constants;
 
-NodePointer get(u32 gid, constexpr bool hw) {
-	if (EARLY) {
-		if (hw)
-			return Constants.early_hw.get(gid);
-		else
-			return Constants.early_sw.get(gid);
-	} else {
-		if (hw)
-			return Constants.late_hw.get(gid);
-		else
-			return Constants.late_sw.get(gid);
-	}
-}
-
-u32 meshlet_id(u32 gid, constexpr bool hw) {
-	if (EARLY) {
-		if (hw)
-			return gid;
-		else
-			return Constants.early_hw.len() + gid;
-	} else {
-		if (hw)
-			return Constants.early_hw.len() + Constants.early_sw.len() + gid;
-		else
-			return Constants.early_hw.len() + Constants.early_sw.len() + Constants.late_hw.len() + gid;
-	}
-}
-
 struct Init {
+	u32 mid;
 	u8* mesh;
 	Meshlet meshlet;
 	f32x4x4 mvp;
-	u32 mid;
 
 	__init(u32 gid, constexpr bool hw) {
-		let p = get(gid, hw);
+		NodePointer p;
+		if (EARLY) {
+			if (hw) {
+				p = Constants.early_hw.get(gid);
+				this.mid = gid;
+			} else {
+				p = Constants.early_sw.get(gid);
+				this.mid = Constants.early_hw.len() + gid;
+			}
+		} else {
+			if (hw) {
+				p = Constants.late_hw.get(gid);
+				this.mid = Constants.early_hw.len() + Constants.early_sw.len() + gid;
+			} else {
+				p = Constants.late_sw.get(gid);
+				this.mid = Constants.early_hw.len() + Constants.early_sw.len() + Constants.late_hw.len() + gid;
+			}
+		}
 		let instance = Constants.instances[p.instance];
 		this.mesh = instance.mesh;
 		this.meshlet = instance.meshlet(p.node_offset);
-		let camera = Constants.camera[0];
-		this.mvp = mul(camera.view_proj, instance.get_transform());
-		this.mid = meshlet_id(gid, hw);
+		this.mvp = mul(Constants.camera[0].view_proj, instance.get_transform());
 	}
 
 	VertexTransform transform(u32 gtid) {
-		let v = this.meshlet.vertex(this.mesh, gtid);
-		return transform_vertex(this.mvp, v);
+		return transform_vertex(this.mvp, this.meshlet.vertex(this.mesh, gtid));
 	}
 
 	u32x3 tri(u32 gtid) {
@@ -113,6 +99,8 @@ f32x3 uv_vert(Init init, u32x2 dim, u32 gtid) {
 	return f32x3(v.uv.xy * f32x2(dim), v.uv.z);
 }
 
+groupshared f32x3 Pos[128];
+
 [shader("compute")]
 [numthreads(128, 1, 1)]
 void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
@@ -121,15 +109,18 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let tri_count = init.meshlet.tri_count;
 	let dim = Constants.output.size();
 
+	if (gtid < vert_count) {
+		Pos[gtid] = uv_vert(init, dim, gtid);
+	}
+	workgroup_sync_barrier();
+
 	if (gtid >= tri_count)
 		return;
 
 	let t = init.tri(gtid);
-	/// The vertex transformation should be done once and then stored in groupshared, but my driver crashes due to
-	/// misalignment if i do that?
-	let v0 = uv_vert(init, dim, t.x);
-	let v1 = uv_vert(init, dim, t.y);
-	let v2 = uv_vert(init, dim, t.z);
+	let v0 = Pos[t.x];
+	let v1 = Pos[t.y];
+	let v2 = Pos[t.z];
 	VisBufferData data = { init.mid, gtid };
 	let write = data.encode();
 

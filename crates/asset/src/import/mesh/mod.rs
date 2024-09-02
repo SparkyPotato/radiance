@@ -151,7 +151,7 @@ impl Importer<'_> {
 				let (lod_bounds, error) = error.unwrap_or((aabb, 0.0));
 				let mut max_edge_length = 0.0f32;
 				for t in m_indices.chunks(3) {
-					for (v1, v2) in [(t[0], t[1]), (t[1], t[2]), (t[0], t[2])] {
+					for (v1, v2) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
 						max_edge_length = max_edge_length.max(
 							(vertices[m_vertices[v1 as usize] as usize].position
 								- vertices[m_vertices[v2 as usize] as usize].position)
