@@ -88,6 +88,9 @@ impl MeshletCull {
 
 		let camera = resources.camera(&mut pass);
 		let hzb = resources.hzb(&mut pass);
+		if self.early {
+			resources.output(&mut pass, resources.meshlet_queues[1]);
+		}
 		let read = resources.input(
 			&mut pass,
 			if self.early {
@@ -96,7 +99,6 @@ impl MeshletCull {
 				resources.meshlet_queues[1]
 			},
 		);
-		let late = resources.output(&mut pass, resources.meshlet_queues[1]);
 		let hw = resources.output(
 			&mut pass,
 			if self.early {
@@ -121,7 +123,7 @@ impl MeshletCull {
 			hzb_sampler: resources.hzb_sampler,
 			len: resources.len,
 			read,
-			late,
+			late: resources.meshlet_queues[1],
 			hw,
 			sw,
 			res: info.size,

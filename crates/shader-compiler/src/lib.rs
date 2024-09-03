@@ -275,16 +275,15 @@ impl RuntimeShared {
 
 		let mut dec = Dec(vk::ShaderStageFlags::empty());
 		let _ = Parser::new(ospirv.as_slice(), &mut dec).parse();
-		let mut spirv =
-			ash::util::read_spv(&mut std::io::Cursor::new(ospirv.as_slice())).expect("failed to read spirv");
-		let mut iter = spirv.iter_mut();
-		while let Some(w) = iter.next() {
-			if *w == 14 | (3 << 16) {
-				break;
-			}
-		}
-		iter.next().unwrap();
-		*iter.next().unwrap() = 3;
+		let spirv = ash::util::read_spv(&mut std::io::Cursor::new(ospirv.as_slice())).expect("failed to read spirv");
+		// let mut iter = spirv.iter_mut();
+		// while let Some(w) = iter.next() {
+		// 	if *w == 14 | (3 << 16) {
+		// 		break;
+		// 	}
+		// }
+		// iter.next().unwrap();
+		// *iter.next().unwrap() = 3;
 
 		let path = format!("{}+{}.spv", info.shader, info.spec.join(","));
 		let f = b.cache.join("spirv/");

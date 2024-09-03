@@ -65,39 +65,45 @@ __generic<T, U : Uniformity> public extension Tex<T, D3, U> {
 
 [vk::binding(1, 0)]
 __DynamicResource STextures[];
+[vk::binding(1, 0)]
+coherent __DynamicResource CTextures[];
 
 public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coherency = Incoherent,
 				   U : Uniformity = Uniform> {
 	u32 index;
 
 	__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0> get() {
-		return STextures[U.wrap_index(this.index)].as<__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0>>();
+		if (C.is_coherent())
+			return CTextures[U.wrap_index(this.index)].as<__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0>>();
+
+		else
+			return STextures[U.wrap_index(this.index)].as<__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0>>();
 	}
 
 	public T load(vector<u32, Shape.dimensions> pixel) {
-		if (C.is_coherent()) {
-			let img = this.get();
-			u32 sc = DEFAULT_SCOPE;
-			return spirv_asm {
-				OpCapability VulkanMemoryModel;
-				result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
-			};
-		} else {
-			return this.get().Load(pixel);
-		}
+		// if (C.is_coherent()) {
+		//	let img = this.get();
+		//	u32 sc = DEFAULT_SCOPE;
+		//	return spirv_asm {
+		//		OpCapability VulkanMemoryModel;
+		//		result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
+		//	};
+		// } else {
+		return this.get().Load(pixel);
+		// }
 	}
 
 	public void store(vector<u32, Shape.dimensions> pixel, T value) {
-		if (C.is_coherent()) {
-			let img = this.get();
-			u32 sc = DEFAULT_SCOPE;
-			spirv_asm {
-				OpCapability VulkanMemoryModel;
-				OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
-			};
-		} else {
-			this.get()[pixel] = value;
-		}
+		// if (C.is_coherent()) {
+		// 	let img = this.get();
+		//	u32 sc = DEFAULT_SCOPE;
+		//	spirv_asm {
+		//		OpCapability VulkanMemoryModel;
+		//		OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
+		//	};
+		// } else {
+		this.get()[pixel] = value;
+		// }
 	}
 
 	public T atomic_add(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,

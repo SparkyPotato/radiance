@@ -378,19 +378,19 @@ struct SyncPair<T> {
 	to: T,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct InProgressImageBarrier {
 	sync: SyncPair<AccessInfo>,
 	subresource: Subresource,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct InProgressDependencyInfo<'graph> {
 	barriers: ArenaMap<'graph, SyncPair<vk::PipelineStageFlags2>, SyncPair<vk::AccessFlags2>>,
 	image_barriers: ArenaMap<'graph, vk::Image, InProgressImageBarrier>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct InProgressCrossQueueSync<'graph> {
 	signal: Vec<SyncStage<vk::Semaphore>, &'graph Arena>,
 	signal_barriers: InProgressDependencyInfo<'graph>,
@@ -398,7 +398,7 @@ struct InProgressCrossQueueSync<'graph> {
 	wait_barriers: InProgressDependencyInfo<'graph>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct InProgressSync<'graph> {
 	queue: InProgressDependencyInfo<'graph>,
 	cross_queue: InProgressCrossQueueSync<'graph>,
@@ -484,13 +484,14 @@ impl<'graph> InProgressCrossQueueSync<'graph> {
 }
 
 impl<'graph> InProgressSync<'graph> {
-	fn finish(self) -> Sync<'graph> {
-		let arena = *self.queue.barriers.allocator();
+	fn finish(
+		self, set_events: Vec<EventInfo<'graph>, &'graph Arena>, wait_events: Vec<EventInfo<'graph>, &'graph Arena>,
+	) -> Sync<'graph> {
 		Sync {
 			queue: QueueSync {
 				barriers: self.queue.finish(false, false),
-				set_events: Vec::new_in(arena),
-				wait_events: Vec::new_in(arena),
+				set_events,
+				wait_events,
 			},
 			cross_queue: self.cross_queue.finish(),
 		}
@@ -506,13 +507,14 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 	}
 }
 
-struct SyncBuilder<'graph> {
+struct SyncBuilder<'temp, 'pass, 'graph> {
 	sync: Vec<InProgressSync<'graph>, &'graph Arena>,
 	events: ArenaMap<'graph, SyncPair<u32>, InProgressDependencyInfo<'graph>>,
+	passes: &'temp Vec<FrameEvent<'pass, 'graph>, &'graph Arena>,
 }
 
-impl<'graph> SyncBuilder<'graph> {
-	fn new<'temp, 'pass>(arena: &'graph Arena, passes: usize) -> Self {
+impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
+	fn new(arena: &'graph Arena, passes: &'temp Vec<FrameEvent<'pass, 'graph>, &'graph Arena>) -> Self {
 		Self {
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
@@ -523,9 +525,10 @@ impl<'graph> SyncBuilder<'graph> {
 					wait_barriers: InProgressDependencyInfo::default(arena),
 				},
 			})
-			.take(passes + 1)
+			.take(passes.len() + 1)
 			.collect_in(arena),
 			events: ArenaMap::with_hasher_in(Default::default(), arena),
+			passes,
 		}
 	}
 
@@ -601,18 +604,21 @@ impl<'graph> SyncBuilder<'graph> {
 	}
 
 	fn get_dep_info(&mut self, prev_pass: u32, next_pass: u32) -> &mut InProgressDependencyInfo<'graph> {
+		let pass_in_between = self.passes[(prev_pass as usize + 1)..(next_pass as usize)]
+			.iter()
+			.any(|x| matches!(x, FrameEvent::Pass(_)));
 		let prev = Self::after_pass(prev_pass);
 		let next = Self::before_pass(next_pass);
 
-		if prev == next {
-			// We can use a barrier here, since the resource will be used right after.
-			&mut self.sync[prev as usize].queue
-		} else {
+		if pass_in_between {
 			// Use an event, since there is some gap between the previous and next access.
 			let arena = *self.events.allocator();
 			self.events
 				.entry(SyncPair { from: prev, to: next })
 				.or_insert_with(|| InProgressDependencyInfo::default(arena))
+		} else {
+			// We can use a barrier here, since the resource will be used right after.
+			&mut self.sync[prev as usize].queue
 		}
 	}
 
@@ -627,7 +633,7 @@ impl<'graph> SyncBuilder<'graph> {
 		}
 
 		if prev_access.image_layout == next_access.image_layout || image == vk::Image::null() {
-			// No transition or QFOT required, use a global barrier instead.
+			// No transition required, use a global barrier instead.
 			let access = dep_info
 				.barriers
 				.entry(SyncPair {
@@ -660,20 +666,46 @@ impl<'graph> SyncBuilder<'graph> {
 		self, device: &Device, event_list: &mut ResourceList<crate::resource::Event>,
 	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
 		let arena = *self.sync.allocator();
-		let mut sync: Vec<Sync, _> = self.sync.into_iter().map(InProgressSync::finish).collect_in(arena);
-
+		let mut events_forward: ArenaMap<'_, u32, ArenaMap<'_, _, _>> =
+			ArenaMap::with_capacity_and_hasher_in(self.events.len(), Default::default(), arena);
+		let mut events_backward: ArenaMap<'_, u32, Vec<_>> =
+			ArenaMap::with_capacity_and_hasher_in(self.events.len(), Default::default(), arena);
 		for (pair, info) in self.events {
-			let event = event_list.get_or_create(device, ())?;
-			let info = info.finish(false, false);
-
-			sync[pair.from as usize].queue.set_events.push(EventInfo {
-				event,
-				info: info.clone(),
-			});
-			sync[pair.to as usize].queue.wait_events.push(EventInfo { event, info });
+			events_forward
+				.entry(pair.from)
+				.or_insert_with(|| ArenaMap::with_hasher_in(Default::default(), arena))
+				.insert(pair.to, info);
+			events_backward.entry(pair.to).or_default().push(pair.from);
 		}
 
-		Ok(sync)
+		// Go through events, getting rid of any that have the same sync applied on the main queue
+		let mut all_sync: Vec<Sync, _> = Vec::with_capacity_in(self.sync.len(), arena);
+		let mut events_in_flight =
+			ArenaMap::with_capacity_and_hasher_in(events_forward.len(), Default::default(), arena);
+		for (pass, sync) in self.sync.into_iter().enumerate() {
+			let pass = pass as u32;
+			let mut wait_events = Vec::new_in(arena);
+			events_in_flight.extend(events_forward.remove(&pass).map(|i| (pass, i)));
+			for from in events_backward.remove(&pass).into_iter().flatten() {
+				let events = events_in_flight.get_mut(&from).unwrap();
+				if let Some(info) = events.remove(&pass) {
+					let info = info.finish(false, false);
+					let event = event_list.get_or_create(device, ())?;
+					all_sync[from as usize].queue.set_events.push(EventInfo {
+						event,
+						info: info.clone(),
+					});
+					wait_events.push(EventInfo { event, info });
+				}
+			}
+			events_in_flight.retain(|_, ev| {
+				ev.retain(|_, info| *info != sync.queue);
+				!ev.is_empty()
+			});
+			all_sync.push(sync.finish(Vec::new_in(arena), wait_events));
+		}
+
+		Ok(all_sync)
 	}
 }
 
@@ -709,13 +741,17 @@ impl ToImage for (vk::Image, vk::ImageLayout) {
 	fn to_image(self) -> (vk::Image, vk::ImageLayout) { self }
 }
 
-struct Synchronizer<'temp, 'graph> {
+struct Synchronizer<'temp, 'pass, 'graph> {
 	resource_map: &'temp ResourceMap<'graph>,
-	passes: usize,
+	passes: &'temp Vec<FrameEvent<'pass, 'graph>, &'graph Arena>,
 }
 
-impl<'temp, 'graph> Synchronizer<'temp, 'graph> {
-	fn new(resource_map: &'temp ResourceMap<'graph>, passes: usize) -> Self { Self { resource_map, passes } }
+impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
+	fn new(
+		resource_map: &'temp ResourceMap<'graph>, passes: &'temp Vec<FrameEvent<'pass, 'graph>, &'graph Arena>,
+	) -> Self {
+		Self { resource_map, passes }
+	}
 
 	fn do_sync_for<D, H: ToImage, U: Usage>(&mut self, sync: &mut SyncBuilder, res: &GpuData<D, H, U>) {
 		let mut usages = res.usages.iter().peekable();
@@ -843,7 +879,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			let span = span!(Level::TRACE, "synchronize");
 			let _e = span.enter();
 
-			Synchronizer::new(&resource_map, self.passes.len()).sync(device, &mut self.graph.caches.events)
+			Synchronizer::new(&resource_map, &self.passes).sync(device, &mut self.graph.caches.events)
 		}?;
 
 		Ok(CompiledFrame {

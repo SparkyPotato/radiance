@@ -14,8 +14,6 @@ public enum Sem : u32 {
 	Acquire = 0x2,
 	Release = 0x4,
 	AcqRel = 0x8,
-	MakeAvailable = 0x2000,
-	MakeVisible = 0x4000,
 }
 
 public enum Loc : u32 {
@@ -41,6 +39,25 @@ public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 		return spirv_asm {
 			OpCapability Int64Atomics;
 			result:$$T = OpAtomicIAdd &dest $sc $sem $value;
+		};
+	} else {
+		spirv_asm { "<invalid atomic_add>" };
+	}
+	return {};
+}
+
+public T atomic_sub<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+												 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	u32 sem = loc | se;
+	if (__isFloat<T>()) {
+		let neg = -value;
+		return spirv_asm {
+			result:$$T = OpAtomicFAddEXT &dest $sc $sem $neg;
+		};
+	} else if (__isUnsignedInt<T>() || __isInt<T>()) {
+		return spirv_asm {
+			OpCapability Int64Atomics;
+			result:$$T = OpAtomicISub &dest $sc $sem $value;
 		};
 	} else {
 		spirv_asm { "<invalid atomic_add>" };
@@ -86,14 +103,13 @@ public void sync_barrier(constexpr Scope esc, constexpr Scope sc, constexpr Loc 
 }
 
 public void workgroup_sync_barrier() {
-	sync_barrier(Scope.Workgroup, Scope.Workgroup, Loc.Workgroup, Sem.MakeAvailable | Sem.MakeVisible | Sem.AcqRel);
+	sync_barrier(Scope.Workgroup, Scope.Workgroup, Loc.Workgroup, Sem.AcqRel);
 }
 
 public void all_sync_barrier() {
-	sync_barrier(Scope.Workgroup, DEFAULT_SCOPE, Loc.Buffer | Loc.Image | Loc.Workgroup,
-				 Sem.MakeAvailable | Sem.MakeVisible | Sem.AcqRel);
+	sync_barrier(Scope.Workgroup, DEFAULT_SCOPE, Loc.Buffer | Loc.Image | Loc.Workgroup, Sem.AcqRel);
 }
 
 public void barrier_acqrel(constexpr Loc loc) {
-	barrier(DEFAULT_SCOPE, loc, Sem.MakeAvailable | Sem.MakeVisible | Sem.AcqRel);
+	barrier(DEFAULT_SCOPE, loc, Sem.AcqRel);
 }

@@ -23,6 +23,7 @@ PushConstants Constants;
 
 void write(bool visible, u8 count, NodePointer p) {
 	let len = Constants.len;
+	// note: these must be branches because `push` assumes all active lanes are calling it.
 	if (visible) {
 		if (count == 255) {
 			Constants.next.push(len, p);
@@ -40,11 +41,14 @@ void write(bool visible, u8 count, NodePointer p) {
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void main(u32 id: SV_DispatchThreadID) {
+void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupIndex) {
 	let node = id >> 3;
 	let subnode = id & 7;
 
-	if (node >= Constants.read.len())
+	let should_exit = node >= Constants.read.len();
+	if (gtid == 0)
+		Constants.read.done();
+	if (should_exit)
 		return;
 
 	var p = Constants.read.get(node);

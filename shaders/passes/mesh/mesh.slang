@@ -12,6 +12,7 @@ struct VertexOutput {
 struct PrimitiveOutput {
 	[vk::location(0)]
 	u32 data : VisBuffer;
+	bool culled : SV_CullPrimitive;
 }
 
 struct PushConstants {
@@ -67,6 +68,12 @@ struct Init {
 	}
 }
 
+f32 edge_fn(f32x2 a, f32x2 b, f32x2 c) {
+	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+groupshared f32x3 Pos[128];
+
 [shader("mesh")]
 [outputtopology("triangle")]
 [numthreads(128, 1, 1)]
@@ -80,26 +87,25 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 	if (gtid < vert_count) {
 		let v = init.transform(gtid);
 		vertices[gtid].position = v.clip;
+		Pos[gtid] = v.uv;
 	}
+	workgroup_sync_barrier();
 
 	if (gtid < tri_count) {
 		let i = init.tri(gtid);
 		triangles[gtid] = i;
 		VisBufferData data = { init.mid, gtid };
-		visbuffer[gtid].data = data.encode();
+		// TODO: not strictly correct
+		let backface = edge_fn(Pos[i.x].xy, Pos[i.y].xy, Pos[i.z].xy) < 0.f;
+		visbuffer[gtid] = { data.encode(), backface };
 	}
 }
 
-f32 edge_fn(f32x2 a, f32x2 b, f32x2 c) {
-	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-f32x3 uv_vert(Init init, u32x2 dim, u32 gtid) {
+f32x3 uv_vert(Init init, u32 gtid) {
 	let v = init.transform(gtid);
-	return f32x3(v.uv.xy * f32x2(dim), v.uv.z);
+	let dim = f32x2(Constants.output.size());
+	return f32x3(v.uv.xy * dim, v.uv.z);
 }
-
-groupshared f32x3 Pos[128];
 
 [shader("compute")]
 [numthreads(128, 1, 1)]
@@ -110,9 +116,10 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let dim = Constants.output.size();
 
 	if (gtid < vert_count) {
-		Pos[gtid] = uv_vert(init, dim, gtid);
+		Pos[gtid] = uv_vert(init, gtid);
 	}
-	workgroup_sync_barrier();
+	GroupMemoryBarrierWithGroupSync();
+	return;
 
 	if (gtid >= tri_count)
 		return;
@@ -124,32 +131,64 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	VisBufferData data = { init.mid, gtid };
 	let write = data.encode();
 
-	let minv = max(min3(v0, v1, v2).xy, u32x2(0, 0));
-	let maxv = min(max3(v0, v1, v2).xy, dim - 1);
+	let mi = min3(v0, v1, v2).xy;
+	let ma = max3(v0, v1, v2).xy;
+	var minv = i32x2(floor(mi));
+	var maxv = i32x2(floor(ma));
+	minv = max(minv, i32x2(0, 0));
+	maxv = min(maxv, i32x2(dim - 1));
+	maxv = min(maxv, minv + 127);  // Try not to TDR
 	if (any(minv > maxv))
 		return;
 
 	let w_x = f32x3(v1.y - v2.y, v2.y - v0.y, v0.y - v1.y);
 	let w_y = f32x3(v2.x - v1.x, v0.x - v2.x, v1.x - v0.x);
 	let par_area = edge_fn(v0.xy, v1.xy, v2.xy);
-	let vz = f32x3(v0.z, v1.z, v2.z) / par_area;
-	let z_x = dot(vz, w_x);
-	let z_y = dot(vz, w_y);
+	if (par_area < 0.f)
+		return;
+	let v_z = f32x3(v0.z, v1.z, v2.z) / par_area;
+	let z_x = dot(v_z, w_x);
+	let z_y = dot(v_z, w_y);
 
 	let start = minv + 0.5f;
 	var w_row = f32x3(edge_fn(v1.xy, v2.xy, start), edge_fn(v2.xy, v0.xy, start), edge_fn(v0.xy, v1.xy, start));
-	var z_row = dot(vz, w_row);
-	for (int y = minv.y; y <= maxv.y; y++) {
-		var w = w_row;
-		var z = z_row;
-		for (int x = minv.x; x <= maxv.x; x++) {
-			if (min3(w.x, w.y, w.z) >= 0.f)
-				Constants.output.write(u32x2(x, y), min3(v0, v1, v2).z, write, true);
-
-			w += w_x;
-			z += z_x;
+	var z_row = dot(v_z, w_row);
+	if (WaveActiveAnyTrue(maxv.x - minv.x > 4)) {
+		let e012 = -w_x;
+		let oe = e012 < 0.f;
+		let ie012 = select(e012 != 0.f, 1.f / e012, 1e8);
+		let width = maxv.x - minv.x;
+		for (int y = minv.y; y <= maxv.y; y++) {
+			let cross_x = w_row * ie012;
+			let min_x2 = select(oe, cross_x, 0.f);
+			let max_x2 = select(oe, width, cross_x);
+			var x0 = u32(ceil(max3(min_x2.x, min_x2.y, min_x2.z)));
+			var x1 = u32(min3(max_x2.x, max_x2.y, max_x2.z));
+			var w = w_row + w_x * f32(x0);
+			var z = z_row + z_x * f32(x0);
+			x0 += minv.x;
+			x1 += minv.x;
+			for (int x = x0; x <= x1; x++) {
+				if (min3(w.x, w.y, w.z) >= 0.f)
+					Constants.output.write(u32x2(x, y), z, write, true);
+				w += w_x;
+				z += z_x;
+			}
+			w_row += w_y;
+			z_row += z_y;
 		}
-		w_row += w_y;
-		z_row += z_y;
+	} else {
+		for (int y = minv.y; y <= maxv.y; y++) {
+			var w = w_row;
+			var z = z_row;
+			for (int x = minv.x; x <= maxv.x; x++) {
+				if (min3(w.x, w.y, w.z) >= 0.f)
+					Constants.output.write(u32x2(x, y), z, write, true);
+				w += w_x;
+				z += z_x;
+			}
+			w_row += w_y;
+			z_row += z_y;
+		}
 	}
 }

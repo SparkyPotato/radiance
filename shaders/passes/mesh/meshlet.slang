@@ -22,6 +22,7 @@ PushConstants Constants;
 
 void write(bool visible, bool hw, NodePointer p) {
 	let len = Constants.len;
+	// note: these must be branches because `push` assumes all active lanes are calling it.
 	if (visible) {
 		if (hw) {
 			Constants.hw.push(len, p);
@@ -29,7 +30,7 @@ void write(bool visible, bool hw, NodePointer p) {
 			Constants.sw.push(len, p);
 		}
 	} else if (EARLY) {
-		Constants.late.push(len, p);
+		Constants.late.push_meshlet(len, p);
 	}
 }
 

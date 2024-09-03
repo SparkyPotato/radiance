@@ -47,7 +47,7 @@ public struct VisBufferTex {
 		this.tex.atomic_max(pos, d.encode());
 		this.dbg.write(pos, depth, is_sw);
 	}
-	
+
 	public VisBuffer decode(f32x2 uv) {
 		return this.decode(this.tex.pixel_of_uv(uv));
 	}

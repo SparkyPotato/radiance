@@ -1,4 +1,7 @@
 /target
 /Cargo.lock
 
+# Nsight
+/imgui.ini
+
 .idea

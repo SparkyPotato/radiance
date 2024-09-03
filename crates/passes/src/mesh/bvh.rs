@@ -92,17 +92,23 @@ impl BvhCull {
 			resources.bvh_queues[2]
 		};
 		let mut next = resources.bvh_queues[1];
-		for i in 0..info.scene.max_depth() {
-			frame.start_region("bvh cull");
-			let mut pass = frame.pass("cull");
+		for _ in 0..info.scene.max_depth() {
+			let mut pass = frame.pass("bvh cull");
 
 			let camera = resources.camera(&mut pass);
 			let hzb = resources.hzb(&mut pass);
-			let late = resources.output(&mut pass, resources.bvh_queues[2]);
+			if self.early {
+				resources.output(&mut pass, resources.bvh_queues[2]);
+			}
 			resources.input(&mut pass, read);
 			resources.output(&mut pass, next);
-			let meshlet = resources.output(&mut pass, resources.meshlet_queues[0]);
-			let late_meshlet = resources.output(&mut pass, resources.meshlet_queues[1]);
+			let q = if self.early {
+				resources.output(&mut pass, resources.meshlet_queues[1]);
+				resources.meshlet_queues[0]
+			} else {
+				resources.meshlet_queues[1]
+			};
+			let meshlet = resources.output(&mut pass, q);
 
 			let io = PassIO {
 				instances: info.scene.instances(),
@@ -112,31 +118,12 @@ impl BvhCull {
 				read,
 				next,
 				meshlet,
-				late,
-				late_meshlet,
+				late: resources.bvh_queues[2],
+				late_meshlet: resources.meshlet_queues[1],
 				res: info.size,
 				len: resources.len,
 			};
 			pass.build(move |pass| self.execute(pass, io));
-
-			if i != info.scene.max_depth() - 1 {
-				let mut pass = frame.pass("clear next");
-				pass.reference(
-					read,
-					BufferUsage {
-						usages: &[BufferUsageType::TransferWrite],
-					},
-				);
-				pass.build(move |mut pass| unsafe {
-					pass.device.device().cmd_update_buffer(
-						pass.buf,
-						pass.get(read).buffer,
-						0,
-						bytes_of(&[0u32, 0, 1, 1]),
-					);
-				})
-			}
-			frame.end_region();
 
 			(read, next) = (next, read);
 		}

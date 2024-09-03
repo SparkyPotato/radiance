@@ -221,12 +221,21 @@ pub struct QueueWait<'a> {
 	pub binary_semaphores: &'a [SyncStage<vk::Semaphore>],
 }
 
-#[derive(Clone, Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, Eq)]
 pub struct QueueWaitOwned<A: Allocator> {
 	pub graphics: Option<SyncStage<SyncPoint<Graphics>>>,
 	pub compute: Option<SyncStage<SyncPoint<Compute>>>,
 	pub transfer: Option<SyncStage<SyncPoint<Transfer>>>,
 	pub binary_semaphores: Vec<SyncStage<vk::Semaphore>, A>,
+}
+
+impl<A: Allocator> PartialEq for QueueWaitOwned<A> {
+	fn eq(&self, other: &Self) -> bool {
+		self.graphics.eq(&other.graphics)
+			&& self.compute.eq(&other.compute)
+			&& self.transfer.eq(&other.transfer)
+			&& self.binary_semaphores.eq(&other.binary_semaphores)
+	}
 }
 
 impl<A: Allocator> Debug for QueueWaitOwned<A> {
