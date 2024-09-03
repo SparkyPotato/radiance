@@ -93,7 +93,7 @@ f32x4 overdraw(ScreenOutput input) : SV_Target0 {
 f32x4 hwsw(ScreenOutput input) : SV_Target0 {
 	let data = Constants.read.hwsw(input.uv);
 
-	f32x3 cols[] = { f32x3(0.f, 0.f, 0.f), f32x3(0.f, 1.f, 0.f), f32x3(1.f, 0.f, 0.f) };
+	f32x3 cols[] = { f32x3(0.f, 0.f, 0.f), f32x3(0.f, 1.f, 0.f), f32x3(0.f, 1.f, 1.f), f32x3(1.f, 0.f, 0.f) };
 	if (data >= cols.getCount())
 		return f32x4(1.f, 0.f, 1.f, 1.f);
 	else

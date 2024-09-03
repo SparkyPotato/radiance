@@ -1,7 +1,7 @@
 import graph;
 
 public interface VisbufferDebug {
-	public void write(u32x2 pos, f32 depth, bool is_sw);
+	public void write(u32x2 pos, f32 depth, u32 mode);
 
 	public u32 overdraw(f32x2 uv);
 
@@ -9,7 +9,7 @@ public interface VisbufferDebug {
 }
 
 public struct Null : VisbufferDebug {
-	public void write(u32x2 pos, f32 depth, bool is_sw) {}
+	public void write(u32x2 pos, f32 depth, u32 mode) {}
 
 	public u32 overdraw(f32x2 uv) {
 		return 0;

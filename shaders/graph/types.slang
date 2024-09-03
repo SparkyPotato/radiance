@@ -50,6 +50,7 @@ public typedef float32_t2 f32x2;
 public typedef float32_t3 f32x3;
 public typedef float32_t4 f32x4;
 
+public typedef float32_t3x3 f32x3x3;
 public typedef float32_t4x4 f32x4x4;
 
 public typedef float64_t f64;
@@ -58,13 +59,19 @@ public typedef float64_t3 f64x3;
 public typedef float64_t4 f64x4;
 
 __generic<T> public extension vector<T, 2> {
-	public __init(T arr[2]) { return This(arr[0], arr[1]); }
+	public __init(T arr[2]) {
+		return This(arr[0], arr[1]);
+	}
 }
 __generic<T> public extension vector<T, 3> {
-	public __init(T arr[3]) { return This(arr[0], arr[1], arr[2]); }
+	public __init(T arr[3]) {
+		return This(arr[0], arr[1], arr[2]);
+	}
 }
 __generic<T> public extension vector<T, 4> {
-	public __init(T arr[4]) { return This(arr[0], arr[1], arr[2], arr[3]); }
+	public __init(T arr[4]) {
+		return This(arr[0], arr[1], arr[2], arr[3]);
+	}
 }
 
 public interface Uniformity {
@@ -72,11 +79,15 @@ public interface Uniformity {
 }
 public struct Uniform : Uniformity {
 	[ForceInline]
-	public static u32 wrap_index(u32 index) { return index; }
+	public static u32 wrap_index(u32 index) {
+		return index;
+	}
 }
 public struct NonUniform : Uniformity {
 	[ForceInline]
-	public static u32 wrap_index(u32 index) { return NonUniformResourceIndex(index); }
+	public static u32 wrap_index(u32 index) {
+		return NonUniformResourceIndex(index);
+	}
 }
 
 public interface Coherency {
@@ -84,9 +95,13 @@ public interface Coherency {
 }
 public struct Coherent : Coherency {
 	[ForceInline]
-	public static bool is_coherent() { return true; }
+	public static bool is_coherent() {
+		return true;
+	}
 }
 public struct Incoherent : Coherency {
 	[ForceInline]
-	public static bool is_coherent() { return false; }
+	public static bool is_coherent() {
+		return false;
+	}
 }

@@ -8,12 +8,12 @@ public struct DebugImpl : VisbufferDebug {
 	STex<u32, D2> overdraw_tex;
 	STex<u64, D2> hwsw_tex;
 
-	public void write(u32x2 pos, f32 depth, bool is_sw) {
-		VisBuffer mask = { depth, (is_sw ? 1 : 2) };
+	public void write(u32x2 pos, f32 depth, u32 mode) {
+		VisBuffer mask = { depth, mode };
 		this.hwsw_tex.atomic_max(pos, mask.encode());
 		this.overdraw_tex.atomic_add(pos, 1);
 	}
-	
+
 	public u32 overdraw(f32x2 uv) {
 		return this.overdraw_tex.load(this.overdraw_tex.pixel_of_uv(uv));
 	}

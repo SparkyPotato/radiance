@@ -243,7 +243,7 @@ impl Setup {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		let size = ((50 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
+		let size = ((12 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
 		let bvh_queues = [(); 3].map(|_| {
 			pass.resource(
 				BufferDesc { size, upload: false },

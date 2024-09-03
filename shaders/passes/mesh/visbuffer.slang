@@ -42,10 +42,10 @@ public struct VisBufferTex {
 	STex<u64, D2> tex;
 	Debug dbg;
 
-	public void write(u32x2 pos, f32 depth, u32 data, bool is_sw) {
+	public void write(u32x2 pos, f32 depth, u32 data, u32 mode) {
 		VisBuffer d = { depth, data };
 		this.tex.atomic_max(pos, d.encode());
-		this.dbg.write(pos, depth, is_sw);
+		this.dbg.write(pos, depth, mode);
 	}
 
 	public VisBuffer decode(f32x2 uv) {
