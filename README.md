@@ -6,11 +6,11 @@ Requires hardware raytracing, mesh shaders, and ReBAR to work at all.
 
 # Testing
 
-Build and run with `cargo run --release`, and open the folder `test-project`.
+Build and run with `cargo run --release -- ./test-project`.
 
 Double click folders/assets to navigate around, and drop a GLTF file into the window to import.
 
-`dragon_50_50_50/scenes/Scene` is the Stanford Dragon repeated 50 times across each dimension, a total of about 100 billion triangles.
+`dragon_100_100_100/scenes/Scene` (double click to open) is the Stanford Dragon repeated 100 times across each dimension, a total of 1 million dragons and about 800 billion triangles.
 
 # In action
 ![1 million dragons](screenshots/dragons.png "1 million dragons")
