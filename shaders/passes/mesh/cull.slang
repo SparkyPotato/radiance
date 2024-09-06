@@ -147,6 +147,7 @@ public struct ScreenAabb {
 	public f32x3 max;
 }
 
+// https://zeux.io/2023/01/12/approximate-projected-bounds/
 public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
 	let extent = aabb.half_extent * 2.f;
 	let sx = mul(mvp, f32x4(extent.x, 0.f, 0.f, 0.f));
@@ -182,8 +183,6 @@ public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
 	return ret;
 }
 
-// https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
-// https://fgiesen.wordpress.com/2010/10/17/view-frustum-culling/
 public struct Cull {
 	f32x4x4 mv;
 	f32x4x4 mvp;
@@ -217,6 +216,8 @@ public struct Cull {
 		return ret;
 	}
 
+	// https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
+	// https://fgiesen.wordpress.com/2010/10/17/view-frustum-culling/
 	public bool frustum_cull(Aabb aabb) {
 		[unroll]
 		for (int i = 0; i < 5; i++) {
@@ -248,7 +249,7 @@ public struct Cull {
 	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge_length) {
 		let err = this.project_error(lod_bounds, error);
 		let edge = abs(this.project_error(lod_bounds, edge_length));
-		return bool2(err < 1.f, edge >= 0.f);
+		return bool2(err < 1.f, edge >= 16.f);
 	}
 
 	public bool oc_cull(Aabb aabb) {

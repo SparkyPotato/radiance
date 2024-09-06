@@ -14,7 +14,7 @@ Double click folders/assets to navigate around, and drop a GLTF file into the wi
 
 # In action
 ![1 million dragons](screenshots/dragons.png "1 million dragons")
-1 million Stanford Dragons rendered at 100 FPS.
+1 million Stanford Dragons rendered at 250 FPS.
 
 ![a lot of overdraw](screenshots/overdraw.png "1 million dragons with very high overdraw")
-The same scene as above, with heavy overdraw causing a drop to 30 FPS.
+The same scene as above, with heavy overdraw causing a drop to 75 FPS.

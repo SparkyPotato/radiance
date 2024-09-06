@@ -271,11 +271,11 @@ impl RuntimeShared {
 		}
 
 		let (module, entry) = info.shader.rsplit_once('.').unwrap();
-		let ospirv = b.load_module(module, entry, info.spec)?;
+		let spirv = b.load_module(module, entry, info.spec)?;
+		let byte_slice = unsafe { std::slice::from_raw_parts(spirv.as_ptr() as _, spirv.len() * 4) };
 
 		let mut dec = Dec(vk::ShaderStageFlags::empty());
-		let _ = Parser::new(ospirv.as_slice(), &mut dec).parse();
-		let spirv = ash::util::read_spv(&mut std::io::Cursor::new(ospirv.as_slice())).expect("failed to read spirv");
+		let _ = Parser::new(byte_slice, &mut dec).parse();
 		// let mut iter = spirv.iter_mut();
 		// while let Some(w) = iter.next() {
 		// 	if *w == 14 | (3 << 16) {
@@ -285,10 +285,6 @@ impl RuntimeShared {
 		// iter.next().unwrap();
 		// *iter.next().unwrap() = 3;
 
-		let path = format!("{}+{}.spv", info.shader, info.spec.join(","));
-		let f = b.cache.join("spirv/");
-		let _ = std::fs::create_dir_all(&f);
-		let _ = std::fs::write(f.join(path), ospirv.as_slice());
 		Ok((spirv, dec.0))
 	}
 
@@ -311,7 +307,6 @@ impl RuntimeShared {
 			},
 		};
 		let inner = Arc::new(AtomicU64::new(p.as_raw()));
-		let i = t.pipelines.len();
 		t.pipelines.push((PipelineDesc::Compute(layout, shader), inner.clone()));
 		drop(t);
 
@@ -336,7 +331,6 @@ impl RuntimeShared {
 			},
 		};
 		let inner = Arc::new(AtomicU64::new(p.as_raw()));
-		let i = t.pipelines.len();
 		t.pipelines.push((PipelineDesc::Graphics(desc), inner.clone()));
 		drop(t);
 

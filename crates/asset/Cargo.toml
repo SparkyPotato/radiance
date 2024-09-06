@@ -24,5 +24,6 @@ metis = { workspace = true, optional = true }
 meshopt = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 rayon = { workspace = true }
+thread_local = { workspace = true }
 zstd = { workspace = true }
 

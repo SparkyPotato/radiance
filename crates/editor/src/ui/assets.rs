@@ -25,6 +25,13 @@ struct ImportNotif {
 }
 
 impl Notification for ImportNotif {
+	fn ty(&self) -> NotifType {
+		match self.latest {
+			Progress::Error(_) => NotifType::Error,
+			_ => NotifType::Info,
+		}
+	}
+
 	fn draw(&mut self, ui: &mut Ui, _: &Fonts) {
 		for progress in self.recv.try_iter() {
 			self.latest = progress;
@@ -148,9 +155,11 @@ impl AssetManager {
 				ThreadRecv::OpenedSystem { sys, existed } => {
 					self.system = Some(sys);
 					notifs.push(
-						NotifType::Info,
 						"project",
-						PushNotif::new(format!("{} project", if existed { "loaded" } else { "created" })),
+						PushNotif::new(
+							NotifType::Info,
+							format!("{} project", if existed { "loaded" } else { "created" }),
+						),
 					);
 				},
 			}
@@ -161,6 +170,7 @@ impl AssetManager {
 			.min_height(100.0)
 			.show(ctx, |ui| {
 				if let Some(ref mut sys) = self.system {
+					let mut delete_target = None;
 					if ctx.input(|x| !x.raw.hovered_files.is_empty()) {
 						ui.centered_and_justified(|ui| {
 							ui.label(RichText::new("drop files to import").size(20.0));
@@ -176,7 +186,6 @@ impl AssetManager {
 								progress,
 							}));
 							notifs.push(
-								NotifType::Info,
 								"import",
 								ImportNotif {
 									recv,
@@ -273,13 +282,17 @@ impl AssetManager {
 											}
 
 											grid.cell(|ui| {
-												if ui
-													.text_button(fonts.icons.text(icons::FILE).size(32.0))
-													.double_clicked()
-												{
+												let button = ui.text_button(fonts.icons.text(icons::FILE).size(32.0));
+												if button.double_clicked() {
 													if sys.metadata(uuid).unwrap().ty == AssetType::Scene {
 														renderer.set_scene(uuid);
 													}
+												} else {
+													button.context_menu(|ui| {
+														if ui.button("delete").clicked() {
+															delete_target = Some(self.cursor.join(name));
+														}
+													});
 												}
 												ui.add(Label::new(name).truncate(true));
 											});
@@ -288,6 +301,7 @@ impl AssetManager {
 									});
 								});
 						});
+						if let Some(del) = delete_target {}
 					}
 				} else {
 					ui.centered_and_justified(|ui| {

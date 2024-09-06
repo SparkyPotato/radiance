@@ -12,6 +12,7 @@ pub struct NotifStack {
 	dismissed: Option<usize>,
 }
 
+#[derive(Copy, Clone)]
 pub enum NotifType {
 	Info,
 	Warning,
@@ -19,6 +20,8 @@ pub enum NotifType {
 }
 
 pub trait Notification: 'static {
+	fn ty(&self) -> NotifType;
+
 	fn draw(&mut self, ui: &mut Ui, fonts: &Fonts);
 
 	fn expired(&self) -> bool;
@@ -27,20 +30,23 @@ pub trait Notification: 'static {
 }
 
 pub struct PushNotif {
+	ty: NotifType,
 	contents: String,
 	expiry: Instant,
 }
 
 impl PushNotif {
-	pub fn new(contents: impl ToString) -> Self {
+	pub fn new(ty: NotifType, contents: impl ToString) -> Self {
 		Self {
+			ty,
 			contents: contents.to_string(),
 			expiry: Instant::now() + Duration::from_secs(5),
 		}
 	}
 
-	pub fn with_life(contents: impl ToString, life: Duration) -> Self {
+	pub fn with_life(ty: NotifType, contents: impl ToString, life: Duration) -> Self {
 		Self {
+			ty,
 			contents: contents.to_string(),
 			expiry: Instant::now() + life,
 		}
@@ -48,6 +54,8 @@ impl PushNotif {
 }
 
 impl Notification for PushNotif {
+	fn ty(&self) -> NotifType { self.ty }
+
 	fn draw(&mut self, ui: &mut Ui, _: &Fonts) { ui.label(self.contents.clone()); }
 
 	fn expired(&self) -> bool { Instant::now() > self.expiry }
@@ -56,7 +64,6 @@ impl Notification for PushNotif {
 }
 
 struct Notif {
-	pub ty: NotifType,
 	pub header: String,
 	pub contents: Box<dyn Notification>,
 }
@@ -69,9 +76,8 @@ impl NotifStack {
 		}
 	}
 
-	pub fn push<T: Notification>(&mut self, ty: NotifType, header: impl ToString, notif: T) {
+	pub fn push<T: Notification>(&mut self, header: impl ToString, notif: T) {
 		self.notifs.push(Notif {
-			ty,
 			header: header.to_string(),
 			contents: Box::new(notif),
 		});
@@ -105,7 +111,7 @@ impl NotifStack {
 							.default_height(50.0)
 							.show(ui, |ui| {
 								ui.horizontal(|ui| {
-									match notif.ty {
+									match notif.contents.ty() {
 										NotifType::Info => ui.heading(fonts.icons.text(icons::INFO)),
 										NotifType::Warning => ui.heading(fonts.icons.text(icons::WARNING)),
 										NotifType::Error => ui.heading(fonts.icons.text(icons::ERROR)),

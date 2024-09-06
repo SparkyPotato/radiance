@@ -90,8 +90,6 @@ impl Window {
 		}
 	}
 
-	pub fn format(&self) -> vk::Format { self.format }
-
 	pub fn resize(&mut self, device: &Device) -> Result<()> { self.make(device) }
 
 	pub fn destroy(&mut self, device: &Device) {

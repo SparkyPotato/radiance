@@ -1,11 +1,12 @@
-use std::{collections::BTreeMap, ops::Range};
+use std::{cell::RefCell, collections::BTreeMap, ops::Range};
 
 use bytemuck::from_bytes;
 use gltf::accessor::{DataType, Dimensions};
 use meshopt::VertexDataAdapter;
 use metis::Graph;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
+use thread_local::ThreadLocal;
 use tracing::{debug_span, field, info_span, trace_span};
 use uuid::Uuid;
 use vek::{Aabb, Vec2, Vec3};
@@ -16,7 +17,6 @@ use crate::{
 };
 
 mod bvh;
-mod simplify;
 
 impl Meshlet {
 	fn vertices(&self) -> Range<usize> {
@@ -38,6 +38,7 @@ struct MeshletGroup {
 
 struct Meshlets {
 	vertex_remap: Vec<u32>,
+
 	tris: Vec<u8>,
 	groups: Vec<MeshletGroup>,
 	meshlets: Vec<Meshlet>,
@@ -95,12 +96,20 @@ impl Importer<'_> {
 			// self.dump_groups_to_obj(name, lod, &mesh.vertices, &meshlets, first);
 
 			s.record("groups", meshlets.groups.len() - first);
+			let tls = ThreadLocal::new();
 			let par: Vec<_> = meshlets.groups[first..]
 				.into_par_iter()
 				.enumerate()
 				.filter(|(_, x)| x.meshlets.len() > 1)
 				.filter_map(|(i, group)| {
-					let (indices, parent_error) = self.simplify_group(&mesh.vertices, &meshlets, &group)?;
+					let tls = tls.get_or(|| RefCell::new(vec![false; mesh.vertices.len()]));
+					let (indices, parent_error) = self.simplify_group(
+						&mesh.vertices,
+						&mesh.boundary,
+						&meshlets,
+						&group,
+						tls.borrow_mut().as_mut_slice(),
+					)?;
 					let n_meshlets =
 						self.generate_meshlets(&mesh.vertices, &indices, Some((group.lod_bounds, parent_error)));
 					Some((i, parent_error, n_meshlets))
@@ -254,7 +263,8 @@ impl Importer<'_> {
 	}
 
 	fn simplify_group(
-		&self, vertices: &[Vertex], meshlets: &Meshlets, group: &MeshletGroup,
+		&self, vertices: &[Vertex], mesh_boundary: &[bool], meshlets: &Meshlets, group: &MeshletGroup,
+		group_boundary: &mut [bool],
 	) -> Option<(Vec<u32>, f32)> {
 		let s = trace_span!("simplifying group");
 		let _e = s.enter();
@@ -268,17 +278,20 @@ impl Importer<'_> {
 			})
 			.collect();
 
-		let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
+		self.compute_boundary(&indices, group_boundary);
+		for (g, &m) in group_boundary.iter_mut().zip(mesh_boundary) {
+			*g = *g && !m;
+		}
 
+		let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
 		let mut error = 0.0;
-		let simplified = meshopt::simplify(
+		let simplified = meshopt::simplify_with_locks(
 			&indices,
 			&adapter,
+			group_boundary,
 			indices.len() / 2,
-			group.aabb.size().reduce_partial_max(),
-			meshopt::SimplifyOptions::LockBorder
-				| meshopt::SimplifyOptions::Sparse
-				| meshopt::SimplifyOptions::ErrorAbsolute,
+			f32::MAX,
+			meshopt::SimplifyOptions::Sparse | meshopt::SimplifyOptions::ErrorAbsolute,
 			Some(&mut error),
 		);
 		error *= 0.5;
@@ -382,6 +395,7 @@ impl Importer<'_> {
 					.flat_map(|x| x.get(&gltf::Semantic::Positions).map(|x| x.count()))
 					.sum(),
 			),
+			boundary: Vec::new(),
 			indices: Vec::with_capacity(mesh.primitives().flat_map(|x| x.indices().map(|x| x.count())).sum()),
 		};
 		for prim in mesh.primitives() {
@@ -448,7 +462,26 @@ impl Importer<'_> {
 			);
 		}
 
+		out.boundary = vec![false; out.vertices.len()];
+		self.compute_boundary(&out.indices, &mut out.boundary);
+
 		Ok(out)
+	}
+
+	fn compute_boundary(&self, indices: &[u32], out: &mut [bool]) {
+		let mut edge_set = FxHashSet::default();
+		for tri in indices.chunks(3) {
+			for (v0, v1) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[0], tri[2])] {
+				let edge = (v0.min(v1), v0.max(v1));
+				if edge_set.insert(edge) {
+					out[v0 as usize] = false;
+					out[v1 as usize] = false;
+				} else {
+					out[v0 as usize] = true;
+					out[v1 as usize] = true;
+				}
+			}
+		}
 	}
 
 	#[cfg(feature = "disabled")]
@@ -477,5 +510,6 @@ impl Importer<'_> {
 
 struct FullMesh {
 	vertices: Vec<Vertex>,
+	boundary: Vec<bool>,
 	indices: Vec<u32>,
 }

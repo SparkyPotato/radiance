@@ -7,7 +7,7 @@ use radiance_graph::{
 		Pipeline,
 		ShaderInfo,
 	},
-	graph::{BufferUsage, BufferUsageType, Frame, PassContext, Res},
+	graph::{Frame, PassContext, Res},
 	resource::{BufferHandle, GpuPtr, ImageView},
 	Result,
 };
