@@ -4,4 +4,8 @@
 # Nsight
 /imgui.ini
 
+# Large test projects
+test-project/lucy*
+test-project/dragon2*
+
 .idea

@@ -523,7 +523,7 @@ impl ShaderRuntime {
 			}
 		})
 		.unwrap();
-		let _ = watcher.watcher().watch(&source, RecursiveMode::Recursive);
+		// let _ = watcher.watcher().watch(&source, RecursiveMode::Recursive);
 
 		Self { watcher, shared }
 	}

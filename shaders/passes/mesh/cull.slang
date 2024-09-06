@@ -249,7 +249,7 @@ public struct Cull {
 	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge_length) {
 		let err = this.project_error(lod_bounds, error);
 		let edge = abs(this.project_error(lod_bounds, edge_length));
-		return bool2(err < 1.f, edge >= 16.f);
+		return bool2(err < 1.f, edge >= 0.f);
 	}
 
 	public bool oc_cull(Aabb aabb) {
