@@ -84,6 +84,12 @@ impl TextButton {
 			label: Label::new(text).sense(Sense::click()),
 		}
 	}
+
+	pub fn new_draggable(text: impl Into<WidgetText>) -> Self {
+		Self {
+			label: Label::new(text).sense(Sense::click_and_drag()),
+		}
+	}
 }
 
 impl Widget for TextButton {

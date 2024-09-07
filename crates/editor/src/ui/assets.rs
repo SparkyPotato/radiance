@@ -1,17 +1,18 @@
-use std::{io, path::PathBuf, sync::Arc, time::Instant};
+use std::{path::PathBuf, sync::Arc, time::Instant};
 
 use crossbeam_channel::{Receiver, Sender};
-use egui::{Align, Context, Label, Layout, ProgressBar, RichText, ScrollArea, Ui};
+use egui::{Align, Align2, Context, FontId, Label, Layout, PointerButton, ProgressBar, RichText, ScrollArea, Ui};
 use egui_extras::Size;
 use egui_grid::GridBuilder;
-use radiance_asset::{gltf::GltfImporter, mesh::Mesh, scene::Scene, Asset, AssetSystem, DirView, Importer};
+use radiance_asset::{gltf::GltfImporter, mesh::Mesh, scene::Scene, Asset, AssetSystem, DirView, Importer, Uuid};
 use radiance_graph::graph::Frame;
+use rustc_hash::FxHashSet;
 use tracing::{event, Level};
 
 use crate::ui::{
 	notif::{NotifStack, NotifType, Notification, PushNotif},
 	render::Renderer,
-	widgets::{icons, IntoIcon, UiExt},
+	widgets::{icons, IntoIcon, TextButton, UiExt},
 	Fonts,
 };
 
@@ -133,11 +134,15 @@ fn import_thread(recv: Receiver<ThreadMsg>, send: Sender<ThreadRecv>) {
 pub struct AssetManager {
 	pub system: Option<Arc<AssetSystem>>,
 	cursor: PathBuf,
+	creating_dir: Option<(String, bool)>,
+	selection: FxHashSet<String>,
 	send: Sender<ThreadMsg>,
 	recv: Receiver<ThreadRecv>,
 }
 
 impl AssetManager {
+	const CELL_SIZE: f32 = 75.0;
+
 	pub fn new() -> Self {
 		let (send, recv) = crossbeam_channel::unbounded();
 		let (isend, irecv) = crossbeam_channel::unbounded();
@@ -148,6 +153,8 @@ impl AssetManager {
 		let mut this = Self {
 			system: None,
 			cursor: PathBuf::new(),
+			creating_dir: None,
+			selection: FxHashSet::default(),
 			send,
 			recv: irecv,
 		};
@@ -185,9 +192,8 @@ impl AssetManager {
 			.resizable(true)
 			.min_height(100.0)
 			.show(ctx, |ui| {
-				if let Some(ref mut sys) = self.system {
+				if let Some(ref sys) = self.system {
 					sys.tick(frame);
-					let mut delete_target = None;
 					if ctx.input(|x| !x.raw.hovered_files.is_empty()) {
 						ui.centered_and_justified(|ui| {
 							ui.label(RichText::new("drop files to import").size(20.0));
@@ -218,11 +224,25 @@ impl AssetManager {
 								ui.vertical(|ui| {
 									ui.add_space(2.5);
 									if ui
+										.text_button(fonts.icons.text(icons::PLUS).heading())
+										.on_hover_text("new dir")
+										.clicked()
+									{
+										self.creating_dir = Some(("new folder".to_string(), true));
+									}
+								});
+
+								ui.separator();
+
+								ui.vertical(|ui| {
+									ui.add_space(2.5);
+									if ui
 										.text_button(fonts.icons.text(icons::ARROW_UP).heading())
-										.on_hover_text("Go back")
+										.on_hover_text("go back")
 										.clicked()
 									{
 										self.cursor.pop();
+										self.selection.clear();
 									}
 								});
 
@@ -234,6 +254,7 @@ impl AssetManager {
 										.clicked()
 									{
 										self.cursor = self.cursor.components().take(i + 1).collect::<PathBuf>();
+										self.selection.clear();
 										break;
 									}
 									ui.label(RichText::new("/").heading());
@@ -241,81 +262,8 @@ impl AssetManager {
 							});
 							ui.add_space(5.0);
 
-							let view = sys.view(self.cursor.clone());
-							let count = view.entries().count();
-
-							let rect = ui.available_rect_before_wrap();
-							const CELL_SIZE: f32 = 75.0;
-							let width = rect.width();
-							let height = rect.height();
-							let cells_x = (width / CELL_SIZE) as usize - 1;
-							let rows = (count + cells_x - 1) / cells_x;
-
-							ScrollArea::vertical()
-								.min_scrolled_width(width)
-								.min_scrolled_height(height)
-								.auto_shrink([false, false])
-								.stick_to_right(true)
-								.show_rows(ui, CELL_SIZE, rows, |ui, range| {
-									let mut grid = GridBuilder::new().layout_standard(Layout::top_down(Align::Center));
-									for _ in range.clone() {
-										grid = grid.new_row(Size::remainder());
-										grid = grid.cells(Size::exact(CELL_SIZE), cells_x as _);
-									}
-
-									let start_obj = range.start * cells_x;
-									let end_obj = range.end * cells_x;
-									let obj_range = start_obj..end_obj;
-
-									grid.show(ui, |mut grid| {
-										for (name, view) in view.entries().skip(start_obj).take(obj_range.len()) {
-											match view {
-												DirView::Dir => {
-													grid.cell(|ui| {
-														if ui
-															.text_button(fonts.icons.text(icons::FOLDER).size(32.0))
-															.double_clicked()
-														{
-															self.cursor.push(&*name);
-														}
-														ui.add(Label::new(&*name).truncate(true));
-													});
-												},
-												DirView::Asset(h) => {
-													grid.cell(|ui| {
-														let button = ui.text_button(
-															fonts
-																.icons
-																.text(if h.ty == Mesh::TYPE {
-																	icons::CUBE
-																} else if h.ty == Scene::TYPE {
-																	icons::MAP
-																} else {
-																	icons::QUESTION
-																})
-																.size(32.0),
-														);
-														if button.double_clicked() {
-															if h.ty == Scene::TYPE {
-																renderer.set_scene(h.asset);
-															}
-														} else {
-															button.context_menu(|ui| {
-																if ui.button("delete").clicked() {
-																	delete_target = Some(self.cursor.join(&name));
-																}
-															});
-														}
-														ui.add(Label::new(name).truncate(true));
-													});
-												},
-											}
-										}
-									});
-								});
+							self.draw_assets(ui, renderer, fonts);
 						});
-
-						if let Some(del) = delete_target {}
 					}
 				} else {
 					ui.centered_and_justified(|ui| {
@@ -323,5 +271,183 @@ impl AssetManager {
 					});
 				}
 			});
+	}
+
+	fn draw_assets(&mut self, ui: &mut Ui, renderer: &mut Renderer, fonts: &Fonts) {
+		let Some(ref sys) = self.system else { return };
+
+		let view = sys.view(self.cursor.clone());
+		let count = view.entries().count() + self.creating_dir.is_some() as usize;
+
+		if count == 0 {
+			return;
+		}
+
+		let rect = ui.available_rect_before_wrap();
+		let width = rect.width();
+		let height = rect.height();
+		let cells_x = (width / Self::CELL_SIZE) as usize - 1;
+		let rows = (count + cells_x - 1) / cells_x;
+
+		let mut interact = false;
+		let mut delete = false;
+		let mut mv = None;
+		ScrollArea::vertical()
+			.min_scrolled_width(width)
+			.min_scrolled_height(height)
+			.auto_shrink([false, false])
+			.stick_to_right(true)
+			.show_rows(ui, Self::CELL_SIZE, rows, |ui, range| {
+				let mut grid = GridBuilder::new().layout_standard(Layout::top_down(Align::Center));
+				for _ in range.clone() {
+					grid = grid.new_row(Size::remainder());
+					grid = grid.cells(Size::exact(Self::CELL_SIZE), cells_x as _);
+				}
+
+				let start_obj = range.start * cells_x;
+				let end_obj = range.end * cells_x;
+				let obj_range = start_obj..end_obj;
+
+				grid.show(ui, |mut grid| {
+					for (name, view) in view.entries().skip(start_obj).take(obj_range.len()) {
+						grid.cell(|ui| {
+							let (i, d, m) = match view {
+								DirView::Dir => Self::draw_asset(ui, name, None, fonts, &mut self.selection, |n, s| {
+									self.cursor.push(n);
+									s.clear();
+								}),
+								DirView::Asset(h) => {
+									Self::draw_asset(ui, name, Some(h.ty), fonts, &mut self.selection, |_, _| {
+										if h.ty == Scene::TYPE {
+											renderer.set_scene(h.asset);
+										}
+									})
+								},
+							};
+							interact |= i;
+							delete |= d;
+							if let Some(m) = m {
+								mv = Some(m);
+							}
+						})
+					}
+
+					grid.cell(|ui| {
+						if let Some((ref mut dir, ref mut focus)) = self.creating_dir {
+							ui.text_button(fonts.icons.text(icons::FOLDER).size(32.0));
+							let tex = ui.text_edit_singleline(dir);
+							if *focus {
+								*focus = false;
+								ui.memory_mut(|x| x.request_focus(tex.id));
+							}
+							if tex.lost_focus() {
+								let _ = view.create_dir(&dir);
+								self.creating_dir = None;
+							}
+						}
+					})
+				});
+			});
+
+		if !interact && ui.input(|x| x.pointer.any_click()) {
+			self.selection.clear();
+		} else if delete {
+			for x in self.selection.drain() {
+				let _ = view.delete(&x);
+			}
+		} else if let Some((name, mv)) = mv {
+			let _ = view.move_into(&name, mv.iter().map(|x| x.as_str()));
+		}
+	}
+
+	fn draw_asset(
+		ui: &mut Ui, name: String, ty: Option<Uuid>, fonts: &Fonts, selection: &mut FxHashSet<String>,
+		open: impl FnOnce(&str, &mut FxHashSet<String>),
+	) -> (bool, bool, Option<(String, Arc<FxHashSet<String>>)>) {
+		let style = ui.style();
+		let button = egui::Frame::none()
+			.fill(if selection.contains(&name) {
+				style.visuals.selection.bg_fill
+			} else {
+				style.visuals.widgets.noninteractive.bg_fill
+			})
+			.show(ui, |ui| {
+				let button = ui.add(TextButton::new_draggable(
+					fonts.icons.text(Self::get_icon(ty)).size(32.0),
+				));
+				ui.add(Label::new(&name).truncate(true));
+				button
+			})
+			.inner;
+
+		let mut delete = false;
+		let mut interact = false;
+		let mut mv = None;
+		if button.double_clicked_by(PointerButton::Primary) {
+			open(&name, selection);
+			selection.clear();
+			interact = true;
+		} else if button.clicked_by(PointerButton::Primary) {
+			if !ui.input(|x| x.modifiers.shift) {
+				selection.clear();
+			}
+			selection.insert(name);
+			interact = true;
+		} else if button.dragged_by(PointerButton::Primary) {
+			if button.drag_started() {
+				if !selection.contains(&name) {
+					selection.clear();
+				}
+				selection.insert(name);
+				button.dnd_set_drag_payload(selection.clone());
+			}
+
+			let count = selection.len();
+			let rect = ui.ctx().debug_painter().text(
+				ui.input(|x| x.pointer.latest_pos().unwrap()),
+				Align2([Align::Center, Align::Center]),
+				icons::FILE,
+				FontId {
+					size: 32.0,
+					family: fonts.icons.clone().into(),
+				},
+				ui.style().visuals.widgets.inactive.fg_stroke.color,
+			);
+			if count > 1 {
+				ui.ctx().debug_painter().text(
+					rect.max,
+					Align2([Align::Min, Align::Min]),
+					format!("{count}"),
+					FontId {
+						size: 8.0,
+						family: fonts.icons.clone().into(),
+					},
+					ui.style().visuals.selection.bg_fill,
+				);
+			}
+		} else if let Some(moved) = button.dnd_release_payload::<FxHashSet<String>>() {
+			mv = Some((name, moved));
+		} else {
+			if button.clicked_by(PointerButton::Secondary) {
+				selection.insert(name);
+			}
+			button.context_menu(|ui| {
+				interact = true;
+				if ui.button("delete").clicked() {
+					delete = true;
+					ui.close_menu();
+				}
+			});
+		}
+		(interact, delete, mv)
+	}
+
+	fn get_icon(ty: Option<Uuid>) -> &'static str {
+		match ty {
+			Some(Mesh::TYPE) => icons::CUBE,
+			Some(Scene::TYPE) => icons::MAP,
+			Some(_) => icons::QUESTION,
+			None => icons::FOLDER,
+		}
 	}
 }

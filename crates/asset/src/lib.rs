@@ -8,10 +8,7 @@ use std::{
 
 use bytemuck::{checked::from_bytes, Pod, Zeroable};
 use crossbeam_channel::{Receiver, Sender};
-use dashmap::{
-	mapref::{entry::Entry, one::Ref},
-	DashMap,
-};
+use dashmap::{mapref::entry::Entry, DashMap};
 use radiance_graph::{device::Device, graph::Frame};
 use rustc_hash::FxHasher;
 pub use uuid::Uuid;
@@ -88,13 +85,13 @@ pub trait Importer {
 
 type FxDashMap<K, V> = DashMap<K, V, BuildHasherDefault<FxHasher>>;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum DirEntry {
 	Dir(Dir),
 	Asset(AssetHeader),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Dir {
 	path: PathBuf,
 	sub: FxDashMap<PathBuf, DirEntry>,
@@ -118,6 +115,50 @@ impl Dir {
 					DirEntry::Dir(ref d) => d.add(comp.as_path(), header),
 					_ => unreachable!("tried to add subdir to asset"),
 				}
+			}
+		}
+	}
+
+	fn remove(&self, path: &Path) -> DirEntry {
+		let mut comp = path.components();
+		if let Some(c) = comp.next() {
+			let p: &Path = c.as_ref();
+			let rest = comp.as_path();
+			if rest.as_os_str().is_empty() {
+				self.sub.remove(p).unwrap().1
+			} else {
+				let child = self.sub.get(p).unwrap();
+				match child.value() {
+					DirEntry::Dir(d) => d.remove(rest),
+					_ => unreachable!("tried to remove subdir of asset"),
+				}
+			}
+		} else {
+			unreachable!("cannot remove root")
+		}
+	}
+
+	fn move_into<'a>(&self, into: &Path, from: impl Iterator<Item = &'a Path>) -> Vec<(PathBuf, DirEntry)> {
+		let entries: Vec<_> = from
+			.map(|x| (PathBuf::from(x.file_name().unwrap()), self.remove(x)))
+			.collect();
+		self.move_into_inner(into, &entries);
+		entries
+	}
+
+	fn move_into_inner(&self, into: &Path, entries: &[(PathBuf, DirEntry)]) {
+		let mut comp = into.components();
+		if let Some(c) = comp.next() {
+			let p: &Path = c.as_ref();
+			let rest = comp.as_path();
+			let child = self.sub.get(p).unwrap();
+			match child.value() {
+				DirEntry::Dir(ref d) => d.move_into_inner(rest, entries),
+				_ => unreachable!("tried to get subdir of asset"),
+			}
+		} else {
+			for (p, e) in entries {
+				self.sub.insert(p.clone(), e.clone());
 			}
 		}
 	}
@@ -280,6 +321,48 @@ pub enum DirView {
 }
 
 impl AssetSystemView<'_> {
+	pub fn create_dir(&self, name: &str) -> Result<(), std::io::Error> {
+		let full_path = self.cursor.join(name);
+		self.sys.root.add(&full_path, None);
+		std::fs::create_dir(self.sys.root.path.join(full_path))
+	}
+
+	pub fn delete(&self, name: &str) -> Result<(), std::io::Error> {
+		let full_path = self.cursor.join(name);
+		self.sys.root.remove(&full_path);
+		let path = self.sys.root.path.join(full_path);
+		if path.is_file() {
+			std::fs::remove_file(path)
+		} else {
+			std::fs::remove_dir_all(path)
+		}
+	}
+
+	pub fn move_into<'a>(&self, into: &str, from: impl Iterator<Item = &'a str>) -> Result<(), std::io::Error> {
+		let full_into = self.cursor.join(into);
+		let full_froms: Vec<_> = from.map(|x| self.cursor.join(x)).collect();
+		let path_to_entry = self
+			.sys
+			.root
+			.move_into(&full_into, full_froms.iter().map(|x| x.as_path()));
+		let dest = self.sys.root.path.join(full_into);
+		for (p, e) in path_to_entry {
+			match e {
+				DirEntry::Asset(h) => {
+					self.sys.path_lookup.insert(h.asset, dest.join(p));
+				},
+				_ => {},
+			}
+		}
+		for from in full_froms {
+			let dest = dest.join(from.file_name().unwrap());
+			let src = self.sys.root.path.join(from);
+			let _ = std::fs::rename(src, dest);
+		}
+
+		Ok(())
+	}
+
 	pub fn entries(&self) -> impl Iterator<Item = (String, DirView)> + '_ {
 		self.sys.root.get(&self.cursor).into_iter()
 	}

@@ -1,11 +1,7 @@
 use egui::{CentralPanel, Context, PointerButton, RichText, Ui};
 use radiance_asset::{rref::RRef, scene, AssetSystem, Uuid};
 use radiance_egui::to_texture_id;
-use radiance_graph::{
-	device::{Device, QueueSyncs},
-	graph::Frame,
-	Result,
-};
+use radiance_graph::{device::Device, graph::Frame, Result};
 use radiance_passes::{
 	debug::mesh::DebugMesh,
 	mesh::{RenderInfo, VisBuffer},

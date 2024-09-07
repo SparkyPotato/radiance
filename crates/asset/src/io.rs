@@ -5,7 +5,7 @@ use std::{
 };
 
 use bincode::{config::standard, Decode, Encode};
-use bytemuck::{bytes_of, AnyBitPattern, NoUninit};
+use bytemuck::{bytes_of, NoUninit};
 use zstd::{Decoder, Encoder};
 
 use crate::AssetHeader;
