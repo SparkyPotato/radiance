@@ -296,18 +296,18 @@ impl<'a> DeviceBuilder<'a> {
 			let mut features11 = vk::PhysicalDeviceVulkan11Features::default();
 			let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
 			let mut features13 = vk::PhysicalDeviceVulkan13Features::default();
-			let mut as_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
-			let mut rt_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
-			let mut rq_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
+			// let mut as_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
+			// let mut rt_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
+			// let mut rq_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
 			let mut maint5_features = vk::PhysicalDeviceMaintenance5FeaturesKHR::default();
 			{
 				let mut next = features.p_next as *mut VkStructHeader;
 				let mut found_11 = false;
 				let mut found_12 = false;
 				let mut found_13 = false;
-				let mut found_as = false;
-				let mut found_rt = false;
-				let mut found_rq = false;
+				// let mut found_as = false;
+				// let mut found_rt = false;
+				// let mut found_rq = false;
 				let mut found_maint5 = false;
 				while !next.is_null() {
 					unsafe {
@@ -315,9 +315,9 @@ impl<'a> DeviceBuilder<'a> {
 							vk::PhysicalDeviceVulkan11Features::STRUCTURE_TYPE => found_11 = true,
 							vk::PhysicalDeviceVulkan12Features::STRUCTURE_TYPE => found_12 = true,
 							vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => found_13 = true,
-							vk::PhysicalDeviceAccelerationStructureFeaturesKHR::STRUCTURE_TYPE => found_as = true,
-							vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::STRUCTURE_TYPE => found_rt = true,
-							vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => found_rq = true,
+							// vk::PhysicalDeviceAccelerationStructureFeaturesKHR::STRUCTURE_TYPE => found_as = true,
+							// vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::STRUCTURE_TYPE => found_rt = true,
+							// vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => found_rq = true,
 							vk::PhysicalDeviceMaintenance5FeaturesKHR::STRUCTURE_TYPE => found_maint5 = true,
 							_ => {},
 						}
@@ -340,21 +340,21 @@ impl<'a> DeviceBuilder<'a> {
 				} else {
 					features
 				};
-				features = if !found_as {
-					features.push_next(&mut as_features)
-				} else {
-					features
-				};
-				features = if !found_rt {
-					features.push_next(&mut rt_features)
-				} else {
-					features
-				};
-				features = if !found_rq {
-					features.push_next(&mut rq_features)
-				} else {
-					features
-				};
+				// features = if !found_as {
+				// 	features.push_next(&mut as_features)
+				// } else {
+				// 	features
+				// };
+				// features = if !found_rt {
+				// 	features.push_next(&mut rt_features)
+				// } else {
+				// 	features
+				// };
+				// features = if !found_rq {
+				// 	features.push_next(&mut rq_features)
+				// } else {
+				// 	features
+				// };
 				features = if !found_maint5 {
 					features.push_next(&mut maint5_features)
 				} else {
@@ -421,22 +421,6 @@ impl<'a> DeviceBuilder<'a> {
 				}
 			}
 
-			// Reject the lack of ReBAR because we will really fail otherwise.
-			unsafe {
-				let mut mem = vk::PhysicalDeviceMemoryProperties2::default();
-				instance.get_physical_device_memory_properties2(physical_device, &mut mem);
-				for i in 0..mem.memory_properties.memory_type_count {
-					let ty = mem.memory_properties.memory_types[i as usize];
-					if ty
-						.property_flags
-						.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE)
-						&& mem.memory_properties.memory_heaps[ty.heap_index as usize].size <= 1024 * 1024 * 1024
-					{
-						continue;
-					}
-				}
-			}
-
 			let info = vk::DeviceCreateInfo::default()
 				.enabled_extension_names(&extensions)
 				.push_next(&mut features);
@@ -490,15 +474,15 @@ impl<'a> DeviceBuilder<'a> {
 			extensions.push(khr::swapchain::NAME);
 		}
 
-		// extensions.extend([
-		// 	// khr::acceleration_structure::NAME,
-		// 	// khr::ray_tracing_pipeline::NAME,
-		// 	// khr::ray_tracing_maintenance1::NAME,
-		// 	// khr::deferred_host_operations::NAME,
-		// 	// khr::ray_query::NAME,
-		// 	// khr::maintenance5::NAME,
-		// 	// khr::maintenance6::NAME,
-		// ]);
+		extensions.extend([
+			// khr::acceleration_structure::NAME,
+			// khr::ray_tracing_pipeline::NAME,
+			// khr::ray_tracing_maintenance1::NAME,
+			// khr::deferred_host_operations::NAME,
+			// khr::ray_query::NAME,
+			khr::maintenance5::NAME,
+			// khr::maintenance6::NAME,
+		]);
 		extensions
 	}
 
