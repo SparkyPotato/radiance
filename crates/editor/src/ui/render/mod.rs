@@ -1,5 +1,5 @@
 use egui::{CentralPanel, Context, PointerButton, RichText, Ui};
-use radiance_asset::{AssetSource, AssetSystem, Uuid};
+use radiance_asset::{rref::RRef, scene, AssetSystem, Uuid};
 use radiance_egui::to_texture_id;
 use radiance_graph::{
 	device::{Device, QueueSyncs},
@@ -7,7 +7,6 @@ use radiance_graph::{
 	Result,
 };
 use radiance_passes::{
-	asset::{rref::RRef, scene, AssetRuntime},
 	debug::mesh::DebugMesh,
 	mesh::{RenderInfo, VisBuffer},
 };
@@ -28,14 +27,13 @@ mod camera;
 enum Scene {
 	None,
 	Unloaded(Uuid),
-	Loaded((RRef<scene::Scene>, QueueSyncs)),
+	Loaded(RRef<scene::Scene>),
 }
 
 pub struct Renderer {
 	scene: Scene,
 	visbuffer: VisBuffer,
 	debug: DebugMesh,
-	runtime: AssetRuntime,
 	camera: CameraController,
 }
 
@@ -45,18 +43,16 @@ impl Renderer {
 			scene: Scene::None,
 			visbuffer: VisBuffer::new(device)?,
 			debug: DebugMesh::new(device)?,
-			runtime: AssetRuntime::new(device)?,
 			camera: CameraController::new(),
 		})
 	}
 
 	pub fn set_scene(&mut self, scene: Uuid) { self.scene = Scene::Unloaded(scene); }
 
-	pub fn render<'pass, S: AssetSource>(
+	pub fn render<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, window: &Window, debug: &Debug,
-		system: Option<&AssetSystem<S>>,
+		system: Option<&AssetSystem>,
 	) {
-		self.runtime.tick(frame);
 		CentralPanel::default().show(ctx, |ui| {
 			if let Some(x) = self.render_inner(frame, ctx, ui, window, system, debug) {
 				if x {
@@ -72,29 +68,24 @@ impl Renderer {
 		});
 	}
 
-	fn render_inner<'pass, S: AssetSource>(
+	fn render_inner<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, ui: &mut Ui, window: &Window,
-		system: Option<&AssetSystem<S>>, debug: &Debug,
+		system: Option<&AssetSystem>, debug: &Debug,
 	) -> Option<bool> {
 		let Some(system) = system else {
 			return Some(true);
 		};
-		let (scene, wait) = match self.scene {
+		let scene = match self.scene {
 			Scene::None => return Some(true),
-			Scene::Unloaded(s) => {
-				match self
-					.runtime
-					.load(frame.device(), system, frame.async_exec().unwrap(), |l| l.load_scene(s))
-				{
-					Ok(s) => {
-						self.scene = Scene::Loaded(s.clone());
-						s
-					},
-					Err(e) => {
-						event!(Level::ERROR, "error loading scene: {:?}", e);
-						return None;
-					},
-				}
+			Scene::Unloaded(s) => match system.initialize::<scene::Scene>(frame.device(), s) {
+				Ok(s) => {
+					self.scene = Scene::Loaded(s.clone());
+					s
+				},
+				Err(e) => {
+					event!(Level::ERROR, "error loading scene: {:?}", e);
+					return None;
+				},
 			},
 			Scene::Loaded(ref s) => s.clone(),
 		};
@@ -132,7 +123,7 @@ impl Renderer {
 	pub fn draw_camera_menu(&mut self, ui: &mut Ui) {
 		match self.scene {
 			Scene::Loaded(ref scene) => {
-				for c in scene.0.cameras.iter() {
+				for c in scene.cameras.iter() {
 					if ui.button(&c.name).clicked() {
 						self.camera.set(c);
 					}
@@ -150,6 +141,5 @@ impl Renderer {
 		self.scene = Scene::None;
 		self.visbuffer.destroy(device);
 		self.debug.destroy(device);
-		self.runtime.destroy(device);
 	}
 }

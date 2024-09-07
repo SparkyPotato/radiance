@@ -1,5 +1,9 @@
 use ash::{ext, vk};
 use bytemuck::{bytes_of, NoUninit};
+use radiance_asset::{
+	rref::RRef,
+	scene::{GpuInstance, Scene},
+};
 use radiance_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, Pipeline, ShaderInfo},
 	graph::{Frame, PassContext, Res},
@@ -9,13 +13,7 @@ use radiance_graph::{
 use vek::{Mat4, Vec2};
 
 pub use crate::mesh::setup::{DebugRes, DebugResId};
-use crate::{
-	asset::{
-		rref::RRef,
-		scene::{GpuInstance, Scene},
-	},
-	mesh::{bvh::BvhCull, hzb::HzbGen, instance::InstanceCull, meshlet::MeshletCull, setup::Setup},
-};
+use crate::mesh::{bvh::BvhCull, hzb::HzbGen, instance::InstanceCull, meshlet::MeshletCull, setup::Setup};
 
 mod bvh;
 mod hzb;

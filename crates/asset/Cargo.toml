@@ -3,27 +3,25 @@ name = "radiance-asset"
 version = "0.0.0"
 edition = "2021"
 
-[features]
-# Support importing.
-import = ["dep:gltf", "dep:metis", "dep:meshopt"]
-# Support file-based asset systems.
-fs = ["dep:walkdir"]
-
 [dependencies]
-bytemuck = { workspace = true }
-rustc-hash = { workspace = true }
-static_assertions = { workspace = true }
-tracing = { workspace = true }
-uuid = { workspace = true }
-vek = { workspace = true }
-walkdir = { workspace = true, optional = true }
+radiance-graph = { path = "../graph", features = ["bytemuck"] }
+
+ash = { workspace = true }
 bincode = { workspace = true }
+bytemuck = { workspace = true }
+crossbeam-channel = { workspace = true }
 dashmap = { workspace = true }
-gltf = { workspace = true, optional = true }
-metis = { workspace = true, optional = true }
-meshopt = { workspace = true, optional = true }
+gltf = { workspace = true }
+metis = { workspace = true }
+meshopt = { workspace = true }
+notify-debouncer-full = { workspace = true }
 parking_lot = { workspace = true }
 rayon = { workspace = true }
+rustc-hash = { workspace = true }
+static_assertions = { workspace = true }
 thread_local = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["bytemuck"] }
+vek = { workspace = true }
+walkdir = { workspace = true }
 zstd = { workspace = true }
-

@@ -443,7 +443,7 @@ pub enum HotreloadStatus {
 }
 
 pub struct ShaderRuntime {
-	watcher: Debouncer<RecommendedWatcher, FileIdMap>,
+	// watcher: Debouncer<RecommendedWatcher, FileIdMap>,
 	shared: Arc<Mutex<RuntimeShared>>,
 }
 
@@ -525,7 +525,10 @@ impl ShaderRuntime {
 		.unwrap();
 		// let _ = watcher.watcher().watch(&source, RecursiveMode::Recursive);
 
-		Self { watcher, shared }
+		Self {
+			// watcher,
+			shared,
+		}
 	}
 
 	pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<Pipeline, vk::Result> {

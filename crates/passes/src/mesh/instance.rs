@@ -1,5 +1,6 @@
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
+use radiance_asset::scene::GpuInstance;
 use radiance_graph::{
 	device::{
 		descriptor::{ImageId, SamplerId},
@@ -13,10 +14,7 @@ use radiance_graph::{
 };
 use vek::Vec2;
 
-use crate::{
-	asset::scene::GpuInstance,
-	mesh::{setup::Resources, CameraData, RenderInfo},
-};
+use crate::mesh::{setup::Resources, CameraData, RenderInfo};
 
 pub struct InstanceCull {
 	early: bool,

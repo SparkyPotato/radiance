@@ -4,11 +4,8 @@ use crossbeam_channel::{Receiver, Sender};
 use egui::{Align, Context, Label, Layout, ProgressBar, RichText, ScrollArea, Ui};
 use egui_extras::Size;
 use egui_grid::GridBuilder;
-use radiance_asset::{
-	fs::FsSystem,
-	import::{ImportError, ImportProgress},
-	AssetType,
-};
+use radiance_asset::{gltf::GltfImporter, mesh::Mesh, scene::Scene, Asset, AssetSystem, DirView, Importer};
+use radiance_graph::graph::Frame;
 use tracing::{event, Level};
 
 use crate::ui::{
@@ -17,6 +14,13 @@ use crate::ui::{
 	widgets::{icons, IntoIcon, UiExt},
 	Fonts,
 };
+
+enum Progress {
+	Discovering,
+	Update(f32),
+	Finished,
+	Error(std::io::Error),
+}
 
 struct ImportNotif {
 	recv: Receiver<Progress>,
@@ -41,8 +45,8 @@ impl Notification for ImportNotif {
 			Progress::Discovering => {
 				ui.label("discovering");
 			},
-			Progress::Update { done, total } => {
-				ui.add(ProgressBar::new(done.as_percentage(*total)).show_percentage());
+			Progress::Update(ratio) => {
+				ui.add(ProgressBar::new(*ratio).show_percentage());
 			},
 			Progress::Finished => {
 				if self.finished.is_none() {
@@ -61,16 +65,6 @@ impl Notification for ImportNotif {
 	fn dismissable(&self) -> bool { matches!(self.latest, Progress::Error(_) | Progress::Finished) }
 }
 
-enum Progress {
-	Discovering,
-	Update {
-		done: ImportProgress,
-		total: ImportProgress,
-	},
-	Finished,
-	Error(ImportError<io::Error, io::Error>),
-}
-
 struct ImportRequest {
 	from: PathBuf,
 	to: PathBuf,
@@ -83,7 +77,7 @@ enum ThreadMsg {
 }
 
 enum ThreadRecv {
-	OpenedSystem { sys: Arc<FsSystem>, existed: bool },
+	OpenedSystem { sys: Arc<AssetSystem>, existed: bool },
 }
 
 fn import_thread(recv: Receiver<ThreadMsg>, send: Sender<ThreadRecv>) {
@@ -93,7 +87,10 @@ fn import_thread(recv: Receiver<ThreadMsg>, send: Sender<ThreadRecv>) {
 		match msg {
 			ThreadMsg::Open(path) => {
 				let existed = path.exists();
-				let s = Arc::new(FsSystem::new(path));
+				let Ok(s) = AssetSystem::new(&path) else {
+					continue;
+				};
+				let s = Arc::new(s);
 				let _ = send.send(ThreadRecv::OpenedSystem {
 					sys: s.clone(),
 					existed,
@@ -102,9 +99,26 @@ fn import_thread(recv: Receiver<ThreadMsg>, send: Sender<ThreadRecv>) {
 			},
 			ThreadMsg::Import(req) => {
 				if let Some(ref sys) = sys {
-					if let Err(err) = sys.import(&req.from, &req.to, |x, y| {
-						event!(Level::INFO, "{:.2}%", x.as_percentage(y) * 100.0);
-						let _ = req.progress.send(Progress::Update { done: x, total: y });
+					let importer = match GltfImporter::initialize(&req.from) {
+						Some(Ok(x)) => x,
+						Some(Err(e)) => {
+							event!(Level::ERROR, "failed to import {:?}: {:?}", req.from, e);
+							let _ = req.progress.send(Progress::Error(e));
+							continue;
+						},
+						None => {
+							let ext = req.from.extension().unwrap().to_str().unwrap();
+							event!(Level::ERROR, "unsupported extension {}", ext);
+							let _ = req.progress.send(Progress::Error(std::io::Error::other(format!(
+								"unsupported extension {}",
+								ext
+							))));
+							continue;
+						},
+					};
+					if let Err(err) = importer.import(sys.view(req.to), |x| {
+						event!(Level::INFO, "{:.2}%", x * 100.0);
+						let _ = req.progress.send(Progress::Update(x));
 					}) {
 						event!(Level::ERROR, "failed to import {:?}: {:?}", req.from, err);
 						let _ = req.progress.send(Progress::Error(err));
@@ -117,7 +131,7 @@ fn import_thread(recv: Receiver<ThreadMsg>, send: Sender<ThreadRecv>) {
 }
 
 pub struct AssetManager {
-	pub system: Option<Arc<FsSystem>>,
+	pub system: Option<Arc<AssetSystem>>,
 	cursor: PathBuf,
 	send: Sender<ThreadMsg>,
 	recv: Receiver<ThreadRecv>,
@@ -146,10 +160,12 @@ impl AssetManager {
 	pub fn open(&mut self, path: impl Into<PathBuf>) {
 		let buf = std::fs::canonicalize(path.into()).unwrap();
 		self.send.send(ThreadMsg::Open(buf.clone())).unwrap();
-		self.cursor = buf;
+		self.cursor = PathBuf::new();
 	}
 
-	pub fn render(&mut self, ctx: &Context, notifs: &mut NotifStack, renderer: &mut Renderer, fonts: &Fonts) {
+	pub fn render(
+		&mut self, frame: &mut Frame, ctx: &Context, notifs: &mut NotifStack, renderer: &mut Renderer, fonts: &Fonts,
+	) {
 		for msg in self.recv.try_iter() {
 			match msg {
 				ThreadRecv::OpenedSystem { sys, existed } => {
@@ -170,6 +186,7 @@ impl AssetManager {
 			.min_height(100.0)
 			.show(ctx, |ui| {
 				if let Some(ref mut sys) = self.system {
+					sys.tick(frame);
 					let mut delete_target = None;
 					if ctx.input(|x| !x.raw.hovered_files.is_empty()) {
 						ui.centered_and_justified(|ui| {
@@ -203,7 +220,7 @@ impl AssetManager {
 									if ui
 										.text_button(fonts.icons.text(icons::ARROW_UP).heading())
 										.on_hover_text("Go back")
-										.clicked() && self.cursor != sys.root()
+										.clicked()
 									{
 										self.cursor.pop();
 									}
@@ -211,14 +228,12 @@ impl AssetManager {
 
 								ui.separator();
 
-								let root = sys.root().parent().unwrap();
-								let current = self.cursor.strip_prefix(root).unwrap();
-								for (i, component) in current.components().enumerate() {
+								for (i, component) in self.cursor.components().enumerate() {
 									if ui
 										.text_button(RichText::new(component.as_os_str().to_string_lossy()).heading())
 										.clicked()
 									{
-										self.cursor = root.join(current.components().take(i + 1).collect::<PathBuf>());
+										self.cursor = self.cursor.components().take(i + 1).collect::<PathBuf>();
 										break;
 									}
 									ui.label(RichText::new("/").heading());
@@ -226,10 +241,8 @@ impl AssetManager {
 							});
 							ui.add_space(5.0);
 
-							let view = sys.dir_view(&self.cursor).unwrap();
-							let dirs = view.dir_count();
-							let assets = view.asset_count();
-							let count = dirs + assets;
+							let view = sys.view(self.cursor.clone());
+							let count = view.entries().count();
 
 							let rect = ui.available_rect_before_wrap();
 							const CELL_SIZE: f32 = 75.0;
@@ -255,52 +268,53 @@ impl AssetManager {
 									let obj_range = start_obj..end_obj;
 
 									grid.show(ui, |mut grid| {
-										let mut i = 0;
-										view.for_each_dir(|dir| {
-											if !obj_range.contains(&i) {
-												i += 1;
-												return;
-											}
-
-											grid.cell(|ui| {
-												let name = dir.name();
-												if ui
-													.text_button(fonts.icons.text(icons::FOLDER).size(32.0))
-													.double_clicked()
-												{
-													self.cursor.push(&*name);
-												}
-												ui.add(Label::new(&*name).truncate(true));
-											});
-											i += 1;
-										});
-
-										view.for_each_asset(|name, uuid| {
-											if !obj_range.contains(&i) {
-												i += 1;
-												return;
-											}
-
-											grid.cell(|ui| {
-												let button = ui.text_button(fonts.icons.text(icons::FILE).size(32.0));
-												if button.double_clicked() {
-													if sys.metadata(uuid).unwrap().ty == AssetType::Scene {
-														renderer.set_scene(uuid);
-													}
-												} else {
-													button.context_menu(|ui| {
-														if ui.button("delete").clicked() {
-															delete_target = Some(self.cursor.join(name));
+										for (name, view) in view.entries().skip(start_obj).take(obj_range.len()) {
+											match view {
+												DirView::Dir => {
+													grid.cell(|ui| {
+														if ui
+															.text_button(fonts.icons.text(icons::FOLDER).size(32.0))
+															.double_clicked()
+														{
+															self.cursor.push(&*name);
 														}
+														ui.add(Label::new(&*name).truncate(true));
 													});
-												}
-												ui.add(Label::new(name).truncate(true));
-											});
-											i += 1;
-										})
+												},
+												DirView::Asset(h) => {
+													grid.cell(|ui| {
+														let button = ui.text_button(
+															fonts
+																.icons
+																.text(if h.ty == Mesh::TYPE {
+																	icons::CUBE
+																} else if h.ty == Scene::TYPE {
+																	icons::MAP
+																} else {
+																	icons::QUESTION
+																})
+																.size(32.0),
+														);
+														if button.double_clicked() {
+															if h.ty == Scene::TYPE {
+																renderer.set_scene(h.asset);
+															}
+														} else {
+															button.context_menu(|ui| {
+																if ui.button("delete").clicked() {
+																	delete_target = Some(self.cursor.join(&name));
+																}
+															});
+														}
+														ui.add(Label::new(name).truncate(true));
+													});
+												},
+											}
+										}
 									});
 								});
 						});
+
 						if let Some(del) = delete_target {}
 					}
 				} else {

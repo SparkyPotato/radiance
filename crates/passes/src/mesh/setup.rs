@@ -2,6 +2,7 @@ use std::io::Write;
 
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit, PodInOption, ZeroableInOption};
+use radiance_asset::{rref::RRef, scene::Scene};
 use radiance_graph::{
 	device::{
 		descriptor::{SamplerId, StorageImageId},
@@ -25,10 +26,7 @@ use radiance_graph::{
 };
 use vek::Vec2;
 
-use crate::{
-	asset::{rref::RRef, scene::Scene},
-	mesh::{Camera, CameraData, RenderInfo},
-};
+use crate::mesh::{Camera, CameraData, RenderInfo};
 
 struct Persistent {
 	scene: RRef<Scene>,

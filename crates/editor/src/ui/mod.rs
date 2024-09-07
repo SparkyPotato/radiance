@@ -63,13 +63,13 @@ impl UiState {
 		self.debug.render(frame.device(), ctx);
 
 		self.assets
-			.render(ctx, &mut self.notifs, &mut self.renderer, &self.fonts);
+			.render(frame, ctx, &mut self.notifs, &mut self.renderer, &self.fonts);
 		self.renderer.render(
 			frame,
 			ctx,
 			window,
 			&self.debug,
-			self.assets.system.as_deref().map(|x| &**x),
+			self.assets.system.as_deref().map(|x| &*x),
 		);
 
 		self.notifs.render(ctx, &self.fonts);

@@ -1,5 +1,6 @@
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
+use radiance_asset::scene::GpuInstance;
 use radiance_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, Pipeline, ShaderInfo},
 	graph::{BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
@@ -8,10 +9,7 @@ use radiance_graph::{
 	Result,
 };
 
-use crate::{
-	asset::scene::GpuInstance,
-	mesh::{CameraData, DebugResId, RenderOutput},
-};
+use crate::mesh::{CameraData, DebugResId, RenderOutput};
 
 #[derive(Copy, Clone)]
 pub enum DebugVis {
