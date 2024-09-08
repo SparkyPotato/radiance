@@ -390,7 +390,6 @@ impl<'a> DeviceBuilder<'a> {
 							features12.buffer_device_address = true as _;
 							features12.vulkan_memory_model = true as _;
 							features12.vulkan_memory_model_device_scope = true as _;
-							features12.vulkan_memory_model_availability_visibility_chains = true as _;
 							features12.scalar_block_layout = true as _;
 						},
 						vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => {
@@ -474,15 +473,15 @@ impl<'a> DeviceBuilder<'a> {
 			extensions.push(khr::swapchain::NAME);
 		}
 
-		extensions.extend([
-			// khr::acceleration_structure::NAME,
-			// khr::ray_tracing_pipeline::NAME,
-			// khr::ray_tracing_maintenance1::NAME,
-			// khr::deferred_host_operations::NAME,
-			// khr::ray_query::NAME,
-			khr::maintenance5::NAME,
-			// khr::maintenance6::NAME,
-		]);
+		// extensions.extend([
+		// khr::acceleration_structure::NAME,
+		// khr::ray_tracing_pipeline::NAME,
+		// khr::ray_tracing_maintenance1::NAME,
+		// khr::deferred_host_operations::NAME,
+		// khr::ray_query::NAME,
+		// khr::maintenance5::NAME,
+		// khr::maintenance6::NAME,
+		// ]);
 		extensions
 	}
 

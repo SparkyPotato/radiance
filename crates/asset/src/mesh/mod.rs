@@ -106,7 +106,7 @@ impl Asset for Mesh {
 				name: &ctx.name,
 				size,
 				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
-				on_cpu: false,
+				readback: false,
 			},
 		)?;
 

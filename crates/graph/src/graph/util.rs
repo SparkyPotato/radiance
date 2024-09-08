@@ -6,6 +6,7 @@ use bytemuck::{cast_slice, NoUninit};
 use crate::{
 	graph::{
 		BufferDesc,
+		BufferLoc,
 		BufferUsage,
 		BufferUsageType,
 		Frame,
@@ -105,7 +106,8 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 		pass.resource(
 			BufferDesc {
 				size: data.len() as _,
-				upload: true,
+				loc: BufferLoc::Upload,
+				persist: None,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::TransferRead],

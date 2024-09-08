@@ -30,18 +30,6 @@ impl Debug {
 		}
 	}
 
-	fn vis_to_index(vis: DebugVis) -> usize {
-		match vis {
-			DebugVis::Triangles => 0,
-			DebugVis::Meshlets => 1,
-			DebugVis::Overdraw(..) => 2,
-			DebugVis::HwSw => 3,
-			DebugVis::Normals => 4,
-			DebugVis::HzbMip => 5,
-			DebugVis::HzbUv => 6,
-		}
-	}
-
 	fn text_of_index(vis: usize) -> &'static str {
 		match vis {
 			0 => "triangles",
@@ -49,26 +37,22 @@ impl Debug {
 			2 => "overdraw",
 			3 => "hw/sw",
 			4 => "normals",
-			5 => "hzb mip",
-			6 => "hzb uv",
 			_ => unreachable!(),
 		}
 	}
 
 	pub fn render(&mut self, device: &Device, ctx: &Context) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
-			let mut sel = Self::vis_to_index(self.debug_vis);
+			let mut sel = self.debug_vis.to_u32() as usize;
 			ComboBox::from_label("debug vis")
 				.selected_text(Self::text_of_index(sel))
-				.show_index(ui, &mut sel, 7, Self::text_of_index);
+				.show_index(ui, &mut sel, 5, Self::text_of_index);
 			self.debug_vis = match sel {
 				0 => DebugVis::Triangles,
 				1 => DebugVis::Meshlets,
 				2 => DebugVis::Overdraw(self.bottom, self.top),
 				3 => DebugVis::HwSw,
 				4 => DebugVis::Normals,
-				5 => DebugVis::HzbMip,
-				6 => DebugVis::HzbUv,
 				_ => unreachable!(),
 			};
 

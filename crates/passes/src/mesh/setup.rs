@@ -2,17 +2,14 @@ use std::io::Write;
 
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit, PodInOption, ZeroableInOption};
-use radiance_asset::{rref::RRef, scene::Scene};
+use radiance_asset::rref::RWeak;
 use radiance_graph::{
-	device::{
-		descriptor::{SamplerId, StorageImageId},
-		Device,
-	},
+	device::descriptor::{SamplerId, StorageImageId},
 	graph::{
 		BufferDesc,
+		BufferLoc,
 		BufferUsage,
 		BufferUsageType,
-		ExternalImage,
 		Frame,
 		ImageDesc,
 		ImageUsage,
@@ -21,18 +18,11 @@ use radiance_graph::{
 		PassContext,
 		Res,
 	},
-	resource::{self, BufferHandle, Image, ImageView, Resource, Subresource},
+	resource::{BufferHandle, ImageView, Subresource},
 	sync::Shader,
 };
-use vek::Vec2;
 
 use crate::mesh::{Camera, CameraData, RenderInfo};
-
-struct Persistent {
-	scene: RRef<Scene>,
-	camera: Camera,
-	hzb: Image,
-}
 
 #[derive(Copy, Clone)]
 pub struct DebugRes {
@@ -186,6 +176,11 @@ impl Resources {
 	}
 }
 
+struct Persistent {
+	scene: RWeak,
+	camera: Camera,
+}
+
 pub struct Setup {
 	inner: Option<Persistent>,
 }
@@ -194,39 +189,58 @@ impl Setup {
 	pub fn new() -> Self { Self { inner: None } }
 
 	pub fn run(&mut self, frame: &mut Frame, info: &RenderInfo, hzb_sampler: SamplerId) -> Resources {
-		let needs_clear = self.init_persistent(frame, info);
-		let Persistent {
-			hzb, camera: prev_cam, ..
-		} = self.inner.as_mut().unwrap();
+		let (needs_clear, prev) = match &mut self.inner {
+			Some(Persistent { scene, camera }) => {
+				let prev = *camera;
+				*camera = info.camera;
+				let sc = info.scene.downgrade();
+				if !scene.ptr_eq(&sc) {
+					*scene = sc;
+					(true, prev)
+				} else {
+					(false, prev)
+				}
+			},
+			None => {
+				self.inner = Some(Persistent {
+					scene: info.scene.downgrade(),
+					camera: info.camera,
+				});
+				(true, info.camera)
+			},
+		};
 		let res = info.size;
 		let cam = info.camera;
-		let prev = *prev_cam;
-		*prev_cam = cam;
 
 		let mut pass = frame.pass("setup cull buffers");
 		let camera = pass.resource(
 			BufferDesc {
 				size: std::mem::size_of::<CameraData>() as u64 * 2,
-				upload: true,
+				loc: BufferLoc::Upload,
+				persist: None,
 			},
 			BufferUsage { usages: &[] },
 		);
+		let size = info.size / 2;
 		let hzb = pass.resource(
-			ExternalImage {
-				handle: hzb.handle(),
-				layout: if needs_clear {
-					vk::ImageLayout::UNDEFINED
-				} else {
-					vk::ImageLayout::GENERAL
+			ImageDesc {
+				format: vk::Format::R32_SFLOAT,
+				size: vk::Extent3D {
+					width: size.x,
+					height: size.y,
+					depth: 1,
 				},
-				desc: hzb.desc(),
+				levels: size.x.max(size.y).ilog2(),
+				layers: 1,
+				samples: vk::SampleCountFlags::TYPE_1,
+				persist: Some("persistent hzb"),
 			},
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
 				usages: if needs_clear {
 					&[ImageUsageType::TransferWrite]
 				} else {
-					&[ImageUsageType::General]
+					&[]
 				},
 				view_type: None,
 				subresource: Subresource::default(),
@@ -235,7 +249,8 @@ impl Setup {
 		let late_instances = pass.resource(
 			BufferDesc {
 				size: ((info.scene.instance_count() as usize + 4) * std::mem::size_of::<u32>()) as _,
-				upload: false,
+				loc: BufferLoc::GpuOnly,
+				persist: None,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::TransferWrite],
@@ -244,7 +259,11 @@ impl Setup {
 		let size = ((12 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
 		let bvh_queues = [(); 3].map(|_| {
 			pass.resource(
-				BufferDesc { size, upload: false },
+				BufferDesc {
+					size,
+					loc: BufferLoc::GpuOnly,
+					persist: None,
+				},
 				BufferUsage {
 					usages: &[BufferUsageType::TransferWrite],
 				},
@@ -252,7 +271,11 @@ impl Setup {
 		});
 		let meshlet_queues = [(); 2].map(|_| {
 			pass.resource(
-				BufferDesc { size, upload: false },
+				BufferDesc {
+					size,
+					loc: BufferLoc::GpuOnly,
+					persist: None,
+				},
 				BufferUsage {
 					usages: &[BufferUsageType::TransferWrite],
 				},
@@ -260,7 +283,11 @@ impl Setup {
 		});
 		let meshlet_render_lists = [(); 4].map(|_| {
 			pass.resource(
-				BufferDesc { size, upload: false },
+				BufferDesc {
+					size,
+					loc: BufferLoc::GpuOnly,
+					persist: None,
+				},
 				BufferUsage {
 					usages: &[BufferUsageType::TransferWrite],
 				},
@@ -276,6 +303,7 @@ impl Setup {
 			levels: 1,
 			layers: 1,
 			samples: vk::SampleCountFlags::TYPE_1,
+			persist: None,
 		};
 		let usage = ImageUsage {
 			format: vk::Format::UNDEFINED,
@@ -387,64 +415,6 @@ impl Setup {
 			meshlet_render_lists,
 			visbuffer,
 			debug,
-		}
-	}
-
-	fn init_persistent(&mut self, frame: &mut Frame, info: &RenderInfo) -> bool {
-		let size = info.size / 2;
-		match &mut self.inner {
-			Some(Persistent { scene, hzb, .. }) => {
-				let curr_size = hzb.desc().size;
-				if curr_size.width != size.x || curr_size.height != size.y {
-					frame.delete(self.inner.take().unwrap().hzb);
-					self.inner = Some(Persistent {
-						scene: info.scene.clone(),
-						camera: info.camera,
-						hzb: Self::make_hzb(frame.device(), size),
-					});
-					true
-				} else if !scene.ptr_eq(&info.scene) {
-					*scene = info.scene.clone();
-					true
-				} else {
-					false
-				}
-			},
-			None => {
-				self.inner = Some(Persistent {
-					scene: info.scene.clone(),
-					camera: info.camera,
-					hzb: Self::make_hzb(frame.device(), size),
-				});
-				true
-			},
-		}
-	}
-
-	fn make_hzb(device: &Device, size: Vec2<u32>) -> Image {
-		Image::create(
-			device,
-			resource::ImageDesc {
-				name: "persistent hzb",
-				flags: vk::ImageCreateFlags::empty(),
-				format: vk::Format::R32_SFLOAT,
-				size: vk::Extent3D {
-					width: size.x,
-					height: size.y,
-					depth: 1,
-				},
-				levels: size.x.max(size.y).ilog2(),
-				layers: 1,
-				samples: vk::SampleCountFlags::TYPE_1,
-				usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_DST,
-			},
-		)
-		.unwrap()
-	}
-
-	pub unsafe fn destroy(self, device: &Device) {
-		if let Some(p) = self.inner {
-			p.hzb.destroy(device);
 		}
 	}
 }

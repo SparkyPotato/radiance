@@ -25,8 +25,8 @@ pub trait ToNamed {
 }
 
 pub trait Resource: Default + Sized {
-	type Desc<'a>: Copy;
-	type UnnamedDesc: Eq + Hash + Copy + for<'a> ToNamed<Named<'a> = Self::Desc<'a>>;
+	type Desc<'a>: Copy + Eq + Hash;
+	type UnnamedDesc: Copy + Eq + Hash + for<'a> ToNamed<Named<'a> = Self::Desc<'a>>;
 	type Handle: Copy;
 
 	fn handle(&self) -> Self::Handle;
@@ -39,19 +39,19 @@ pub trait Resource: Default + Sized {
 }
 
 /// A description for a buffer.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct BufferDesc<'a> {
 	pub name: &'a str,
 	pub size: u64,
 	pub usage: vk::BufferUsageFlags,
-	pub on_cpu: bool,
+	pub readback: bool,
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct BufferDescUnnamed {
 	pub size: u64,
 	pub usage: vk::BufferUsageFlags,
-	pub on_cpu: bool,
+	pub readback: bool,
 }
 
 impl ToNamed for BufferDescUnnamed {
@@ -62,7 +62,7 @@ impl ToNamed for BufferDescUnnamed {
 			name,
 			size: self.size,
 			usage: self.usage,
-			on_cpu: self.on_cpu,
+			readback: self.readback,
 		}
 	}
 }
@@ -121,7 +121,16 @@ impl Buffer {
 	pub fn desc(&self) -> graph::BufferDesc {
 		graph::BufferDesc {
 			size: self.data().len() as _,
-			upload: false,
+			loc: if self
+				.alloc
+				.memory_properties()
+				.contains(vk::MemoryPropertyFlags::HOST_COHERENT)
+			{
+				graph::BufferLoc::Readback
+			} else {
+				graph::BufferLoc::GpuOnly
+			},
+			persist: None,
 		}
 	}
 }
@@ -201,7 +210,7 @@ impl Resource for Buffer {
 }
 
 /// A description for an image.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Hash, PartialEq, Eq)]
 pub struct ImageDesc<'a> {
 	pub name: &'a str,
 	pub flags: vk::ImageCreateFlags,
@@ -332,6 +341,7 @@ impl Resource for Image {
 					layers: desc.layers,
 					format: desc.format,
 					samples: desc.samples,
+					persist: None,
 				},
 			})
 		}
@@ -391,7 +401,7 @@ impl Default for Subresource {
 }
 
 /// A description for an image view.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ImageViewDesc<'a> {
 	pub name: &'a str,
 	pub image: vk::Image,
@@ -510,7 +520,7 @@ impl Resource for ImageView {
 	}
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct ASDesc<'a> {
 	pub name: &'a str,
 	pub flags: vk::AccelerationStructureCreateFlagsKHR,
@@ -560,7 +570,7 @@ impl Resource for AS {
 					size: desc.size,
 					usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
 						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-					on_cpu: false,
+					readback: false,
 				},
 			)?;
 			let inner = device.as_ext().create_acceleration_structure(

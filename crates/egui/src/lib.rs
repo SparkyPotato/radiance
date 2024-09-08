@@ -27,6 +27,7 @@ use radiance_graph::{
 	graph::{
 		util::{ByteReader, ImageStage},
 		BufferDesc,
+		BufferLoc,
 		BufferUsage,
 		BufferUsageType,
 		ExternalImage,
@@ -177,7 +178,8 @@ impl Renderer {
 		let vertex = pass.resource(
 			BufferDesc {
 				size: self.vertex_size,
-				upload: true,
+				loc: BufferLoc::Upload,
+				persist: None,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::Vertex)],
@@ -191,7 +193,8 @@ impl Renderer {
 		let index = pass.resource(
 			BufferDesc {
 				size: self.index_size,
-				upload: true,
+				loc: BufferLoc::Upload,
+				persist: None,
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::IndexBuffer],

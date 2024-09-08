@@ -248,7 +248,6 @@ unsafe impl Allocator for Arena {
 		&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout,
 	) -> Result<NonNull<[u8]>, AllocError> {
 		let inner = self.inner.get();
-
 		if likely(ptr.addr().get() == (*inner).last_alloc) {
 			// Reuse the last allocation if possible.
 			let offset = ptr.as_ptr().offset_from((*(*inner).curr_block.as_ptr()).data.as_ptr());
@@ -272,7 +271,6 @@ unsafe impl Allocator for Arena {
 impl Drop for Arena {
 	fn drop(&mut self) {
 		let inner = self.inner.get_mut();
-
 		let mut block = Some(inner.head);
 		while let Some(mut b) = block {
 			let mut prev = b;

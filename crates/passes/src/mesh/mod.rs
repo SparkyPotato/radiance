@@ -383,7 +383,6 @@ impl VisBuffer {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		self.setup.destroy(device);
 		self.early_instance_cull.destroy(device);
 		self.late_instance_cull.destroy(device);
 		self.early_bvh_cull.destroy(device);

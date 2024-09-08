@@ -60,7 +60,7 @@ struct Init {
 	}
 
 	VertexTransform transform(u32 gtid) {
-		return transform_vertex(this.mvp, this.meshlet.vertex(this.mesh, gtid));
+		return VertexTransform(this.mvp, this.meshlet.vertex(this.mesh, gtid));
 	}
 
 	u32x3 tri(u32 gtid) {
@@ -163,7 +163,7 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	var z_row = dot(v_z, w_row);
 	if (WaveActiveAnyTrue(maxv.x - minv.x > 4)) {
 		scanline(minv, maxv, w_x, w_y, w_row, z_x, z_y, z_row, write);
-	} else {	
+	} else {
 		bounding(minv, maxv, w_x, w_y, w_row, z_x, z_y, z_row, write);
 	}
 }

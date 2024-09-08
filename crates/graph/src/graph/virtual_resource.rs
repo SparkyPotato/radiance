@@ -10,13 +10,22 @@ use crate::{
 	resource::{BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
 };
 
+/// The location of a GPU buffer.
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub enum BufferLoc {
+	Upload,
+	GpuOnly,
+	Readback,
+}
+
 /// A description for a GPU buffer.
 ///
 /// Has a corresponding usage of [`BufferUsage`].
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct BufferDesc {
 	pub size: u64,
-	pub upload: bool,
+	pub loc: BufferLoc,
+	pub persist: Option<&'static str>,
 }
 
 /// The usage of a buffer in a render pass.
@@ -51,6 +60,7 @@ pub struct ImageDesc {
 	pub levels: u32,
 	pub layers: u32,
 	pub samples: vk::SampleCountFlags,
+	pub persist: Option<&'static str>,
 }
 
 /// The usage of an image in a render pass.
@@ -350,7 +360,8 @@ impl VirtualResourceDesc for ExternalBuffer {
 		VirtualResourceType::Buffer(BufferData {
 			desc: BufferDesc {
 				size: self.handle.data.len() as _,
-				upload: false,
+				loc: BufferLoc::GpuOnly,
+				persist: None,
 			},
 			handle: self.handle,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
@@ -399,6 +410,7 @@ impl VirtualResourceDesc for SwapchainImage {
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
+				persist: None,
 			},
 			handle: (self.handle, vk::ImageLayout::UNDEFINED),
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),

@@ -24,17 +24,23 @@ pub enum DebugVis {
 
 impl DebugVis {
 	pub fn requires_debug_info(self) -> bool { matches!(self, Self::Overdraw(..) | Self::HwSw) }
+
+	pub fn to_u32(self) -> u32 {
+		match self {
+			DebugVis::Triangles => 0,
+			DebugVis::Meshlets => 1,
+			DebugVis::Overdraw(..) => 2,
+			DebugVis::HwSw => 3,
+			DebugVis::Normals => 4,
+			DebugVis::HzbMip => 5,
+			DebugVis::HzbUv => 6,
+		}
+	}
 }
 
 pub struct DebugMesh {
-	triangles: Pipeline,
-	meshlets: Pipeline,
-	overdraw: Pipeline,
-	hwsw: Pipeline,
-	normals: Pipeline,
-	hzb_mip: Pipeline,
-	hzb_uv: Pipeline,
 	layout: vk::PipelineLayout,
+	pipeline: Pipeline,
 }
 
 #[repr(C)]
@@ -48,32 +54,12 @@ struct PushConstants {
 	late_sw: GpuPtr<u8>,
 	visbuffer: StorageImageId,
 	debug: Option<DebugResId>,
+	ty: u32,
 	bottom: u32,
 	top: u32,
-	_pad: u32,
 }
 
 impl DebugMesh {
-	fn pipeline(device: &Device, layout: vk::PipelineLayout, shader: &'static str) -> Result<Pipeline> {
-		device.graphics_pipeline(GraphicsPipelineDesc {
-			layout,
-			shaders: &[
-				ShaderInfo {
-					shader: "graph.util.screen",
-					..Default::default()
-				},
-				ShaderInfo {
-					shader,
-					spec: &["passes.mesh.debug"],
-				},
-			],
-			raster: no_cull(),
-			blend: simple_blend(&[no_blend()]),
-			color_attachments: &[vk::Format::R8G8B8A8_SRGB],
-			..Default::default()
-		})
-	}
-
 	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
 			let layout = device.device().create_pipeline_layout(
@@ -87,13 +73,23 @@ impl DebugMesh {
 
 			Ok(Self {
 				layout,
-				triangles: Self::pipeline(device, layout, "passes.debug.triangles")?,
-				meshlets: Self::pipeline(device, layout, "passes.debug.meshlets")?,
-				overdraw: Self::pipeline(device, layout, "passes.debug.overdraw")?,
-				hwsw: Self::pipeline(device, layout, "passes.debug.hwsw")?,
-				normals: Self::pipeline(device, layout, "passes.debug.normals")?,
-				hzb_mip: Self::pipeline(device, layout, "passes.debug.hzb_mip")?,
-				hzb_uv: Self::pipeline(device, layout, "passes.debug.hzb_uv")?,
+				pipeline: device.graphics_pipeline(GraphicsPipelineDesc {
+					layout,
+					shaders: &[
+						ShaderInfo {
+							shader: "graph.util.screen",
+							..Default::default()
+						},
+						ShaderInfo {
+							shader: "passes.debug.main",
+							spec: &["passes.mesh.debug"],
+						},
+					],
+					raster: no_cull(),
+					blend: simple_blend(&[no_blend()]),
+					color_attachments: &[vk::Format::R8G8B8A8_SRGB],
+					..Default::default()
+				})?,
 			})
 		}
 	}
@@ -182,19 +178,7 @@ impl DebugMesh {
 				}],
 			);
 			dev.cmd_set_scissor(buf, 0, &[area]);
-			dev.cmd_bind_pipeline(
-				buf,
-				vk::PipelineBindPoint::GRAPHICS,
-				match vis {
-					DebugVis::Triangles => self.triangles.get(),
-					DebugVis::Meshlets => self.meshlets.get(),
-					DebugVis::Overdraw(..) => self.overdraw.get(),
-					DebugVis::HwSw => self.hwsw.get(),
-					DebugVis::Normals => self.normals.get(),
-					DebugVis::HzbMip => self.hzb_mip.get(),
-					DebugVis::HzbUv => self.hzb_uv.get(),
-				},
-			);
+			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline.get());
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::GRAPHICS,
@@ -221,9 +205,9 @@ impl DebugMesh {
 					late_sw: pass.get(output.late_sw).ptr(),
 					visbuffer: visbuffer.storage_id.unwrap(),
 					debug: output.debug.map(|d| d.get(&mut pass)),
+					ty: vis.to_u32(),
 					bottom,
 					top,
-					_pad: 0,
 				}),
 			);
 
@@ -234,13 +218,7 @@ impl DebugMesh {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		self.triangles.destroy();
-		self.meshlets.destroy();
-		self.overdraw.destroy();
-		self.hwsw.destroy();
-		self.normals.destroy();
-		self.hzb_mip.destroy();
-		self.hzb_uv.destroy();
+		self.pipeline.destroy();
 		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

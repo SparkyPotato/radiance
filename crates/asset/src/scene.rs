@@ -113,7 +113,7 @@ impl Asset for Scene {
 				name: &format!("{} instances", ctx.name),
 				size,
 				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
-				on_cpu: false,
+				readback: false,
 			},
 		)
 		.map_err(LoadError::Vulkan)?;

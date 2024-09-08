@@ -1,5 +1,6 @@
 use std::collections::hash_map::Entry;
 
+use ash::vk;
 use rustc_hash::FxHashMap;
 
 use crate::{
@@ -72,7 +73,7 @@ impl<T: Resource> ResourceList<T> {
 			}
 			first_destroyable += 1;
 		}
-		for resource in self.resources.drain(first_destroyable..).rev() {
+		for resource in self.resources.drain(first_destroyable..) {
 			resource.inner.destroy(device);
 		}
 		self.cursor = 0;
@@ -172,6 +173,70 @@ impl<T: Resource> UniqueCache<T> {
 
 	pub fn destroy(self, device: &Device) {
 		for (_, res) in self.resources {
+			unsafe {
+				res.inner.destroy(device);
+			}
+		}
+	}
+}
+
+pub struct PersistentCache<T: Resource> {
+	resources: FxHashMap<T::Desc<'static>, (TrackedResource<T>, vk::ImageLayout)>,
+}
+
+impl<T: Resource> PersistentCache<T> {
+	/// Create an empty cache.
+	pub fn new() -> Self {
+		Self {
+			resources: FxHashMap::default(),
+		}
+	}
+
+	/// Get the resource with the given descriptor. Is valid until [`Self::reset`] is called.
+	pub fn get(
+		&mut self, device: &Device, desc: T::Desc<'static>, next_layout: vk::ImageLayout,
+	) -> Result<(T::Handle, vk::ImageLayout)> {
+		match self.resources.entry(desc) {
+			Entry::Vacant(v) => {
+				let resource = T::create(device, *v.key())?;
+				let handle = resource.handle();
+				v.insert((
+					TrackedResource {
+						inner: resource,
+						unused: 0,
+					},
+					next_layout,
+				));
+				Ok((handle, next_layout))
+			},
+			Entry::Occupied(mut o) => {
+				let (o, l) = o.get_mut();
+				o.unused = 0;
+				let old = *l;
+				*l = next_layout;
+				Ok((o.inner.handle(), old))
+			},
+		}
+	}
+
+	/// Reset the cache, incrementing the generation.
+	///
+	/// # Safety
+	/// All resources returned by [`Self::get`] must not be used after this call.
+	pub unsafe fn reset(&mut self, device: &Device) {
+		self.resources.retain(|_, (res, _)| {
+			res.unused += 1;
+			if res.unused >= DESTROY_LAG {
+				std::mem::take(&mut res.inner).destroy(device);
+				false
+			} else {
+				true
+			}
+		})
+	}
+
+	pub fn destroy(self, device: &Device) {
+		for (_, (res, _)) in self.resources {
 			unsafe {
 				res.inner.destroy(device);
 			}

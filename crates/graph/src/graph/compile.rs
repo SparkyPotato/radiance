@@ -20,6 +20,7 @@ use crate::{
 			VirtualResourceType,
 		},
 		ArenaMap,
+		BufferLoc,
 		Frame,
 		FrameEvent,
 		ImageDesc,
@@ -252,15 +253,21 @@ impl<'graph> ResourceAliaser<'graph> {
 		self.lifetimes.push(lifetime);
 	}
 
+	fn is_buffer_merge_candidate(data: &BufferData) -> bool {
+		data.handle.buffer == vk::Buffer::null()
+			&& matches!(data.desc.loc, BufferLoc::GpuOnly)
+			&& data.desc.persist.is_none()
+	}
+
 	fn try_merge_buffer(&mut self, data: BufferData<'graph>, lifetime: ResourceLifetime) {
 		// If the data to be merged is an external resource, don't try to merge it at all.
-		if data.handle.buffer == vk::Buffer::null() && !data.desc.upload {
+		if Self::is_buffer_merge_candidate(&data) {
 			for &i in self.buffers.iter() {
 				let res = &mut self.resources[i as usize];
 				let res = unsafe { res.buffer_mut() };
 				let res_lifetime = &mut self.lifetimes[i as usize];
 				// If the lifetimes aren't overlapping, merge.
-				if res_lifetime.independent(lifetime) && !res.desc.upload {
+				if res_lifetime.independent(lifetime) && Self::is_buffer_merge_candidate(&res) {
 					res.desc.size = res.desc.size.max(data.desc.size);
 					res.usages.extend(data.usages);
 					*res_lifetime = res_lifetime.union(lifetime);
@@ -273,8 +280,12 @@ impl<'graph> ResourceAliaser<'graph> {
 		self.push(Resource::Buffer(data), lifetime);
 	}
 
+	fn is_image_merge_candidate(data: &ImageData) -> bool {
+		data.handle.0 == vk::Image::null() && data.desc.persist.is_none()
+	}
+
 	fn try_merge_image(&mut self, data: ImageData<'graph>, lifetime: ResourceLifetime) {
-		if data.handle.0 == vk::Image::null() {
+		if Self::is_image_merge_candidate(&data) {
 			for &i in self.images.get(&data.desc).into_iter().flatten() {
 				let res = &mut self.resources[i as usize];
 				let res = unsafe { res.image_mut() };
@@ -284,7 +295,8 @@ impl<'graph> ResourceAliaser<'graph> {
 					&& compatible_formats(
 						res.usages.first_key_value().unwrap().1.format,
 						data.usages.first_key_value().unwrap().1.format,
-					) {
+					) && Self::is_image_merge_candidate(&res)
+				{
 					res.usages.extend(data.usages);
 					*res_lifetime = res_lifetime.union(lifetime);
 					self.resource_map.push(i);
@@ -318,20 +330,36 @@ impl<'graph> ResourceAliaser<'graph> {
 				Resource::Buffer(data) => {
 					buffers.push(i as _);
 					if data.handle.buffer == vk::Buffer::null() {
-						data.handle = if data.desc.upload {
-							&mut graph.caches.upload_buffers[graph.curr_frame]
+						let desc = crate::resource::BufferDescUnnamed {
+							size: data.desc.size,
+							usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
+							readback: matches!(data.desc.loc, BufferLoc::Readback),
+						};
+						data.handle = if let Some(name) = data.desc.persist {
+							graph
+								.caches
+								.persistent_buffers
+								.get(
+									device,
+									crate::resource::BufferDesc {
+										name,
+										size: desc.size,
+										usage: desc.usage,
+										readback: desc.readback,
+									},
+									vk::ImageLayout::UNDEFINED,
+								)
+								.expect("failed to allocated graph buffer")
+								.0
 						} else {
-							&mut graph.caches.buffers
-						}
-						.get(
-							device,
-							crate::resource::BufferDescUnnamed {
-								size: data.desc.size,
-								usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
-								on_cpu: false,
-							},
-						)
-						.expect("failed to allocated graph buffer");
+							if matches!(data.desc.loc, BufferLoc::Readback | BufferLoc::Upload) {
+								&mut graph.caches.shared_buffers[graph.curr_frame]
+							} else {
+								&mut graph.caches.buffers
+							}
+							.get(device, desc)
+							.expect("failed to allocated graph buffer")
+						};
 					}
 				},
 
@@ -344,25 +372,45 @@ impl<'graph> ResourceAliaser<'graph> {
 							.any(|u| u.format != data.desc.format)
 							.then_some(vk::ImageCreateFlags::MUTABLE_FORMAT)
 							.unwrap_or_default();
-						data.handle = (
+						let desc = crate::resource::ImageDescUnnamed {
+							flags,
+							format: data.desc.format,
+							size: data.desc.size,
+							levels: data.desc.levels,
+							layers: data.desc.layers,
+							samples: data.desc.samples,
+							usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
+						};
+						data.handle = if let Some(name) = data.desc.persist {
+							let next_layout = data.usages.last_key_value().unwrap().1.as_prev().image_layout;
 							graph
 								.caches
-								.images
+								.persistent_images
 								.get(
 									device,
-									crate::resource::ImageDescUnnamed {
+									crate::resource::ImageDesc {
+										name,
 										flags,
-										format: data.desc.format,
-										size: data.desc.size,
-										levels: data.desc.levels,
-										layers: data.desc.layers,
-										samples: data.desc.samples,
-										usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
+										format: desc.format,
+										size: desc.size,
+										levels: desc.levels,
+										layers: desc.layers,
+										samples: desc.samples,
+										usage: desc.usage,
 									},
+									next_layout,
 								)
-								.expect("failed to allocate graph image"),
-							vk::ImageLayout::UNDEFINED,
-						);
+								.expect("failed to allocate graph image")
+						} else {
+							(
+								graph
+									.caches
+									.images
+									.get(device, desc)
+									.expect("failed to allocate graph image"),
+								vk::ImageLayout::UNDEFINED,
+							)
+						};
 					}
 				},
 			}
