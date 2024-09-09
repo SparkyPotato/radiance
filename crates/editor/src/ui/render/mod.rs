@@ -13,12 +13,16 @@ use winit::event::WindowEvent;
 use crate::{
 	ui::{
 		debug::Debug,
-		render::camera::{CameraController, Mode},
+		render::{
+			camera::{CameraController, Mode},
+			picking::Picker,
+		},
 	},
 	window::Window,
 };
 
 mod camera;
+mod picking;
 
 enum Scene {
 	None,
@@ -29,6 +33,7 @@ enum Scene {
 pub struct Renderer {
 	scene: Scene,
 	visbuffer: VisBuffer,
+	picker: Picker,
 	debug: DebugMesh,
 	camera: CameraController,
 }
@@ -38,6 +43,7 @@ impl Renderer {
 		Ok(Self {
 			scene: Scene::None,
 			visbuffer: VisBuffer::new(device)?,
+			picker: Picker::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
 		})
@@ -89,10 +95,9 @@ impl Renderer {
 		let rect = ui.available_rect_before_wrap();
 		let size = rect.size();
 
-		if ctx.input(|x| {
-			let p = &x.pointer;
-			p.hover_pos().map(|x| rect.contains(x)).unwrap_or(false) && p.button_down(PointerButton::Secondary)
-		}) {
+		let pointer_pos = ctx.input(|x| x.pointer.hover_pos());
+		let pointer_in = pointer_pos.map(|x| rect.contains(x)).unwrap_or(false);
+		if ctx.input(|x| pointer_in && x.pointer.button_down(PointerButton::Secondary)) {
 			self.camera.set_mode(window, Mode::Camera);
 		} else {
 			self.camera.set_mode(window, Mode::Default);
@@ -110,7 +115,16 @@ impl Renderer {
 			},
 		);
 
-		let img = self.debug.run(frame, debug.debug_vis(), visbuffer);
+		let clicked = ctx.input(|x| pointer_in && x.pointer.primary_clicked());
+		let selected = self.picker.run(
+			frame,
+			visbuffer.reader,
+			clicked.then(|| pointer_pos.map(|x| x - rect.min)).flatten(),
+		);
+
+		let img = self
+			.debug
+			.run(frame, debug.debug_vis(), visbuffer, selected.into_iter());
 		ui.image((to_texture_id(img), size));
 
 		Some(false)
@@ -136,6 +150,7 @@ impl Renderer {
 	pub unsafe fn destroy(mut self, device: &Device) {
 		self.scene = Scene::None;
 		self.visbuffer.destroy(device);
+		self.picker.destroy(device);
 		self.debug.destroy(device);
 	}
 }

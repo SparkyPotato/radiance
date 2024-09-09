@@ -6,8 +6,9 @@ use radiance_asset::{
 };
 use radiance_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, Pipeline, ShaderInfo},
-	graph::{Frame, PassContext, Res},
-	resource::{BufferHandle, GpuPtr, ImageView},
+	graph::{BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassBuilder, PassContext, Res},
+	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
+	sync::Shader,
 	Result,
 };
 use vek::{Mat4, Vec2};
@@ -39,15 +40,92 @@ pub struct RenderInfo {
 }
 
 #[derive(Copy, Clone)]
-pub struct RenderOutput {
-	pub instances: GpuPtr<GpuInstance>,
-	pub camera: Res<BufferHandle>,
+pub struct VisBufferReader {
 	pub visbuffer: Res<ImageView>,
-	pub debug: Option<DebugRes>,
 	pub early_hw: Res<BufferHandle>,
 	pub early_sw: Res<BufferHandle>,
 	pub late_hw: Res<BufferHandle>,
 	pub late_sw: Res<BufferHandle>,
+	pub debug: Option<DebugRes>,
+}
+
+impl VisBufferReader {
+	pub fn add(&self, pass: &mut PassBuilder, shader: Shader, debug: bool) {
+		let usage = BufferUsage {
+			usages: &[BufferUsageType::ShaderStorageRead(shader)],
+		};
+		pass.reference(self.early_hw, usage);
+		pass.reference(self.early_sw, usage);
+		pass.reference(self.late_hw, usage);
+		pass.reference(self.late_sw, usage);
+
+		let usage = ImageUsage {
+			format: vk::Format::UNDEFINED,
+			usages: &[ImageUsageType::ShaderStorageRead(Shader::Fragment)],
+			view_type: Some(vk::ImageViewType::TYPE_2D),
+			subresource: Subresource::default(),
+		};
+		pass.reference(self.visbuffer, usage);
+		if let Some(d) = self.debug
+			&& debug
+		{
+			pass.reference(d.overdraw, usage);
+			pass.reference(d.hwsw, usage);
+		}
+	}
+
+	pub fn get(self, pass: &mut PassContext) -> GpuVisBufferReader {
+		GpuVisBufferReader {
+			early_hw: pass.get(self.early_hw).ptr(),
+			early_sw: pass.get(self.early_sw).ptr(),
+			late_hw: pass.get(self.late_hw).ptr(),
+			late_sw: pass.get(self.late_sw).ptr(),
+			visbuffer: pass.get(self.visbuffer).storage_id.unwrap(),
+			_pad: 0,
+		}
+	}
+
+	pub fn get_debug(self, pass: &mut PassContext) -> GpuVisBufferReaderDebug {
+		GpuVisBufferReaderDebug {
+			early_hw: pass.get(self.early_hw).ptr(),
+			early_sw: pass.get(self.early_sw).ptr(),
+			late_hw: pass.get(self.late_hw).ptr(),
+			late_sw: pass.get(self.late_sw).ptr(),
+			visbuffer: pass.get(self.visbuffer).storage_id.unwrap(),
+			debug: self.debug.map(|x| x.get(pass)),
+			_pad: 0,
+		}
+	}
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct GpuVisBufferReaderDebug {
+	early_hw: GpuPtr<u8>,
+	early_sw: GpuPtr<u8>,
+	late_hw: GpuPtr<u8>,
+	late_sw: GpuPtr<u8>,
+	visbuffer: StorageImageId,
+	debug: Option<DebugResId>,
+	_pad: u32,
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct GpuVisBufferReader {
+	early_hw: GpuPtr<u8>,
+	early_sw: GpuPtr<u8>,
+	late_hw: GpuPtr<u8>,
+	late_sw: GpuPtr<u8>,
+	visbuffer: StorageImageId,
+	_pad: u32,
+}
+
+#[derive(Copy, Clone)]
+pub struct RenderOutput {
+	pub instances: GpuPtr<GpuInstance>,
+	pub camera: Res<BufferHandle>,
+	pub reader: VisBufferReader,
 }
 
 pub struct VisBuffer {
@@ -165,24 +243,25 @@ impl VisBuffer {
 	}
 
 	fn pipeline(device: &Device, layout: vk::PipelineLayout, sw: bool, early: bool, debug: bool) -> Result<Pipeline> {
+		let spec: &[&str] = if debug {
+			if early {
+				&["passes.mesh.debug", "passes.mesh.early"]
+			} else {
+				&["passes.mesh.debug", "passes.mesh.late"]
+			}
+		} else {
+			if early {
+				&["passes.mesh.early"]
+			} else {
+				&["passes.mesh.late"]
+			}
+		};
 		if sw {
 			device.compute_pipeline(
 				layout,
 				ShaderInfo {
-					shader: "passes.mesh.sw.c",
-					spec: if debug {
-						if early {
-							&["DEBUG", "EARLY"]
-						} else {
-							&["DEBUG"]
-						}
-					} else {
-						if early {
-							&["EARLY"]
-						} else {
-							&[]
-						}
-					},
+					shader: "passes.mesh.mesh.sw",
+					spec,
 				},
 			)
 		} else {
@@ -190,19 +269,7 @@ impl VisBuffer {
 				shaders: &[
 					ShaderInfo {
 						shader: "passes.mesh.mesh.hw",
-						spec: if debug {
-							if early {
-								&["passes.mesh.debug", "passes.mesh.early"]
-							} else {
-								&["passes.mesh.debug", "passes.mesh.late"]
-							}
-						} else {
-							if early {
-								&["passes.mesh.early"]
-							} else {
-								&["passes.mesh.late"]
-							}
-						},
+						spec,
 					},
 					ShaderInfo {
 						shader: "passes.mesh.pixel.main",
@@ -267,12 +334,14 @@ impl VisBuffer {
 		RenderOutput {
 			instances: info.scene.instances(),
 			camera,
-			visbuffer,
-			early_hw: io.meshlets[0],
-			early_sw: io.meshlets[1],
-			late_hw: io.meshlets[2],
-			late_sw: io.meshlets[3],
-			debug,
+			reader: VisBufferReader {
+				visbuffer,
+				early_hw: io.meshlets[0],
+				early_sw: io.meshlets[1],
+				late_hw: io.meshlets[2],
+				late_sw: io.meshlets[3],
+				debug,
+			},
 		}
 	}
 

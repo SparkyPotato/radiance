@@ -15,11 +15,9 @@ enum DebugVis : u32 {
 struct PushConstants {
 	Instance* instances;
 	Camera* camera;
-	MeshletQueue early_hw;
-	MeshletQueue early_sw;
-	MeshletQueue late_hw;
-	MeshletQueue late_sw;
-	VisBufferTex read;
+	VisBufferReader read;
+	u32* highlighted;
+	u32 highlight_count;
 	u32 vis;
 	u32 bottom;
 	u32 top;
@@ -40,21 +38,20 @@ u32 hash(u32 a) {
 	return a;
 }
 
-NodePointer get_meshlet(u32 id) {
-	let early_hw = Constants.early_hw.len();
-	let early_sw = Constants.early_sw.len();
-	let late_hw = Constants.late_hw.len();
-	let late_sw = Constants.late_sw.len();
-	if (id < early_hw)
-		return Constants.early_hw.get(id);
-	id -= early_hw;
-	if (id < early_sw)
-		return Constants.early_sw.get(id);
-	id -= early_sw;
-	if (id < late_hw)
-		return Constants.late_hw.get(id);
-	id -= late_hw;
-	return Constants.late_sw.get(id);
+bool is_instance_highlighted(u32 id) {
+	var left = 0;
+	var right = Constants.highlight_count;
+	while (left < right) {
+		let m = (left + right) >> 1;
+		if (Constants.highlighted[m] < id) {
+			left = m + 1;
+		} else if (Constants.highlighted[m] > id) {
+			right = m;
+		} else {
+			return true;
+		}
+	}
+	return false;
 }
 
 f32x3 heatmap(f32 heat) {
@@ -68,7 +65,7 @@ f32x3 heatmap(f32 heat) {
 	return lerp(cols[bot], cols[top], scaled - f32(bot));
 }
 
-f32x3 sobel(f32x2 uv, f32x3 col, f32 depth) {
+f32x3 sobel(f32x2 uv, f32x3 col, u32 instance) {
 	// clang-format off
 	i32 sobel_x[] = {
 		1, 0, -1,
@@ -92,33 +89,39 @@ f32x3 sobel(f32x2 uv, f32x3 col, f32 depth) {
 	let pos = Constants.read.pixel_of_uv(uv);
 	let size = Constants.read.size() - 1;
 	for (int i = 0; i < samples.getCount(); i++) {
-		let data = Constants.read.decode(clamp(pos + samples[i], 0, size));
-		let depth = log2(Constants.camera[0].near / data.depth + 1.f) * 2.f;
+		var d = 1.f;
+		if (let p = Constants.read.decode(clamp(pos + samples[i], 0, size))) {
+			d = p.depth;
+		}
+		let depth = log2(Constants.camera[0].near / d + 1.f);
 		grad_x += sobel_x[i] * depth;
 		grad_y += sobel_y[i] * depth;
 	}
-	let ma = max(abs(grad_x), abs(grad_y));
-	return saturate(col * (1.f - ma));
+	let ma = max(abs(grad_x), abs(grad_y)) * 2.f;
+	if (is_instance_highlighted(instance)) {
+		return lerp(col, f32x3(1.f, 0.6f, 0.f), saturate(ma * 10.f));
+	} else {
+		return saturate(col * (1.f - ma));
+	}
 }
 
 [shader("pixel")]
 f32x4 main(ScreenOutput input) : SV_Target0 {
-	let visbuf = Constants.read.decode(input.uv);
-	if (visbuf.data == 0xffffffff)
+	let pix = Constants.read.decode(input.uv);
+	if (pix == none)
 		return f32x4(0.f, 0.f, 0.f, 1.f);
-	let data = VisBufferData(visbuf.data);
-	let p = get_meshlet(data.meshlet_id);
-	let tri =
-		DecodedTri(Constants.instances, Constants.camera[0], data, input.uv, visbuf.depth, Constants.read.size(), p);
+	let p = pix.value;
+
+	let tri = DecodedTri(Constants.instances, Constants.camera[0], input.uv, Constants.read.size(), p);
 	var col = f32x3(1.f, 0.f, 1.f);
 	switch (Constants.vis) {
 		case DebugVis.Triangles: {
-			let h = hash(data.triangle_id);
+			let h = hash(p.raw.triangle_id);
 			col = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255)) / 255.f;
 			break;
 		}
 		case DebugVis.Meshlets: {
-			let h = hash(p.instance) ^ hash(p.node_offset);
+			let h = hash(p.meshlet.instance) ^ hash(p.meshlet.node_offset);
 			col = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255)) / 255.f;
 			break;
 		}
@@ -143,6 +146,6 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		}
 	}
 
-	col = sobel(input.uv, col, visbuf.depth);
+	col = sobel(input.uv, col, p.meshlet.instance);
 	return f32x4(col, 1.f);
 }

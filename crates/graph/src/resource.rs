@@ -19,13 +19,17 @@ use crate::{
 };
 
 pub trait ToNamed {
-	type Named<'a>;
+	type Named<'a>: Named<'a>;
 
 	fn to_named(self, name: &str) -> Self::Named<'_>;
 }
 
+pub trait Named<'a> {
+	fn name(&self) -> &'a str;
+}
+
 pub trait Resource: Default + Sized {
-	type Desc<'a>: Copy + Eq + Hash;
+	type Desc<'a>: Copy + Eq + Hash + Named<'a>;
 	type UnnamedDesc: Copy + Eq + Hash + for<'a> ToNamed<Named<'a> = Self::Desc<'a>>;
 	type Handle: Copy;
 
@@ -54,6 +58,10 @@ pub struct BufferDescUnnamed {
 	pub readback: bool,
 }
 
+impl<'a> Named<'a> for BufferDesc<'a> {
+	fn name(&self) -> &'a str { self.name }
+}
+
 impl ToNamed for BufferDescUnnamed {
 	type Named<'a> = BufferDesc<'a>;
 
@@ -72,6 +80,9 @@ impl ToNamed for BufferDescUnnamed {
 pub struct GpuPtr<T: NoUninit>(pub u64, PhantomData<fn() -> T>);
 unsafe impl<T: NoUninit> Zeroable for GpuPtr<T> {}
 unsafe impl<T: NoUninit> Pod for GpuPtr<T> {}
+impl<T: NoUninit> GpuPtr<T> {
+	pub fn null() -> Self { Self(0, PhantomData) }
+}
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct BufferHandle {
@@ -231,6 +242,10 @@ pub struct ImageDescUnnamed {
 	pub layers: u32,
 	pub samples: vk::SampleCountFlags,
 	pub usage: vk::ImageUsageFlags,
+}
+
+impl<'a> Named<'a> for ImageDesc<'a> {
+	fn name(&self) -> &'a str { self.name }
 }
 
 impl ToNamed for ImageDescUnnamed {
@@ -422,6 +437,10 @@ pub struct ImageViewDescUnnamed {
 	pub subresource: Subresource,
 }
 
+impl<'a> Named<'a> for ImageViewDesc<'a> {
+	fn name(&self) -> &'a str { self.name }
+}
+
 impl ToNamed for ImageViewDescUnnamed {
 	type Named<'a> = ImageViewDesc<'a>;
 
@@ -535,6 +554,10 @@ pub struct ASDescUnnamed {
 	pub size: u64,
 }
 
+impl<'a> Named<'a> for ASDesc<'a> {
+	fn name(&self) -> &'a str { self.name }
+}
+
 impl ToNamed for ASDescUnnamed {
 	type Named<'a> = ASDesc<'a>;
 
@@ -599,6 +622,10 @@ impl Resource for AS {
 		device.as_ext().destroy_acceleration_structure(self.inner, None);
 		self.buffer.destroy(device);
 	}
+}
+
+impl<'a> Named<'a> for () {
+	fn name(&self) -> &'a str { "event" }
 }
 
 impl ToNamed for () {

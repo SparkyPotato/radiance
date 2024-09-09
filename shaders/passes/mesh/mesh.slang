@@ -97,7 +97,7 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 		VisBufferData data = { init.mid, gtid };
 		// TODO: not strictly correct
 		let backface = edge_fn(HWPos[i.x], HWPos[i.y], HWPos[i.z]) < 0.f;
-		visbuffer[gtid] = { data.encode(), backface };
+		visbuffer[gtid] = { data.encode(), false };
 	}
 }
 

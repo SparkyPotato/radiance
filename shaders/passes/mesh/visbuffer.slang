@@ -90,6 +90,69 @@ public struct VertexTransform {
 	}
 };
 
+public struct VisBufferPixel {
+	public f32 depth;
+	public VisBufferData raw;
+	public NodePointer meshlet;
+}
+
+public struct VisBufferReader {
+	MeshletQueue early_hw;
+	MeshletQueue early_sw;
+	MeshletQueue late_hw;
+	MeshletQueue late_sw;
+	VisBufferTex read;
+	u32 _pad;
+
+	public u32x2 pixel_of_uv(f32x2 uv) {
+		return this.read.pixel_of_uv(uv);
+	}
+
+	public u32x2 size() {
+		return this.read.size();
+	}
+
+	public Optional<VisBufferPixel> decode(u32x2 pix) {
+		let visbuf = this.read.decode(pix);
+		if (visbuf.data == 0xffffffff)
+			return none;
+		VisBufferPixel ret;
+		ret.depth = visbuf.depth;
+		ret.raw = VisBufferData(visbuf.data);
+		ret.meshlet = this.get_meshlet(ret.raw.meshlet_id);
+		return ret;
+	}
+
+	public Optional<VisBufferPixel> decode(f32x2 uv) {
+		return this.decode(this.pixel_of_uv(uv));
+	}
+
+	public u32 overdraw(f32x2 uv) {
+		return this.read.overdraw(uv);
+	}
+
+	public u32 hwsw(f32x2 uv) {
+		return this.read.hwsw(uv);
+	}
+
+	NodePointer get_meshlet(u32 id) {
+		let early_hw = this.early_hw.len();
+		let early_sw = this.early_sw.len();
+		let late_hw = this.late_hw.len();
+		let late_sw = this.late_sw.len();
+		if (id < early_hw)
+			return this.early_hw.get(id);
+		id -= early_hw;
+		if (id < early_sw)
+			return this.early_sw.get(id);
+		id -= early_sw;
+		if (id < late_hw)
+			return this.late_hw.get(id);
+		id -= late_hw;
+		return this.late_sw.get(id);
+	}
+}
+
 // http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/
 public struct DecodedTri {
 	public Vertex v0;
@@ -99,12 +162,12 @@ public struct DecodedTri {
 	public f32x3 ddx;
 	public f32x3 ddy;
 
-	public __init(Instance* instances, Camera cam, VisBufferData data, f32x2 uv, f32 depth, u32x2 size, NodePointer p) {
-		let instance = instances[p.instance];
-		let meshlet = instance.meshlet(p.node_offset);
+	public __init(Instance* instances, Camera cam, f32x2 uv, u32x2 size, VisBufferPixel p) {
+		let instance = instances[p.meshlet.instance];
+		let meshlet = instance.meshlet(p.meshlet.node_offset);
 		let mvp = mul(cam.view_proj, instance.get_transform());
 
-		let t = meshlet.tri(instance.mesh, data.triangle_id);
+		let t = meshlet.tri(instance.mesh, p.raw.triangle_id);
 		this.v0 = meshlet.vertex(instance.mesh, t.x);
 		this.v1 = meshlet.vertex(instance.mesh, t.y);
 		this.v2 = meshlet.vertex(instance.mesh, t.z);

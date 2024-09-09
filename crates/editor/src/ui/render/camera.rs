@@ -104,7 +104,7 @@ impl CameraController {
 				self.grabber.cursor_moved(window, *position);
 				let delta = Vec2::new(position.x as f32, position.y as _)
 					- Vec2::new(self.grabber.last_pos.x as _, self.grabber.last_pos.y as _);
-				let delta = Vec2::new(delta.x, delta.y) * 0.005;
+				let delta = Vec2::new(delta.x, delta.y) * 0.002;
 				self.pitch += delta.y;
 				self.yaw += delta.x;
 				self.pitch = self.pitch.clamp(-f32::FRAC_PI_2(), f32::FRAC_PI_2());

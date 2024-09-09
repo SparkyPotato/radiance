@@ -1,15 +1,27 @@
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
-use radiance_asset::scene::GpuInstance;
+use radiance_asset::{io::SliceWriter, scene::GpuInstance};
 use radiance_graph::{
-	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, Pipeline, ShaderInfo},
-	graph::{BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, PassContext, Res, Shader},
-	resource::{GpuPtr, ImageView, Subresource},
+	device::{Device, GraphicsPipelineDesc, Pipeline, ShaderInfo},
+	graph::{
+		BufferDesc,
+		BufferLoc,
+		BufferUsage,
+		BufferUsageType,
+		Frame,
+		ImageDesc,
+		ImageUsage,
+		ImageUsageType,
+		PassContext,
+		Res,
+		Shader,
+	},
+	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
 	util::pipeline::{no_blend, no_cull, simple_blend},
 	Result,
 };
 
-use crate::mesh::{CameraData, DebugResId, RenderOutput};
+use crate::mesh::{CameraData, GpuVisBufferReaderDebug, RenderOutput};
 
 #[derive(Copy, Clone)]
 pub enum DebugVis {
@@ -48,12 +60,9 @@ pub struct DebugMesh {
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
 	camera: GpuPtr<CameraData>,
-	early_hw: GpuPtr<u8>,
-	early_sw: GpuPtr<u8>,
-	late_hw: GpuPtr<u8>,
-	late_sw: GpuPtr<u8>,
-	visbuffer: StorageImageId,
-	debug: Option<DebugResId>,
+	read: GpuVisBufferReaderDebug,
+	highlighted: GpuPtr<u32>,
+	highlight_count: u32,
 	ty: u32,
 	bottom: u32,
 	top: u32,
@@ -94,27 +103,19 @@ impl DebugMesh {
 		}
 	}
 
+	/// `highlights` must be sorted.
 	pub fn run<'pass>(
 		&'pass self, frame: &mut Frame<'pass, '_>, vis: DebugVis, output: RenderOutput,
+		highlights: impl ExactSizeIterator<Item = u32> + 'pass,
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("debug mesh");
 		let usage = BufferUsage {
 			usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
 		};
 		pass.reference(output.camera, usage);
-		pass.reference(output.early_hw, usage);
-		pass.reference(output.early_sw, usage);
-		pass.reference(output.late_hw, usage);
-		pass.reference(output.late_sw, usage);
+		output.reader.add(&mut pass, Shader::Fragment, true);
 
-		let usage = ImageUsage {
-			format: vk::Format::UNDEFINED,
-			usages: &[ImageUsageType::ShaderStorageRead(Shader::Fragment)],
-			view_type: Some(vk::ImageViewType::TYPE_2D),
-			subresource: Subresource::default(),
-		};
-		pass.reference(output.visbuffer, usage);
-		let desc = pass.desc(output.visbuffer);
+		let desc = pass.desc(output.reader.visbuffer);
 		let out = pass.resource(
 			ImageDesc {
 				format: vk::Format::R8G8B8A8_SRGB,
@@ -127,27 +128,47 @@ impl DebugMesh {
 				subresource: Subresource::default(),
 			},
 		);
-		if let Some(d) = output.debug {
-			pass.reference(d.overdraw, usage);
-			pass.reference(d.hwsw, usage);
-		}
 
-		pass.build(move |ctx| self.execute(ctx, vis, output, out));
+		let highlight_buf = (highlights.len() > 0).then(|| {
+			pass.resource(
+				BufferDesc {
+					size: (std::mem::size_of::<u32>() * highlights.len()) as u64,
+					loc: BufferLoc::Upload,
+					persist: None,
+				},
+				BufferUsage {
+					usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
+				},
+			)
+		});
 
+		pass.build(move |ctx| self.execute(ctx, vis, output, highlight_buf, highlights, out));
 		out
 	}
 
-	fn execute(&self, mut pass: PassContext, vis: DebugVis, output: RenderOutput, out: Res<ImageView>) {
-		let visbuffer = pass.get(output.visbuffer);
+	fn execute<'pass>(
+		&'pass self, mut pass: PassContext, vis: DebugVis, output: RenderOutput,
+		highlight_buf: Option<Res<BufferHandle>>, highlights: impl Iterator<Item = u32> + 'pass, out: Res<ImageView>,
+	) {
 		let out = pass.get(out);
 
 		let dev = pass.device.device();
 		let buf = pass.buf;
 
 		unsafe {
+			let highlight = highlight_buf.map(|x| pass.get(x));
+			let mut count = 0;
+			if let Some(mut h) = highlight {
+				let mut w = SliceWriter::new(h.data.as_mut());
+				for i in highlights {
+					w.write(i).unwrap();
+					count += 1;
+				}
+			}
+
 			let area = vk::Rect2D::default().extent(vk::Extent2D {
-				width: visbuffer.size.width,
-				height: visbuffer.size.height,
+				width: out.size.width,
+				height: out.size.height,
 			});
 			dev.cmd_begin_rendering(
 				buf,
@@ -171,8 +192,8 @@ impl DebugMesh {
 				&[vk::Viewport {
 					x: 0.0,
 					y: 0.0,
-					width: visbuffer.size.width as f32,
-					height: visbuffer.size.height as f32,
+					width: out.size.width as f32,
+					height: out.size.height as f32,
 					min_depth: 0.0,
 					max_depth: 1.0,
 				}],
@@ -199,15 +220,12 @@ impl DebugMesh {
 				bytes_of(&PushConstants {
 					instances: output.instances,
 					camera: pass.get(output.camera).ptr(),
-					early_hw: pass.get(output.early_hw).ptr(),
-					early_sw: pass.get(output.early_sw).ptr(),
-					late_hw: pass.get(output.late_hw).ptr(),
-					late_sw: pass.get(output.late_sw).ptr(),
-					visbuffer: visbuffer.storage_id.unwrap(),
-					debug: output.debug.map(|d| d.get(&mut pass)),
+					read: output.reader.get_debug(&mut pass),
+					highlighted: highlight.map(|x| x.ptr()).unwrap_or(GpuPtr::null()),
 					ty: vis.to_u32(),
 					bottom,
 					top,
+					highlight_count: count,
 				}),
 			);
 

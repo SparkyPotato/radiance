@@ -60,9 +60,10 @@ pub struct RenderGraph {
 }
 
 pub struct Caches {
-	pub shared_buffers: [ResourceCache<Buffer>; FRAMES_IN_FLIGHT],
+	pub upload_buffers: [ResourceCache<Buffer>; FRAMES_IN_FLIGHT],
 	pub buffers: ResourceCache<Buffer>,
 	pub persistent_buffers: PersistentCache<Buffer>,
+	pub readback_buffers: [PersistentCache<Buffer>; FRAMES_IN_FLIGHT],
 	pub images: ResourceCache<Image>,
 	pub persistent_images: PersistentCache<Image>,
 	pub image_views: UniqueCache<ImageView>,
@@ -74,9 +75,10 @@ impl RenderGraph {
 		let frame_data = [FrameData::new(device)?, FrameData::new(device)?];
 
 		let caches = Caches {
-			shared_buffers: [ResourceCache::new(), ResourceCache::new()],
+			upload_buffers: [ResourceCache::new(), ResourceCache::new()],
 			buffers: ResourceCache::new(),
 			persistent_buffers: PersistentCache::new(),
+			readback_buffers: [PersistentCache::new(), PersistentCache::new()],
 			images: ResourceCache::new(),
 			persistent_images: PersistentCache::new(),
 			image_views: UniqueCache::new(),
@@ -106,11 +108,14 @@ impl RenderGraph {
 			for frame_data in self.frame_data {
 				frame_data.destroy(device);
 			}
-			for cache in self.caches.shared_buffers {
+			for cache in self.caches.upload_buffers {
 				cache.destroy(device);
 			}
 			self.caches.buffers.destroy(device);
 			self.caches.persistent_buffers.destroy(device);
+			for cache in self.caches.readback_buffers {
+				cache.destroy(device);
+			}
 			self.caches.image_views.destroy(device);
 			self.caches.images.destroy(device);
 			self.caches.persistent_images.destroy(device);
@@ -170,9 +175,10 @@ impl Frame<'_, '_> {
 		let data = &mut self.graph.frame_data[self.graph.curr_frame];
 		data.reset(device)?;
 		unsafe {
-			self.graph.caches.shared_buffers[self.graph.curr_frame].reset(device);
+			self.graph.caches.upload_buffers[self.graph.curr_frame].reset(device);
 			self.graph.caches.buffers.reset(device);
 			self.graph.caches.persistent_buffers.reset(device);
+			self.graph.caches.readback_buffers[self.graph.curr_frame].reset(device);
 			self.graph.caches.image_views.reset(device);
 			self.graph.caches.images.reset(device);
 			self.graph.caches.persistent_images.reset(device);

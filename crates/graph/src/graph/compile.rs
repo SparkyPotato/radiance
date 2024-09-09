@@ -335,30 +335,39 @@ impl<'graph> ResourceAliaser<'graph> {
 							usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
 							readback: matches!(data.desc.loc, BufferLoc::Readback),
 						};
-						data.handle = if let Some(name) = data.desc.persist {
-							graph
+						let per_desc = |name| crate::resource::BufferDesc {
+							name,
+							size: desc.size,
+							usage: desc.usage,
+							readback: desc.readback,
+						};
+						data.handle = match (data.desc.loc, data.desc.persist) {
+							(BufferLoc::GpuOnly, Some(name)) => {
+								graph
+									.caches
+									.persistent_buffers
+									.get(device, per_desc(name), vk::ImageLayout::UNDEFINED)
+									.expect("failed to allocated graph buffer")
+									.0
+							},
+							(BufferLoc::GpuOnly, None) => graph
 								.caches
-								.persistent_buffers
-								.get(
-									device,
-									crate::resource::BufferDesc {
-										name,
-										size: desc.size,
-										usage: desc.usage,
-										readback: desc.readback,
-									},
-									vk::ImageLayout::UNDEFINED,
-								)
-								.expect("failed to allocated graph buffer")
-								.0
-						} else {
-							if matches!(data.desc.loc, BufferLoc::Readback | BufferLoc::Upload) {
-								&mut graph.caches.shared_buffers[graph.curr_frame]
-							} else {
-								&mut graph.caches.buffers
-							}
-							.get(device, desc)
-							.expect("failed to allocated graph buffer")
+								.buffers
+								.get(device, desc)
+								.expect("failed to allocated graph buffer"),
+							(BufferLoc::Upload, x) => {
+								assert!(x.is_none(), "cannot persist upload buffers");
+								graph.caches.upload_buffers[graph.curr_frame]
+									.get(device, desc)
+									.expect("failed to allocated graph buffer")
+							},
+							(BufferLoc::Readback, x) => {
+								let name = x.expect("readback buffers must be persistent");
+								graph.caches.readback_buffers[graph.curr_frame]
+									.get(device, per_desc(name), vk::ImageLayout::UNDEFINED)
+									.expect("failed to allocated graph buffer")
+									.0
+							},
 						};
 					}
 				},

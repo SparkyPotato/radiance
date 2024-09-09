@@ -6,7 +6,7 @@ use rustc_hash::FxHashMap;
 use crate::{
 	device::Device,
 	graph::FRAMES_IN_FLIGHT,
-	resource::{Resource, ToNamed},
+	resource::{Named, Resource, ToNamed},
 	Result,
 };
 
@@ -139,7 +139,7 @@ impl<T: Resource> UniqueCache<T> {
 	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<T::Handle> {
 		match self.resources.entry(desc) {
 			Entry::Vacant(v) => {
-				let resource = T::create(device, v.key().to_named("Graph Resource"))?;
+				let resource = T::create(device, desc.to_named("Graph Resource"))?;
 				let handle = resource.handle();
 				v.insert(TrackedResource {
 					inner: resource,
@@ -181,7 +181,7 @@ impl<T: Resource> UniqueCache<T> {
 }
 
 pub struct PersistentCache<T: Resource> {
-	resources: FxHashMap<T::Desc<'static>, (TrackedResource<T>, vk::ImageLayout)>,
+	resources: FxHashMap<&'static str, (TrackedResource<T>, T::Desc<'static>, vk::ImageLayout)>,
 }
 
 impl<T: Resource> PersistentCache<T> {
@@ -196,25 +196,44 @@ impl<T: Resource> PersistentCache<T> {
 	pub fn get(
 		&mut self, device: &Device, desc: T::Desc<'static>, next_layout: vk::ImageLayout,
 	) -> Result<(T::Handle, vk::ImageLayout)> {
-		match self.resources.entry(desc) {
+		match self.resources.entry(desc.name()) {
 			Entry::Vacant(v) => {
-				let resource = T::create(device, *v.key())?;
+				let resource = T::create(device, desc)?;
 				let handle = resource.handle();
 				v.insert((
 					TrackedResource {
 						inner: resource,
 						unused: 0,
 					},
+					desc,
 					next_layout,
 				));
 				Ok((handle, next_layout))
 			},
 			Entry::Occupied(mut o) => {
-				let (o, l) = o.get_mut();
-				o.unused = 0;
-				let old = *l;
-				*l = next_layout;
-				Ok((o.inner.handle(), old))
+				let (o, d, l) = o.get_mut();
+				if *d == desc {
+					o.unused = 0;
+					let old = *l;
+					*l = next_layout;
+					Ok((o.inner.handle(), old))
+				} else {
+					let resource = T::create(device, desc)?;
+					let handle = resource.handle();
+					let old = std::mem::replace(
+						o,
+						TrackedResource {
+							inner: resource,
+							unused: 0,
+						},
+					);
+					unsafe {
+						old.inner.destroy(device);
+					}
+					*d = desc;
+					*l = next_layout;
+					Ok((handle, next_layout))
+				}
 			},
 		}
 	}
@@ -224,7 +243,7 @@ impl<T: Resource> PersistentCache<T> {
 	/// # Safety
 	/// All resources returned by [`Self::get`] must not be used after this call.
 	pub unsafe fn reset(&mut self, device: &Device) {
-		self.resources.retain(|_, (res, _)| {
+		self.resources.retain(|_, (res, ..)| {
 			res.unused += 1;
 			if res.unused >= DESTROY_LAG {
 				std::mem::take(&mut res.inner).destroy(device);
@@ -236,69 +255,10 @@ impl<T: Resource> PersistentCache<T> {
 	}
 
 	pub fn destroy(self, device: &Device) {
-		for (_, (res, _)) in self.resources {
+		for (_, (res, ..)) in self.resources {
 			unsafe {
 				res.inner.destroy(device);
 			}
 		}
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::Result;
-
-	#[test]
-	fn resource_list() {
-		#[derive(Default, Copy, Clone)]
-		struct Resource;
-		#[derive(Copy, Clone, PartialEq, Eq, Hash)]
-		struct ResourceDesc;
-		impl ToNamed for ResourceDesc {
-			type Named<'a> = Self;
-
-			fn to_named(self, _: &str) -> Self::Named<'_> { self }
-		}
-
-		impl super::Resource for Resource {
-			type Desc<'a> = ResourceDesc;
-			type Handle = Self;
-			type UnnamedDesc = ResourceDesc;
-
-			fn handle(&self) -> Self::Handle { *self }
-
-			fn create(_: &Device, _: Self::Desc<'_>) -> Result<Self> { Ok(Resource) }
-
-			unsafe fn destroy(self, _: &Device) {}
-		}
-
-		let (device, _) = Device::builder().build().unwrap();
-		let mut list = ResourceList::<Resource>::new();
-
-		list.get_or_create(&device, ResourceDesc).unwrap();
-		list.get_or_create(&device, ResourceDesc).unwrap();
-		list.get_or_create(&device, ResourceDesc).unwrap();
-
-		assert_eq!(list.resources.len(), 3);
-		unsafe {
-			list.reset(&device);
-		}
-
-		list.get_or_create(&device, ResourceDesc).unwrap();
-
-		assert_eq!(list.resources.len(), 3);
-		unsafe {
-			list.reset(&device);
-		}
-
-		list.get_or_create(&device, ResourceDesc).unwrap();
-
-		assert_eq!(list.resources.len(), 3);
-		unsafe {
-			list.reset(&device);
-		}
-
-		assert_eq!(list.resources.len(), 1);
 	}
 }
