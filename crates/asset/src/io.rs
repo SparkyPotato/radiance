@@ -1,6 +1,6 @@
 use std::{
 	fs::File,
-	io::{BufReader, Write},
+	io::{BufReader, Seek, Write},
 	path::Path,
 };
 
@@ -21,7 +21,7 @@ impl Reader {
 		})
 	}
 
-	pub fn deserialize<T: Decode>(mut self) -> Result<T, std::io::Error> {
+	pub fn deserialize<T: Decode>(&mut self) -> Result<T, std::io::Error> {
 		bincode::decode_from_std_read(&mut self.decoder, standard()).map_err(|x| std::io::Error::other(x))
 	}
 }
@@ -35,6 +35,10 @@ impl Writer {
 		let _ = std::fs::create_dir_all(path.parent().unwrap());
 		let mut file = File::create(path)?;
 		file.write_all(bytes_of(&header))?;
+		Self::from_file(file)
+	}
+
+	pub fn from_file(file: File) -> Result<Self, std::io::Error> {
 		Ok(Self {
 			encoder: Encoder::new(file, 6)?,
 		})
@@ -42,7 +46,9 @@ impl Writer {
 
 	pub fn serialize<T: Encode>(mut self, data: T) -> Result<(), std::io::Error> {
 		bincode::encode_into_std_write(data, &mut self.encoder, standard()).map_err(|x| std::io::Error::other(x))?;
-		self.encoder.finish()?;
+		let mut file = self.encoder.finish()?;
+		let len = file.stream_position()?;
+		file.set_len(len)?;
 		Ok(())
 	}
 }

@@ -2,6 +2,7 @@ use ash::vk;
 use bincode::{Decode, Encode};
 use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
+use parking_lot::{MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use radiance_graph::{
 	graph::Resource,
 	resource::{Buffer, BufferDesc, GpuPtr, Resource as _},
@@ -29,13 +30,13 @@ pub struct DataNode {
 	pub mesh: Uuid,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Copy, Clone, Encode, Decode)]
 pub enum Projection {
 	Perspective { yfov: f32, near: f32, far: Option<f32> },
 	Orthographic { height: f32, near: f32, far: f32 },
 }
 
-#[derive(Encode, Decode)]
+#[derive(Clone, Encode, Decode)]
 pub struct Camera {
 	pub name: String,
 	#[bincode(with_serde)]
@@ -50,17 +51,17 @@ pub struct DataScene {
 }
 
 pub struct Node {
-	name: String,
-	transform: Mat4<f32>,
-	inv_transform: Mat4<f32>,
-	mesh: RRef<Mesh>,
-	instance: u32,
+	pub name: String,
+	pub transform: Mat4<f32>,
+	pub inv_transform: Mat4<f32>,
+	pub mesh: RRef<Mesh>,
+	pub instance: u32,
 }
 
 pub struct Scene {
 	instance_buffer: Buffer,
 	pub cameras: Vec<Camera>,
-	nodes: Vec<Node>,
+	nodes: RwLock<Vec<Node>>,
 	max_depth: u32,
 }
 
@@ -90,9 +91,17 @@ unsafe impl NoUninit for VkAccelerationStructureInstanceKHR {}
 impl Scene {
 	pub fn instances(&self) -> GpuPtr<GpuInstance> { self.instance_buffer.ptr() }
 
-	pub fn instance_count(&self) -> u32 { self.nodes.len() as _ }
+	pub fn instance_count(&self) -> u32 { self.nodes.read().len() as _ }
 
 	pub fn max_depth(&self) -> u32 { self.max_depth }
+
+	pub fn node(&self, i: u32) -> MappedRwLockReadGuard<'_, Node> {
+		RwLockReadGuard::map(self.nodes.read(), |x| &x[i as usize])
+	}
+
+	pub fn node_name(&self, i: u32) -> MappedRwLockWriteGuard<'_, String> {
+		RwLockWriteGuard::map(self.nodes.write(), |x| &mut x[i as usize].name)
+	}
 }
 
 impl Asset for Scene {
@@ -101,7 +110,7 @@ impl Asset for Scene {
 	const MODIFIABLE: bool = true;
 	const TYPE: Uuid = uuid!("c394ec13-387e-4af1-9873-fb4e399d4a52");
 
-	fn initialize(ctx: InitContext<'_>) -> Result<RRef<Self>, LoadError> {
+	fn initialize(mut ctx: InitContext<'_>) -> Result<RRef<Self>, LoadError> {
 		let s = span!(Level::TRACE, "decode scene");
 		let _e = s.enter();
 
@@ -146,18 +155,29 @@ impl Asset for Scene {
 			})
 			.collect::<Result<_, LoadError>>()?;
 
-		Ok(RRef::new(
-			Scene {
-				instance_buffer,
-				cameras: s.cameras,
-				nodes,
-				max_depth,
-			},
-			ctx.del.clone(),
-		))
+		Ok(ctx.make(Scene {
+			instance_buffer,
+			cameras: s.cameras,
+			nodes: RwLock::new(nodes),
+			max_depth,
+		}))
 	}
 
-	fn write(&self, into: Writer) -> Result<(), std::io::Error> { todo!() }
+	fn write(&self, into: Writer) -> Result<(), std::io::Error> {
+		into.serialize(DataScene {
+			nodes: self
+				.nodes
+				.read()
+				.iter()
+				.map(|n| DataNode {
+					name: n.name.clone(),
+					transform: n.transform,
+					mesh: n.mesh.uuid(),
+				})
+				.collect(),
+			cameras: self.cameras.clone(),
+		})
+	}
 
 	fn import(_: &str, import: Self::Import, into: Writer) -> Result<(), std::io::Error> { into.serialize(import) }
 

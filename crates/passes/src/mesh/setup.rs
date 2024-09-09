@@ -194,7 +194,7 @@ impl Setup {
 				let prev = *camera;
 				*camera = info.camera;
 				let sc = info.scene.downgrade();
-				if !scene.ptr_eq(&sc) {
+				if *scene != sc {
 					*scene = sc;
 					(true, prev)
 				} else {

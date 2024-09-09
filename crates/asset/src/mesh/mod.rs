@@ -15,7 +15,7 @@ use vek::{Aabb, Sphere, Vec3, Vec4};
 pub use crate::mesh::import::FullMesh;
 use crate::{
 	io::{SliceWriter, Writer},
-	rref::{DelRes, RRef},
+	rref::DelRes,
 	Asset,
 	InitContext,
 	LResult,
@@ -84,7 +84,7 @@ impl Asset for Mesh {
 	const MODIFIABLE: bool = false;
 	const TYPE: Uuid = uuid!("0ab1a518-ced8-41c9-ae55-9c208a461636");
 
-	fn initialize(ctx: InitContext<'_>) -> LResult<Self> {
+	fn initialize(mut ctx: InitContext<'_>) -> LResult<Self> {
 		let s = span!(Level::TRACE, "decode mesh");
 		let _e = s.enter();
 
@@ -151,14 +151,11 @@ impl Asset for Mesh {
 		writer.write_slice(&m.vertices).unwrap();
 		writer.write_slice(&m.indices).unwrap();
 
-		Ok(RRef::new(
-			Mesh {
-				buffer,
-				bvh_depth: m.bvh_depth,
-				aabb: m.aabb,
-			},
-			ctx.del.clone(),
-		))
+		Ok(ctx.make(Mesh {
+			buffer,
+			bvh_depth: m.bvh_depth,
+			aabb: m.aabb,
+		}))
 	}
 
 	fn write(&self, _: Writer) -> Result<(), std::io::Error> {

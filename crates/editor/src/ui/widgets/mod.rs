@@ -19,6 +19,7 @@ use egui::{
 };
 
 pub mod icons;
+pub mod splitter;
 
 const INTER: &[u8] = include_bytes!("../../../fonts/Inter/Inter-Regular.otf");
 const FONT_AWESOME: &[u8] = include_bytes!("../../../fonts/Font Awesome/Font Awesome 6 Free-Solid-900.otf");

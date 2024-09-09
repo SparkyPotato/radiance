@@ -6,6 +6,7 @@ use std::{
 
 use crossbeam_channel::Sender;
 use radiance_graph::graph::Resource;
+use uuid::Uuid;
 
 use crate::Asset;
 
@@ -42,18 +43,22 @@ impl Clone for RWeak {
 }
 
 struct Control<T: Asset> {
+	uuid: Uuid,
 	deleter: MaybeUninit<Sender<DelRes>>,
 	obj: MaybeUninit<T>,
 }
 
 impl<T: Asset> RRef<T> {
-	pub fn new(obj: T, deleter: Sender<DelRes>) -> Self {
+	pub fn new(obj: T, uuid: Uuid, deleter: Sender<DelRes>) -> Self {
 		let c = Control {
+			uuid,
 			deleter: MaybeUninit::new(deleter),
 			obj: MaybeUninit::new(obj),
 		};
 		Self { inner: Arc::new(c) }
 	}
+
+	pub fn uuid(&self) -> Uuid { self.inner.uuid }
 
 	pub fn downgrade(&self) -> RWeak {
 		let inner = Arc::downgrade(&self.inner);
@@ -74,8 +79,10 @@ impl RWeak {
 		let inner = unsafe { Weak::from_raw(Weak::into_raw(self.inner) as _) };
 		inner.upgrade().map(|inner| RRef { inner })
 	}
+}
 
-	pub fn ptr_eq(&self, other: &Self) -> bool { Weak::ptr_eq(&self.inner, &other.inner) }
+impl PartialEq for RWeak {
+	fn eq(&self, other: &Self) -> bool { Weak::ptr_eq(&self.inner, &other.inner) }
 }
 
 impl<T: Asset> Deref for RRef<T> {

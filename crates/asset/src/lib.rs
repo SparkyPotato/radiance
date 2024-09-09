@@ -1,6 +1,6 @@
 use std::{
 	fmt::Debug,
-	fs::File,
+	fs::{File, OpenOptions},
 	hash::BuildHasherDefault,
 	io::Read,
 	path::{Path, PathBuf},
@@ -48,9 +48,13 @@ pub type LResult<T> = Result<RRef<T>, LoadError>;
 pub struct InitContext<'a> {
 	pub name: &'a str,
 	pub device: &'a Device,
+	pub uuid: Uuid,
 	pub data: Reader,
-	pub del: &'a Sender<DelRes>,
 	pub sys: &'a AssetSystem,
+}
+
+impl InitContext<'_> {
+	fn make<T: Asset>(&self, obj: T) -> RRef<T> { RRef::new(obj, self.uuid, self.sys.deleter.clone()) }
 }
 
 pub trait Asset: Sized {
@@ -251,6 +255,18 @@ impl AssetSystem {
 		}
 	}
 
+	pub fn save<T: Asset>(&self, asset: &RRef<T>) -> Result<(), std::io::Error> {
+		assert!(T::MODIFIABLE, "Can only save modifiable assets");
+
+		let path = self.path_lookup.get(&asset.uuid()).unwrap();
+		let mut file = OpenOptions::new().read(true).write(true).open(&*path)?;
+		let header = AssetHeader::from_file(&mut file)?;
+		if header.ty != T::TYPE {
+			return Err(std::io::Error::other("asset type mismatch").into());
+		}
+		asset.write(Writer::from_file(file)?)
+	}
+
 	fn load_from_disk<T: Asset>(&self, device: &Device, uuid: Uuid) -> Result<RRef<T>, LoadError> {
 		let path = self.path_lookup.get(&uuid).unwrap();
 		let mut file = File::open(&*path)?;
@@ -262,8 +278,8 @@ impl AssetSystem {
 		T::initialize(InitContext {
 			name: path.file_name().unwrap().to_str().unwrap(),
 			device,
+			uuid: header.asset,
 			data: Reader::from_file(file)?,
-			del: &self.deleter,
 			sys: self,
 		})
 	}

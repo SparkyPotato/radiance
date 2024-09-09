@@ -126,7 +126,7 @@ impl CameraController {
 
 				self.states[offset] = event.state == ElementState::Pressed;
 			},
-			WindowEvent::MouseWheel { delta, .. } => {
+			WindowEvent::MouseWheel { delta, .. } if self.mode == Mode::Camera => {
 				let delta = match delta {
 					MouseScrollDelta::LineDelta(_, y) => *y,
 					MouseScrollDelta::PixelDelta(pos) => pos.y as f32 / 50.0,

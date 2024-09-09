@@ -13,8 +13,10 @@ use winit::event::WindowEvent;
 use crate::{
 	ui::{
 		debug::Debug,
+		notif::{NotifStack, NotifType, PushNotif},
 		render::{
 			camera::{CameraController, Mode},
+			edit::Editor,
 			picking::Picker,
 		},
 	},
@@ -22,6 +24,7 @@ use crate::{
 };
 
 mod camera;
+mod edit;
 mod picking;
 
 enum Scene {
@@ -32,6 +35,7 @@ enum Scene {
 
 pub struct Renderer {
 	scene: Scene,
+	editor: Editor,
 	visbuffer: VisBuffer,
 	picker: Picker,
 	debug: DebugMesh,
@@ -42,6 +46,7 @@ impl Renderer {
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
 			scene: Scene::None,
+			editor: Editor::new(),
 			visbuffer: VisBuffer::new(device)?,
 			picker: Picker::new(device)?,
 			debug: DebugMesh::new(device)?,
@@ -92,6 +97,8 @@ impl Renderer {
 			Scene::Loaded(ref s) => s.clone(),
 		};
 
+		self.editor.render(ui, &scene, &mut self.picker);
+
 		let rect = ui.available_rect_before_wrap();
 		let size = rect.size();
 
@@ -128,6 +135,31 @@ impl Renderer {
 		ui.image((to_texture_id(img), size));
 
 		Some(false)
+	}
+
+	pub fn undo(&mut self, notifs: &mut NotifStack) {
+		match self.scene {
+			Scene::Loaded(ref scene) => {
+				self.editor.undo(scene, notifs);
+			},
+			_ => {},
+		}
+	}
+
+	pub fn save(&mut self, system: Option<&AssetSystem>, notifs: &mut NotifStack) {
+		match (&self.scene, system) {
+			(Scene::Loaded(scene), Some(sys)) if self.editor.is_dirty(scene) => {
+				notifs.push(
+					"save scene",
+					if let Err(e) = sys.save(scene) {
+						PushNotif::new(NotifType::Error, format!("failed to save: {e}"))
+					} else {
+						PushNotif::new(NotifType::Info, "success")
+					},
+				);
+			},
+			_ => {},
+		}
 	}
 
 	pub fn draw_camera_menu(&mut self, ui: &mut Ui) {

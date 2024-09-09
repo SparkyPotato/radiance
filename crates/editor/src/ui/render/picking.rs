@@ -51,6 +51,10 @@ impl Picker {
 		})
 	}
 
+	pub fn get_sel(&self) -> Option<u32> { self.selection }
+
+	pub fn select(&mut self, index: u32) { self.selection = Some(index); }
+
 	pub fn run<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, visbuffer: VisBufferReader, click: Option<egui::Vec2>,
 	) -> Option<u32> {

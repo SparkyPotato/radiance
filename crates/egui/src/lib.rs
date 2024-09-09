@@ -172,7 +172,7 @@ impl Renderer {
 		}
 
 		let vertex_size = vertices * std::mem::size_of::<Vertex>();
-		if vertex_size as u64 > self.vertex_size {
+		while vertex_size as u64 > self.vertex_size {
 			self.vertex_size *= 2;
 		}
 		let vertex = pass.resource(
@@ -379,8 +379,7 @@ impl Renderer {
 		for prim in tris.iter() {
 			match &prim.primitive {
 				Primitive::Mesh(m) => {
-					let bytes: &[u8] = cast_slice(&m.vertices);
-					vertex_slice.write_all(bytes).unwrap();
+					vertex_slice.write_all(cast_slice(&m.vertices)).unwrap();
 
 					for i in m.indices.iter() {
 						index_slice.write_all(bytes_of(&(i + vertices_written))).unwrap();
