@@ -1,23 +1,22 @@
 use ash::vk;
-use bytemuck::{bytes_of, NoUninit};
+use bytemuck::NoUninit;
 use radiance_graph::{
 	device::{
 		descriptor::{SamplerId, StorageImageId},
 		Device,
-		Pipeline,
 		ShaderInfo,
 	},
 	graph::{Frame, ImageUsage, ImageUsageType, PassContext, Res, Shader},
 	resource::{ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
 	sync::{GlobalBarrier, UsageType},
+	util::compute::ComputePass,
 	Result,
 };
 use vek::Vec2;
 
 pub struct HzbGen {
-	layout: vk::PipelineLayout,
-	pipeline: Pipeline,
-	pipeline2: Pipeline,
+	pass: ComputePass<PushConstants>,
+	pass2: ComputePass<PushConstants2>,
 	hzb_sample: vk::Sampler,
 	hzb_sample_id: SamplerId,
 }
@@ -48,29 +47,6 @@ struct PassIO {
 impl HzbGen {
 	pub fn new(device: &Device) -> Result<Self> {
 		unsafe {
-			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(vk::ShaderStageFlags::COMPUTE)
-						.size(std::mem::size_of::<PushConstants>() as u32)]),
-				None,
-			)?;
-			let pipeline = device.compute_pipeline(
-				layout,
-				ShaderInfo {
-					shader: "passes.mesh.hzb.main",
-					..Default::default()
-				},
-			)?;
-			let pipeline2 = device.compute_pipeline(
-				layout,
-				ShaderInfo {
-					shader: "passes.mesh.hzb2.main",
-					..Default::default()
-				},
-			)?;
-
 			let hzb_sample = device.device().create_sampler(
 				&vk::SamplerCreateInfo::default()
 					.min_filter(vk::Filter::LINEAR)
@@ -89,9 +65,20 @@ impl HzbGen {
 			let hzb_sample_id = device.descriptors().get_sampler(device, hzb_sample);
 
 			Ok(Self {
-				layout,
-				pipeline,
-				pipeline2,
+				pass: ComputePass::new(
+					device,
+					ShaderInfo {
+						shader: "passes.mesh.hzb.main",
+						spec: &[],
+					},
+				)?,
+				pass2: ComputePass::new(
+					device,
+					ShaderInfo {
+						shader: "passes.mesh.hzb2.main",
+						spec: &[],
+					},
+				)?,
 				hzb_sample,
 				hzb_sample_id,
 			})
@@ -181,29 +168,19 @@ impl HzbGen {
 				);
 			}
 
-			dev.cmd_bind_descriptor_sets(
-				buf,
-				vk::PipelineBindPoint::COMPUTE,
-				self.layout,
-				0,
-				&[pass.device.descriptors().set()],
-				&[],
-			);
 			let x = (io.size.x + 63) >> 6;
 			let y = (io.size.y + 63) >> 6;
-			dev.cmd_push_constants(
-				buf,
-				self.layout,
-				vk::ShaderStageFlags::COMPUTE,
-				0,
-				bytes_of(&PushConstants {
+			self.pass.dispatch(
+				&PushConstants {
 					visbuffer: visbuffer.storage_id.unwrap(),
 					outs: [outs[0], outs[1], outs[2], outs[3], outs[4], outs[5]],
 					mips: io.levels,
-				}),
+				},
+				&pass,
+				x,
+				y,
+				1,
 			);
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline.get());
-			dev.cmd_dispatch(buf, x, y, 1);
 			if io.levels > 6 {
 				dev.cmd_pipeline_barrier2(
 					buf,
@@ -219,28 +196,25 @@ impl HzbGen {
 					}
 					.into()]),
 				);
-				dev.cmd_push_constants(
-					buf,
-					self.layout,
-					vk::ShaderStageFlags::COMPUTE,
-					0,
-					bytes_of(&PushConstants2 {
+				self.pass2.dispatch(
+					&PushConstants2 {
 						mip5: outs[5].unwrap(),
 						outs: [outs[6], outs[7], outs[8], outs[9], outs[10], outs[11]],
 						mips: io.levels,
-					}),
+					},
+					&pass,
+					1,
+					1,
+					1,
 				);
-				dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline2.get());
-				dev.cmd_dispatch(buf, 1, 1, 1);
 			}
 		}
 	}
 
 	pub fn destroy(self, device: &Device) {
 		unsafe {
-			self.pipeline.destroy();
-			self.pipeline2.destroy();
-			device.device().destroy_pipeline_layout(self.layout, None);
+			self.pass.destroy(device);
+			self.pass2.destroy(device);
 			device.device().destroy_sampler(self.hzb_sample, None);
 			device.descriptors().return_sampler(self.hzb_sample_id);
 		}

@@ -1,15 +1,14 @@
-use ash::vk;
-use bytemuck::{bytes_of, NoUninit};
+use bytemuck::NoUninit;
 use radiance_asset::scene::GpuInstance;
 use radiance_graph::{
 	device::{
 		descriptor::{ImageId, SamplerId},
 		Device,
-		Pipeline,
 		ShaderInfo,
 	},
-	graph::{Frame, PassContext, Res},
-	resource::{BufferHandle, GpuPtr, ImageView},
+	graph::Frame,
+	resource::GpuPtr,
+	util::compute::ComputePass,
 	Result,
 };
 use vek::Vec2;
@@ -18,8 +17,7 @@ use crate::mesh::{setup::Resources, CameraData, RenderInfo};
 
 pub struct MeshletCull {
 	early: bool,
-	layout: vk::PipelineLayout,
-	pipeline: Pipeline,
+	pass: ComputePass<PushConstants>,
 }
 
 #[repr(C)]
@@ -38,37 +36,12 @@ struct PushConstants {
 	_pad: u32,
 }
 
-#[derive(Copy, Clone)]
-struct PassIO {
-	instances: GpuPtr<GpuInstance>,
-	camera: Res<BufferHandle>,
-	hzb: Res<ImageView>,
-	hzb_sampler: SamplerId,
-	len: u32,
-	read: Res<BufferHandle>,
-	late: Res<BufferHandle>,
-	hw: Res<BufferHandle>,
-	sw: Res<BufferHandle>,
-	res: Vec2<u32>,
-}
-
 impl MeshletCull {
 	pub fn new(device: &Device, early: bool) -> Result<Self> {
-		let layout = unsafe {
-			device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(vk::ShaderStageFlags::COMPUTE)
-						.size(std::mem::size_of::<PushConstants>() as u32)]),
-				None,
-			)?
-		};
 		Ok(Self {
 			early,
-			layout,
-			pipeline: device.compute_pipeline(
-				layout,
+			pass: ComputePass::new(
+				device,
 				ShaderInfo {
 					shader: "passes.mesh.meshlet.main",
 					spec: if early {
@@ -114,60 +87,33 @@ impl MeshletCull {
 			},
 		);
 
-		let io = PassIO {
-			instances: info.scene.instances(),
-			camera,
-			hzb,
-			hzb_sampler: resources.hzb_sampler,
-			len: resources.len,
-			read,
-			late: resources.meshlet_queues[1],
-			hw,
-			sw,
-			res: info.size,
-		};
-		pass.build(move |ctx| self.execute(ctx, io));
-	}
-
-	fn execute(&self, mut pass: PassContext, io: PassIO) {
-		let dev = pass.device.device();
-		let buf = pass.buf;
-		let read = pass.get(io.read);
-		unsafe {
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline.get());
-			dev.cmd_bind_descriptor_sets(
-				buf,
-				vk::PipelineBindPoint::COMPUTE,
-				self.layout,
-				0,
-				&[pass.device.descriptors().set()],
-				&[],
-			);
-			dev.cmd_push_constants(
-				buf,
-				self.layout,
-				vk::ShaderStageFlags::COMPUTE,
-				0,
-				bytes_of(&PushConstants {
-					instances: io.instances,
-					camera: pass.get(io.camera).ptr(),
-					hzb: pass.get(io.hzb).id.unwrap(),
-					hzb_sampler: io.hzb_sampler,
+		let instances = info.scene.instances();
+		let hzb_sampler = resources.hzb_sampler;
+		let late = resources.meshlet_queues[1];
+		let res = info.size;
+		let len = resources.len;
+		pass.build(move |mut pass| {
+			let read = pass.get(read);
+			self.pass.dispatch_indirect(
+				&PushConstants {
+					instances,
+					camera: pass.get(camera).ptr(),
+					hzb: pass.get(hzb).id.unwrap(),
+					hzb_sampler,
 					read: read.ptr(),
-					late: pass.get(io.late).ptr(),
-					hw: pass.get(io.hw).ptr(),
-					sw: pass.get(io.sw).ptr(),
-					res: io.res,
-					len: io.len,
+					late: pass.get(late).ptr(),
+					hw: pass.get(hw).ptr(),
+					sw: pass.get(sw).ptr(),
+					res,
+					len,
 					_pad: 0,
-				}),
+				},
+				&pass,
+				read.buffer,
+				std::mem::size_of::<u32>(),
 			);
-			dev.cmd_dispatch_indirect(buf, read.buffer, std::mem::size_of::<u32>() as _);
-		}
+		});
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
-		self.pipeline.destroy();
-		device.device().destroy_pipeline_layout(self.layout, None);
-	}
+	pub unsafe fn destroy(self, device: &Device) { self.pass.destroy(device); }
 }

@@ -1,3 +1,5 @@
+module debug;
+
 import graph;
 import graph.util;
 import asset;

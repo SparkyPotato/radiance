@@ -1,3 +1,5 @@
+module visbuffer_extra;
+
 import graph;
 
 public interface VisbufferDebug {

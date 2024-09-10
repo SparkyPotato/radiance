@@ -1,10 +1,10 @@
-use ash::vk;
-use bytemuck::{bytes_of, from_bytes, NoUninit};
+use bytemuck::{from_bytes, NoUninit};
 use radiance_graph::{
-	device::{Device, Pipeline, ShaderInfo},
+	device::{Device, ShaderInfo},
 	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, Frame},
 	resource::GpuPtr,
 	sync::Shader,
+	util::compute::ComputePass,
 	Result,
 };
 use radiance_passes::mesh::{GpuVisBufferReader, VisBufferReader};
@@ -13,8 +13,7 @@ use vek::Vec2;
 pub struct Picker {
 	frames: u64,
 	selection: Option<u32>,
-	layout: vk::PipelineLayout,
-	pipeline: Pipeline,
+	pass: ComputePass<PushConstants>,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -29,22 +28,11 @@ struct PushConstants {
 
 impl Picker {
 	pub fn new(device: &Device) -> Result<Self> {
-		let layout = unsafe {
-			device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(vk::ShaderStageFlags::COMPUTE)
-						.size(std::mem::size_of::<PushConstants>() as u32)]),
-				None,
-			)?
-		};
 		Ok(Self {
 			frames: 0,
 			selection: None,
-			layout,
-			pipeline: device.compute_pipeline(
-				layout,
+			pass: ComputePass::new(
+				device,
 				ShaderInfo {
 					shader: "editor.mousepick.main",
 					spec: &[],
@@ -74,47 +62,30 @@ impl Picker {
 		visbuffer.add(&mut pass, Shader::Compute, false);
 
 		let sel = self.selection;
+		let pix = click.map(|x| Vec2::new(x.x as _, x.y as _)).unwrap_or_default();
 		pass.build(move |mut pass| unsafe {
-			let dev = pass.device.device();
-			let buf = pass.buf;
-
 			let ret = pass.get(ret);
 			let prev: u32 = *from_bytes(&ret.data.as_ref()[..4]);
 			if prev != u32::MAX && self.frames > 2 {
 				self.selection = (prev != u32::MAX - 1).then_some(prev);
 			}
-
-			let pix = click.map(|x| Vec2::new(x.x as _, x.y as _)).unwrap_or_default();
-			dev.cmd_bind_descriptor_sets(
-				buf,
-				vk::PipelineBindPoint::COMPUTE,
-				self.layout,
-				0,
-				&[pass.device.descriptors().set()],
-				&[],
-			);
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::COMPUTE, self.pipeline.get());
-			dev.cmd_push_constants(
-				buf,
-				self.layout,
-				vk::ShaderStageFlags::COMPUTE,
-				0,
-				bytes_of(&PushConstants {
+			self.pass.dispatch(
+				&PushConstants {
 					reader: visbuffer.get(&mut pass),
 					pix,
 					should_pick: click.is_some() as _,
 					_pad: 0,
 					ret: ret.ptr(),
-				}),
+				},
+				&pass,
+				1,
+				1,
+				1,
 			);
-			dev.cmd_dispatch(buf, 1, 1, 1);
 			self.frames += 1;
 		});
 		sel
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
-		self.pipeline.destroy();
-		device.device().destroy_pipeline_layout(self.layout, None);
-	}
+	pub unsafe fn destroy(self, device: &Device) { self.pass.destroy(device); }
 }
