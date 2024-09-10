@@ -16,11 +16,11 @@ use gltf::{
 use rayon::iter::{ParallelBridge, ParallelIterator};
 use tracing::{span, trace_span, Level};
 use uuid::Uuid;
-use vek::{Mat4, Vec2, Vec3};
+use vek::{Mat4, Quaternion, Vec2, Vec3};
 
 use crate::{
 	mesh::{FullMesh, GpuVertex, Mesh},
-	scene::{Camera, DataNode, DataScene, Scene},
+	scene::{Camera, DataNode, DataScene, Scene, Transform},
 	Asset,
 	AssetHeader,
 	AssetSystemView,
@@ -210,7 +210,19 @@ impl GltfImporter {
 		let model = node.mesh().map(|mesh| {
 			let name = node.name().unwrap_or("unnamed node").to_string();
 			let mesh = meshes[mesh.index()];
-			DataNode { name, transform, mesh }
+			let (t, r, s) = gltf::scene::Transform::Matrix {
+				matrix: transform.into_col_arrays(),
+			}
+			.decomposed();
+			DataNode {
+				name,
+				transform: Transform {
+					translation: t.into(),
+					rotation: Quaternion::from_vec4(r.into()),
+					scale: s.into(),
+				},
+				mesh,
+			}
 		});
 		out.nodes.extend(model);
 

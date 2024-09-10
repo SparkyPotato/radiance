@@ -11,6 +11,7 @@ use radiance_passes::mesh::{GpuVisBufferReader, VisBufferReader};
 use vek::Vec2;
 
 pub struct Picker {
+	frames: u64,
 	selection: Option<u32>,
 	layout: vk::PipelineLayout,
 	pipeline: Pipeline,
@@ -39,6 +40,7 @@ impl Picker {
 			)?
 		};
 		Ok(Self {
+			frames: 0,
 			selection: None,
 			layout,
 			pipeline: device.compute_pipeline(
@@ -78,7 +80,7 @@ impl Picker {
 
 			let ret = pass.get(ret);
 			let prev: u32 = *from_bytes(&ret.data.as_ref()[..4]);
-			if prev != u32::MAX {
+			if prev != u32::MAX && self.frames > 2 {
 				self.selection = (prev != u32::MAX - 1).then_some(prev);
 			}
 
@@ -106,6 +108,7 @@ impl Picker {
 				}),
 			);
 			dev.cmd_dispatch(buf, 1, 1, 1);
+			self.frames += 1;
 		});
 		sel
 	}

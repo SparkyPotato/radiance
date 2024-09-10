@@ -10,7 +10,7 @@ use radiance_graph::{
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::{uuid, Uuid};
-use vek::{Mat4, Vec3, Vec4};
+use vek::{Mat4, Quaternion, Vec3};
 
 use crate::{
 	io::{SliceWriter, Writer},
@@ -21,11 +21,21 @@ use crate::{
 	LoadError,
 };
 
+#[derive(Copy, Clone, Encode, Decode, NoUninit)]
+#[repr(C)]
+pub struct Transform {
+	#[bincode(with_serde)]
+	pub translation: Vec3<f32>,
+	#[bincode(with_serde)]
+	pub rotation: Quaternion<f32>,
+	#[bincode(with_serde)]
+	pub scale: Vec3<f32>,
+}
+
 #[derive(Encode, Decode)]
 pub struct DataNode {
 	pub name: String,
-	#[bincode(with_serde)]
-	pub transform: Mat4<f32>,
+	pub transform: Transform,
 	#[bincode(with_serde)]
 	pub mesh: Uuid,
 }
@@ -52,8 +62,7 @@ pub struct DataScene {
 
 pub struct Node {
 	pub name: String,
-	pub transform: Mat4<f32>,
-	pub inv_transform: Mat4<f32>,
+	pub transform: Transform,
 	pub mesh: RRef<Mesh>,
 	pub instance: u32,
 }
@@ -68,13 +77,13 @@ pub struct Scene {
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuInstance {
-	pub transform: Vec4<Vec3<f32>>,
+	pub transform: Transform,
 	/// Mesh buffer containing meshlets + meshlet data.
 	pub mesh: GpuPtr<u8>,
 	pub aabb: GpuAabb,
 }
 
-const_assert_eq!(std::mem::size_of::<GpuInstance>(), 80);
+const_assert_eq!(std::mem::size_of::<GpuInstance>(), 72);
 const_assert_eq!(std::mem::align_of::<GpuInstance>(), 8);
 
 #[repr(C)]
@@ -139,7 +148,7 @@ impl Asset for Scene {
 				max_depth = max_depth.max(mesh.bvh_depth);
 				writer
 					.write(GpuInstance {
-						transform: n.transform.cols.map(|x| x.xyz()),
+						transform: n.transform,
 						mesh: mesh.buffer.ptr(),
 						aabb: map_aabb(mesh.aabb),
 					})
@@ -148,7 +157,6 @@ impl Asset for Scene {
 				Ok(Node {
 					name: n.name,
 					transform: n.transform,
-					inv_transform: n.transform.inverted(),
 					mesh,
 					instance: i as u32,
 				})

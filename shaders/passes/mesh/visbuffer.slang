@@ -1,7 +1,7 @@
 module visbuffer;
 
 import graph;
-import passes.asset;
+import asset;
 import visbuffer_extra;
 import cull;
 
@@ -165,7 +165,7 @@ public struct DecodedTri {
 	public __init(Instance* instances, Camera cam, f32x2 uv, u32x2 size, VisBufferPixel p) {
 		let instance = instances[p.meshlet.instance];
 		let meshlet = instance.meshlet(p.meshlet.node_offset);
-		let mvp = mul(cam.view_proj, instance.get_transform());
+		let mvp = mul(cam.view_proj, instance.transform.mat());
 
 		let t = meshlet.tri(instance.mesh, p.raw.triangle_id);
 		this.v0 = meshlet.vertex(instance.mesh, t.x);

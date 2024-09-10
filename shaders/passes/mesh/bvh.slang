@@ -1,7 +1,7 @@
 module bvh;
 
 import graph;
-import passes.asset;
+import asset;
 import cull;
 
 struct PushConstants {
@@ -54,7 +54,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupIndex) {
 	var p = Constants.read.get(node);
 	let instance = Constants.instances[p.instance];
 	let n = instance.node(p.node_offset);
-	let c = Cull(Constants.camera, instance.get_transform(), Constants.res, Constants.hzb, Constants.hzb_sampler);
+	let c = Cull(Constants.camera, instance.transform, Constants.res, Constants.hzb, Constants.hzb_sampler);
 
 	let aabb = n.aabbs[subnode];
 	let lod_bounds = n.lod_bounds[subnode];

@@ -187,7 +187,7 @@ impl Renderer {
 		);
 
 		let index_size = indices * std::mem::size_of::<u32>();
-		if index_size as u64 > self.index_size {
+		while index_size as u64 > self.index_size {
 			self.index_size *= 2;
 		}
 		let index = pass.resource(

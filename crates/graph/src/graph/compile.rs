@@ -33,6 +33,7 @@ use crate::{
 		get_access_info,
 		is_write_access,
 		AccessInfo,
+		GlobalBarrier,
 		GlobalBarrierAccess,
 		ImageBarrierAccess,
 		UsageType,
@@ -371,7 +372,6 @@ impl<'graph> ResourceAliaser<'graph> {
 						};
 					}
 				},
-
 				Resource::Image(data) => {
 					images.push(i as _);
 					if data.handle.0 == vk::Image::null() {
@@ -760,6 +760,16 @@ impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
 				!ev.is_empty()
 			});
 			all_sync.push(sync.finish(Vec::new_in(arena), wait_events));
+		}
+
+		if let Some(sync) = all_sync.last_mut() {
+			sync.queue.barriers.barriers.push(
+				GlobalBarrier {
+					previous_usages: &[UsageType::General],
+					next_usages: &[UsageType::HostRead],
+				}
+				.into(),
+			);
 		}
 
 		Ok(all_sync)

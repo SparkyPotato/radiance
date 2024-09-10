@@ -1,7 +1,7 @@
 module meshlet;
 
 import graph;
-import passes.asset;
+import asset;
 import cull;
 
 struct PushConstants {
@@ -43,7 +43,7 @@ void main(u32 id: SV_DispatchThreadID) {
 	let p = Constants.read.get(id);
 	let instance = Constants.instances[p.instance];
 	let meshlet = instance.meshlet(p.node_offset);
-	let c = Cull(Constants.camera, instance.get_transform(), Constants.res, Constants.hzb, Constants.hzb_sampler);
+	let c = Cull(Constants.camera, instance.transform, Constants.res, Constants.hzb, Constants.hzb_sampler);
 	let should_render = c.should_render(meshlet.lod_bounds, meshlet.error, meshlet.max_edge_length);
 	if (c.frustum_cull(meshlet.aabb) || !should_render.x)
 		return;

@@ -1,7 +1,7 @@
 module cull;
 
 import graph;
-import passes.asset;
+import asset;
 
 public struct NodePointer {
 	public u32 instance;
@@ -184,6 +184,7 @@ public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
 }
 
 public struct Cull {
+	f32x3 scale;
 	f32x4x4 mv;
 	f32x4x4 mvp;
 	f32x2 screen;
@@ -194,16 +195,18 @@ public struct Cull {
 	f32x4 planes[5];
 	u32x3 flips[5];
 
-	public __init(Camera* camera, f32x4x4 transform, u32x2 res, Tex<f32, D2> hzb, Sampler hzb_sampler) {
+	public __init(Camera* camera, Transform transform, u32x2 res, Tex<f32, D2> hzb, Sampler hzb_sampler) {
 		Cull ret;
-		ret.mv = mul(camera[0].view, transform);
-		ret.mvp = mul(occ_camera(camera).view_proj, transform);
+		let trans_mat = transform.mat();
+		ret.scale = transform.scale;
+		ret.mv = mul(camera[0].view, trans_mat);
+		ret.mvp = mul(occ_camera(camera).view_proj, trans_mat);
 		ret.screen = f32x2(res);
 		ret.h = camera[0].h;
 		ret.near = camera[0].near;
 		ret.hzb = hzb;
 		ret.hzb_sampler = hzb_sampler;
-		let mvp = mul(camera[0].view_proj, transform);
+		let mvp = mul(camera[0].view_proj, trans_mat);
 		ret.planes[0] = normalize_plane(mvp[3] + mvp[0]);
 		ret.planes[1] = normalize_plane(mvp[3] - mvp[0]);
 		ret.planes[2] = normalize_plane(mvp[3] + mvp[1]);
@@ -229,15 +232,8 @@ public struct Cull {
 		return true;
 	}
 
-	f32 max_scale() {
-		let x = this.mv._m00_m10_m20;
-		let y = this.mv._m01_m11_m21;
-		let z = this.mv._m02_m12_m22;
-		return sqrt(max3(dot(x, x), dot(y, y), dot(z, z)));
-	}
-
 	f32 project_error(f32x4 bounds, f32 error) {
-		let scale = this.max_scale();
+		let scale = max3(this.scale.x, this.scale.y, this.scale.z);
 		let center = mul(this.mv, f32x4(bounds.xyz, 1.f)).xyz;
 		let radius = bounds.w * scale;
 		let closest = f32x3(center.xy, max(center.z - radius, this.near));

@@ -1,7 +1,7 @@
 module instance;
 
 import graph;
-import passes.asset;
+import asset;
 import cull;
 
 struct LateInstances {
@@ -62,7 +62,7 @@ void main(u32 tid: SV_DispatchThreadID) {
 
 	let id = instance_id(tid);
 	let instance = Constants.instances[id];
-	let c = Cull(Constants.camera, instance.get_transform(), Constants.res, Constants.hzb, Constants.hzb_sampler);
+	let c = Cull(Constants.camera, instance.transform, Constants.res, Constants.hzb, Constants.hzb_sampler);
 	if (c.frustum_cull(instance.aabb))
 		return;
 	write(!c.oc_cull(instance.aabb), id);

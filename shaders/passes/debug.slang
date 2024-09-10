@@ -1,6 +1,6 @@
 import graph;
 import graph.util;
-import passes.asset;
+import asset;
 import passes.mesh.cull;
 import passes.mesh.visbuffer;
 

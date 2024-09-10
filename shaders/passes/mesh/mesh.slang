@@ -1,7 +1,7 @@
 module mesh;
 
 import graph;
-import passes.asset;
+import asset;
 import cull;
 import visbuffer;
 
@@ -56,7 +56,7 @@ struct Init {
 		let instance = Constants.instances[p.instance];
 		this.mesh = instance.mesh;
 		this.meshlet = instance.meshlet(p.node_offset);
-		this.mvp = mul(Constants.camera[0].view_proj, instance.get_transform());
+		this.mvp = mul(Constants.camera[0].view_proj, instance.transform.mat());
 	}
 
 	VertexTransform transform(u32 gtid) {
