@@ -1,7 +1,7 @@
 use std::mem::ManuallyDrop;
 
 use ash::{ext, vk};
-use radiance_graph::{device::Device, graph::RenderGraph, Result};
+use radiance_graph::{arena::Arena, device::Device, graph::RenderGraph, Result};
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 use winit::{
 	dpi::LogicalSize,
@@ -27,12 +27,8 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 			.device_extensions(&[ext::mesh_shader::NAME])
 			.features(
 				vk::PhysicalDeviceFeatures2::default()
-					.features(vk::PhysicalDeviceFeatures::default().sampler_anisotropy(true))
-					.push_next(
-						&mut vk::PhysicalDeviceVulkan12Features::default()
-							.draw_indirect_count(true)
-							.sampler_filter_minmax(true),
-					)
+					.features(vk::PhysicalDeviceFeatures::default())
+					.push_next(&mut vk::PhysicalDeviceVulkan12Features::default().sampler_filter_minmax(true))
 					.push_next(
 						&mut vk::PhysicalDeviceVulkan13Features::default()
 							.dynamic_rendering(true)
@@ -46,6 +42,7 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 
 struct State {
 	device: Device,
+	arena: Arena,
 	graph: ManuallyDrop<RenderGraph>,
 	state: ManuallyDrop<UiState>,
 	ui: ManuallyDrop<UiHandler>,
@@ -62,6 +59,7 @@ impl State {
 
 		Ok(Self {
 			device,
+			arena: Arena::new(),
 			graph,
 			ui,
 			window,
@@ -112,9 +110,9 @@ fn main() {
 			Event::WindowEvent { event, .. } => {
 				match event {
 					WindowEvent::RedrawRequested => {
-						let arena_size = state.device.arena().memory_usage();
-						state.device.reset_arena();
-						let mut frame = state.graph.frame(&state.device);
+						let arena_size = state.arena.memory_usage();
+						state.arena.reset();
+						let mut frame = state.graph.frame(&state.device, &state.arena);
 
 						state.ui.begin_frame(&state.window);
 						state.state.render(&mut frame, &state.ui.ctx, &state.window, arena_size);

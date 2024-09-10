@@ -1,5 +1,6 @@
 use std::{
-	fmt::Debug,
+	error::Error,
+	fmt::{Debug, Display},
 	fs::{File, OpenOptions},
 	hash::BuildHasherDefault,
 	io::Read,
@@ -309,22 +310,24 @@ pub enum LoadError {
 	Vulkan(radiance_graph::Error),
 	Io(std::io::Error),
 }
-
 impl From<std::io::Error> for LoadError {
 	fn from(value: std::io::Error) -> Self { Self::Io(value) }
 }
 impl From<radiance_graph::Error> for LoadError {
 	fn from(value: radiance_graph::Error) -> Self { Self::Vulkan(value) }
 }
-
-impl Debug for LoadError {
+impl Display for LoadError {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		match self {
 			Self::Vulkan(e) => Debug::fmt(e, f),
-			Self::Io(e) => e.fmt(f),
+			Self::Io(e) => Display::fmt(e, f),
 		}
 	}
 }
+impl Debug for LoadError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Display::fmt(self, f) }
+}
+impl Error for LoadError {}
 
 pub struct AssetSystemView<'a> {
 	sys: &'a AssetSystem,

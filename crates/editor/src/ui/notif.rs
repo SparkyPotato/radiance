@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+	error::Error,
+	time::{Duration, Instant},
+};
 
 use egui::{Align2, Area, Context, Frame, Id, Order, Resize, Ui};
 
@@ -20,19 +23,19 @@ pub enum NotifType {
 }
 
 pub trait Notification: 'static {
-	fn ty(&self) -> NotifType;
+	fn ty(&mut self) -> NotifType;
 
 	fn draw(&mut self, ui: &mut Ui, fonts: &Fonts);
 
-	fn expired(&self) -> bool;
+	fn expired(&mut self, dur: Duration) -> bool;
 
-	fn dismissable(&self) -> bool;
+	fn dismissable(&mut self) -> bool;
 }
 
 pub struct PushNotif {
 	ty: NotifType,
 	contents: String,
-	expiry: Instant,
+	life: Duration,
 }
 
 impl PushNotif {
@@ -40,7 +43,7 @@ impl PushNotif {
 		Self {
 			ty,
 			contents: contents.to_string(),
-			expiry: Instant::now() + Duration::from_secs(5),
+			life: Duration::from_secs(5),
 		}
 	}
 
@@ -48,24 +51,45 @@ impl PushNotif {
 		Self {
 			ty,
 			contents: contents.to_string(),
-			expiry: Instant::now() + life,
+			life,
 		}
 	}
 }
 
 impl Notification for PushNotif {
-	fn ty(&self) -> NotifType { self.ty }
+	fn ty(&mut self) -> NotifType { self.ty }
 
 	fn draw(&mut self, ui: &mut Ui, _: &Fonts) { ui.label(self.contents.clone()); }
 
-	fn expired(&self) -> bool { Instant::now() > self.expiry }
+	fn expired(&mut self, dur: Duration) -> bool { dur > self.life }
 
-	fn dismissable(&self) -> bool { true }
+	fn dismissable(&mut self) -> bool { true }
+}
+
+impl<E: Error + 'static> Notification for Result<(), E> {
+	fn ty(&mut self) -> NotifType {
+		match self {
+			Ok(()) => NotifType::Info,
+			Err(_) => NotifType::Error,
+		}
+	}
+
+	fn draw(&mut self, ui: &mut Ui, _: &Fonts) {
+		ui.label(match self {
+			Ok(()) => format!("success"),
+			Err(e) => format!("failed: {e}"),
+		});
+	}
+
+	fn expired(&mut self, dur: Duration) -> bool { dur > Duration::from_secs(2) && self.is_ok() }
+
+	fn dismissable(&mut self) -> bool { true }
 }
 
 struct Notif {
 	pub header: String,
 	pub contents: Box<dyn Notification>,
+	pub start: Instant,
 }
 
 impl NotifStack {
@@ -80,6 +104,7 @@ impl NotifStack {
 		self.notifs.push(Notif {
 			header: header.to_string(),
 			contents: Box::new(notif),
+			start: Instant::now(),
 		});
 	}
 
@@ -87,10 +112,11 @@ impl NotifStack {
 		let rect = ctx.input(|x| x.screen_rect);
 		let x = rect.width() - 15.0;
 		let mut y = rect.height() - 15.0;
+		let now = Instant::now();
 
 		let mut i = 0;
-		self.notifs.retain(|x| {
-			let ret = !x.contents.expired() && self.dismissed != Some(i);
+		self.notifs.retain_mut(|x| {
+			let ret = !x.contents.expired(now - x.start) && self.dismissed != Some(i);
 			i += 1;
 			ret
 		});

@@ -4,6 +4,7 @@ mod assets;
 mod debug;
 mod notif;
 mod render;
+mod task;
 mod widgets;
 
 use egui::{menu, Context, Key, KeyboardShortcut, Modifiers, TopBottomPanel};
@@ -13,12 +14,13 @@ pub use widgets::Fonts;
 use winit::event::WindowEvent;
 
 use crate::{
-	ui::{assets::AssetManager, debug::Debug, notif::NotifStack, render::Renderer},
+	ui::{assets::AssetManager, debug::Debug, notif::NotifStack, render::Renderer, task::TaskPool},
 	window::Window,
 };
 
 pub struct UiState {
 	fonts: Fonts,
+	pool: TaskPool,
 	assets: AssetManager,
 	debug: Debug,
 	renderer: Renderer,
@@ -27,12 +29,14 @@ pub struct UiState {
 
 impl UiState {
 	pub fn new(device: &Device, fonts: Fonts) -> Result<Self> {
+		let pool = TaskPool::new();
 		Ok(Self {
 			fonts,
 			debug: Debug::new(),
-			assets: AssetManager::new(),
+			assets: AssetManager::new(&pool),
 			renderer: Renderer::new(device)?,
 			notifs: NotifStack::new(),
+			pool,
 		})
 	}
 
@@ -59,7 +63,7 @@ impl UiState {
 					let load = ui.button("load").clicked();
 					if new || load {
 						if let Some(path) = FileDialog::new().pick_folder() {
-							self.assets.open(path);
+							self.assets.open(path, &self.pool);
 						}
 					}
 					if ui.button("save").clicked() {
@@ -85,22 +89,30 @@ impl UiState {
 			self.renderer.undo(&mut self.notifs);
 		}
 		if save {
-			self.renderer.save(self.assets.system.as_deref(), &mut self.notifs);
+			self.renderer
+				.save(self.assets.system.clone(), &mut self.notifs, &self.pool);
 		}
 
 		self.debug.set_arena_size(arena_size);
 		self.debug.render(frame.device(), ctx);
 
-		self.assets
-			.render(frame, ctx, &mut self.notifs, &mut self.renderer, &self.fonts);
+		self.assets.render(
+			frame,
+			ctx,
+			&mut self.notifs,
+			&mut self.renderer,
+			&self.fonts,
+			&self.pool,
+		);
 		self.renderer.render(
 			frame,
 			ctx,
 			window,
 			&self.debug,
-			self.assets.system.as_deref().map(|x| &*x),
+			self.assets.system.clone(),
+			&mut self.notifs,
+			&self.pool,
 		);
-
 		self.notifs.render(ctx, &self.fonts);
 	}
 

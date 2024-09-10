@@ -1,15 +1,17 @@
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use egui::{Label, Sense, SidePanel, Ui};
 use egui_extras::{Column, TableBuilder};
 use radiance_asset::{
 	rref::{RRef, RWeak},
 	scene::Scene,
+	AssetSystem,
 };
 
 use crate::ui::{
 	notif::{NotifStack, NotifType, PushNotif},
 	render::picking::Picker,
+	task::{TaskNotif, TaskPool},
 	widgets::splitter::{Splitter, SplitterAxis},
 };
 
@@ -98,7 +100,20 @@ impl Editor {
 
 	pub fn is_dirty(&mut self, scene: &RRef<Scene>) -> bool {
 		self.check_scene(scene);
-		self.changes.is_empty() || self.last_save == self.changes.len() - 1
+		self.last_save != self.changes.len()
+	}
+
+	pub fn save(
+		&mut self, system: Option<Arc<AssetSystem>>, scene: &RRef<Scene>, notifs: &mut NotifStack, pool: &TaskPool,
+	) {
+		match system {
+			Some(sys) if self.is_dirty(scene) => {
+				let s = scene.clone();
+				notifs.push("save scene", TaskNotif::new("saving", pool.spawn(move || sys.save(&s))));
+				self.last_save = self.changes.len();
+			},
+			_ => {},
+		}
 	}
 
 	pub fn undo(&mut self, scene: &RRef<Scene>, notifs: &mut NotifStack) {

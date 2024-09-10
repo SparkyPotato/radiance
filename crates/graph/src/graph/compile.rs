@@ -912,7 +912,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 }
 
 impl<'pass, 'graph> Frame<'pass, 'graph> {
-	pub(super) fn compile(self, device: &Device) -> Result<CompiledFrame<'pass, 'graph>> {
+	pub(super) fn compile(self, device: &Device, arena: &'graph Arena) -> Result<CompiledFrame<'pass, 'graph>> {
 		let span = span!(Level::TRACE, "compile graph");
 		let _e = span.enter();
 
@@ -925,7 +925,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 
 			self.virtual_resources
 				.into_iter()
-				.fold(ResourceAliaser::new(self.device.arena()), |mut a, r| {
+				.fold(ResourceAliaser::new(arena), |mut a, r| {
 					a.add(r);
 					a
 				})

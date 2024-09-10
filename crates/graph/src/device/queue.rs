@@ -13,11 +13,7 @@ use std::{
 use ash::vk;
 use tracing::{span, Level};
 
-use crate::{
-	arena::{IteratorAlloc, ToOwnedAlloc},
-	device::Device,
-	Result,
-};
+use crate::{arena::ToOwnedAlloc, device::Device, Result};
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct Graphics;
@@ -72,7 +68,7 @@ impl<TY: QueueType> SyncPoint<TY> {
 				.device()
 				.wait_semaphores(
 					&vk::SemaphoreWaitInfo::default()
-						.semaphores(&[device.queues.get::<TY>().semaphore])
+						.semaphores(&[device.inner.queues.get::<TY>().semaphore])
 						.values(&[self.0]),
 					u64::MAX,
 				)
@@ -83,8 +79,9 @@ impl<TY: QueueType> SyncPoint<TY> {
 	pub fn is_complete(self, device: &Device) -> Result<bool> {
 		unsafe {
 			let v = device
+				.inner
 				.device
-				.get_semaphore_counter_value(device.queues.get::<TY>().semaphore)?;
+				.get_semaphore_counter_value(device.inner.queues.get::<TY>().semaphore)?;
 			Ok(v >= self.0)
 		}
 	}
@@ -360,27 +357,27 @@ impl QueueData {
 		let s = span!(Level::TRACE, "gpu submit");
 		let _e = s.enter();
 
-		let wait: Vec<_, _> = wait
+		let wait: Vec<_> = wait
 			.graphics
 			.into_iter()
 			.map(|x| x.info(qs))
 			.chain(wait.compute.into_iter().map(|x| x.info(qs)))
 			.chain(wait.transfer.into_iter().map(|x| x.info(qs)))
 			.chain(wait.binary_semaphores.into_iter().map(|x| x.info()))
-			.collect_in(device.arena());
-		let infos: Vec<_, _> = bufs
+			.collect();
+		let infos: Vec<_> = bufs
 			.iter()
 			.map(|&b| vk::CommandBufferSubmitInfo::default().command_buffer(b))
-			.collect_in(device.arena());
+			.collect();
 		let v = self.value.fetch_add(1, Ordering::Release);
-		let signal: Vec<_, _> = iter::once(
+		let signal: Vec<_> = iter::once(
 			vk::SemaphoreSubmitInfo::default()
 				.semaphore(self.semaphore)
 				.value(v + 1)
 				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
 		)
 		.chain(signal.into_iter().map(|x| x.info()))
-		.collect_in(device.arena());
+		.collect();
 
 		unsafe {
 			let s = span!(Level::TRACE, "driver submit");

@@ -1,4 +1,8 @@
-use std::{path::PathBuf, sync::Arc, time::Instant};
+use std::{
+	path::PathBuf,
+	sync::Arc,
+	time::{Duration, Instant},
+};
 
 use crossbeam_channel::{Receiver, Sender};
 use egui::{Align, Align2, Context, FontId, Label, Layout, PointerButton, ProgressBar, RichText, ScrollArea, Ui};
@@ -12,6 +16,7 @@ use tracing::{event, Level};
 use crate::ui::{
 	notif::{NotifStack, NotifType, Notification, PushNotif},
 	render::Renderer,
+	task::{Task, TaskPool},
 	widgets::{icons, IntoIcon, TextButton, UiExt},
 	Fonts,
 };
@@ -19,18 +24,17 @@ use crate::ui::{
 enum Progress {
 	Discovering,
 	Update(f32),
-	Finished,
+	Finished(Instant),
 	Error(std::io::Error),
 }
 
 struct ImportNotif {
 	recv: Receiver<Progress>,
 	latest: Progress,
-	finished: Option<Instant>,
 }
 
 impl Notification for ImportNotif {
-	fn ty(&self) -> NotifType {
+	fn ty(&mut self) -> NotifType {
 		match self.latest {
 			Progress::Error(_) => NotifType::Error,
 			_ => NotifType::Info,
@@ -49,10 +53,7 @@ impl Notification for ImportNotif {
 			Progress::Update(ratio) => {
 				ui.add(ProgressBar::new(*ratio).show_percentage());
 			},
-			Progress::Finished => {
-				if self.finished.is_none() {
-					self.finished = Some(Instant::now());
-				}
+			Progress::Finished(_) => {
 				ui.label("imported");
 			},
 			Progress::Error(err) => {
@@ -61,9 +62,14 @@ impl Notification for ImportNotif {
 		}
 	}
 
-	fn expired(&self) -> bool { self.finished.map(|x| x.elapsed().as_secs_f32() > 5.0).unwrap_or(false) }
+	fn expired(&mut self, _: Duration) -> bool {
+		match self.latest {
+			Progress::Finished(x) => x.elapsed() > Duration::from_secs(5),
+			_ => false,
+		}
+	}
 
-	fn dismissable(&self) -> bool { matches!(self.latest, Progress::Error(_) | Progress::Finished) }
+	fn dismissable(&mut self) -> bool { matches!(self.latest, Progress::Error(_) | Progress::Finished(_)) }
 }
 
 struct ImportRequest {
@@ -72,121 +78,93 @@ struct ImportRequest {
 	progress: Sender<Progress>,
 }
 
-enum ThreadMsg {
-	Import(ImportRequest),
-	Open(PathBuf),
-}
-
-enum ThreadRecv {
-	OpenedSystem { sys: Arc<AssetSystem>, existed: bool },
-}
-
-fn import_thread(recv: Receiver<ThreadMsg>, send: Sender<ThreadRecv>) {
-	tracy::set_thread_name(tracy::c_str!("importer"));
-	let mut sys = None;
-	for msg in recv {
-		match msg {
-			ThreadMsg::Open(path) => {
-				let existed = path.exists();
-				let Ok(s) = AssetSystem::new(&path) else {
-					continue;
-				};
-				let s = Arc::new(s);
-				let _ = send.send(ThreadRecv::OpenedSystem {
-					sys: s.clone(),
-					existed,
-				});
-				sys = Some(s);
+fn import(sys: Option<Arc<AssetSystem>>, req: ImportRequest) {
+	if let Some(ref sys) = sys {
+		let importer = match GltfImporter::initialize(&req.from) {
+			Some(Ok(x)) => x,
+			Some(Err(e)) => {
+				event!(Level::ERROR, "failed to import {:?}: {:?}", req.from, e);
+				let _ = req.progress.send(Progress::Error(e));
+				return;
 			},
-			ThreadMsg::Import(req) => {
-				if let Some(ref sys) = sys {
-					let importer = match GltfImporter::initialize(&req.from) {
-						Some(Ok(x)) => x,
-						Some(Err(e)) => {
-							event!(Level::ERROR, "failed to import {:?}: {:?}", req.from, e);
-							let _ = req.progress.send(Progress::Error(e));
-							continue;
-						},
-						None => {
-							let ext = req.from.extension().unwrap().to_str().unwrap();
-							event!(Level::ERROR, "unsupported extension {}", ext);
-							let _ = req.progress.send(Progress::Error(std::io::Error::other(format!(
-								"unsupported extension {}",
-								ext
-							))));
-							continue;
-						},
-					};
-					if let Err(err) = importer.import(sys.view(req.to), |x| {
-						event!(Level::INFO, "{:.2}%", x * 100.0);
-						let _ = req.progress.send(Progress::Update(x));
-					}) {
-						event!(Level::ERROR, "failed to import {:?}: {:?}", req.from, err);
-						let _ = req.progress.send(Progress::Error(err));
-					}
-				}
-				let _ = req.progress.send(Progress::Finished);
+			None => {
+				let ext = req.from.extension().unwrap().to_str().unwrap();
+				event!(Level::ERROR, "unsupported extension {}", ext);
+				let _ = req.progress.send(Progress::Error(std::io::Error::other(format!(
+					"unsupported extension {}",
+					ext
+				))));
+				return;
 			},
+		};
+		if let Err(err) = importer.import(sys.view(req.to), |x| {
+			event!(Level::INFO, "{:.2}%", x * 100.0);
+			let _ = req.progress.send(Progress::Update(x));
+		}) {
+			event!(Level::ERROR, "failed to import {:?}: {:?}", req.from, err);
+			let _ = req.progress.send(Progress::Error(err));
 		}
 	}
+	let _ = req.progress.send(Progress::Finished(Instant::now()));
 }
 
 pub struct AssetManager {
 	pub system: Option<Arc<AssetSystem>>,
+	open: Option<Task<(Option<Arc<AssetSystem>>, bool)>>,
 	cursor: PathBuf,
 	creating_dir: Option<(String, bool)>,
 	selection: FxHashSet<String>,
-	send: Sender<ThreadMsg>,
-	recv: Receiver<ThreadRecv>,
 }
 
 impl AssetManager {
 	const CELL_SIZE: f32 = 75.0;
 
-	pub fn new() -> Self {
-		let (send, recv) = crossbeam_channel::unbounded();
-		let (isend, irecv) = crossbeam_channel::unbounded();
-		std::thread::Builder::new()
-			.name("importer".to_string())
-			.spawn(move || import_thread(recv, isend))
-			.unwrap();
+	pub fn new(pool: &TaskPool) -> Self {
 		let mut this = Self {
 			system: None,
+			open: None,
 			cursor: PathBuf::new(),
 			creating_dir: None,
 			selection: FxHashSet::default(),
-			send,
-			recv: irecv,
 		};
 		if let Some(s) = std::env::args().nth(1) {
-			this.open(s);
+			this.open(s, pool);
 		}
 		this
 	}
 
-	pub fn open(&mut self, path: impl Into<PathBuf>) {
+	pub fn open(&mut self, path: impl Into<PathBuf>, pool: &TaskPool) {
 		let buf = std::fs::canonicalize(path.into()).unwrap();
-		self.send.send(ThreadMsg::Open(buf.clone())).unwrap();
-		self.cursor = PathBuf::new();
+		self.open = Some(pool.spawn(move || {
+			let existed = buf.exists();
+			let Ok(s) = AssetSystem::new(&buf) else {
+				return (None, false);
+			};
+			let s = Arc::new(s);
+			(Some(s), existed)
+		}));
+		self.cursor.clear();
+	}
+
+	fn poll(&mut self, notifs: &mut NotifStack) {
+		if let Some((sys, existed)) = self.open.as_mut().and_then(|x| x.get()) {
+			self.system = sys.clone();
+			notifs.push(
+				"project",
+				PushNotif::new(
+					NotifType::Info,
+					format!("{} project", if *existed { "loaded" } else { "created" }),
+				),
+			);
+			self.open = None;
+		}
 	}
 
 	pub fn render(
 		&mut self, frame: &mut Frame, ctx: &Context, notifs: &mut NotifStack, renderer: &mut Renderer, fonts: &Fonts,
+		pool: &TaskPool,
 	) {
-		for msg in self.recv.try_iter() {
-			match msg {
-				ThreadRecv::OpenedSystem { sys, existed } => {
-					self.system = Some(sys);
-					notifs.push(
-						"project",
-						PushNotif::new(
-							NotifType::Info,
-							format!("{} project", if existed { "loaded" } else { "created" }),
-						),
-					);
-				},
-			}
-		}
+		self.poll(notifs);
 
 		egui::TopBottomPanel::bottom("assets")
 			.resizable(true)
@@ -201,19 +179,16 @@ impl AssetManager {
 					} else {
 						let dropped = ctx.input_mut(|x| std::mem::take(&mut x.raw.dropped_files));
 						for file in dropped {
+							let sys = self.system.clone();
 							let from = file.path.unwrap();
+							let to = self.cursor.clone();
 							let (progress, recv) = crossbeam_channel::unbounded();
-							let _ = self.send.send(ThreadMsg::Import(ImportRequest {
-								from,
-								to: self.cursor.clone(),
-								progress,
-							}));
+							pool.spawn(move || import(sys, ImportRequest { from, to, progress }));
 							notifs.push(
 								"import",
 								ImportNotif {
 									recv,
 									latest: Progress::Discovering,
-									finished: None,
 								},
 							);
 						}

@@ -1,4 +1,8 @@
-use std::{ffi::CStr, mem::ManuallyDrop, sync::Mutex};
+use std::{
+	ffi::CStr,
+	mem::ManuallyDrop,
+	sync::{Arc, Mutex},
+};
 
 use ash::{ext, khr, vk, vk::TaggedStructure};
 use gpu_allocator::{
@@ -11,8 +15,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use tracing::{info, trace, warn};
 
 use crate::{
-	arena::Arena,
-	device::{descriptor::Descriptors, Device, QueueData, Queues},
+	device::{descriptor::Descriptors, Device, DeviceInner, QueueData, Queues},
 	Error,
 	Result,
 };
@@ -118,19 +121,20 @@ impl<'a> DeviceBuilder<'a> {
 
 		Ok((
 			Device {
-				arena: Arena::new(),
-				entry,
-				instance,
-				as_ext,
-				rt_ext,
-				debug_utils_ext,
-				surface_ext,
-				physical_device,
-				queues,
-				allocator: ManuallyDrop::new(Mutex::new(allocator)),
-				shaders: ManuallyDrop::new(ShaderRuntime::new(&device)),
-				descriptors,
-				device,
+				inner: Arc::new(DeviceInner {
+					entry,
+					instance,
+					as_ext,
+					rt_ext,
+					debug_utils_ext,
+					surface_ext,
+					physical_device,
+					queues,
+					allocator: ManuallyDrop::new(Mutex::new(allocator)),
+					shaders: ManuallyDrop::new(ShaderRuntime::new(&device)),
+					descriptors,
+					device,
+				}),
 			},
 			s,
 		))
@@ -567,8 +571,8 @@ impl Device {
 		&self, window: &dyn HasWindowHandle, display: &dyn HasDisplayHandle,
 	) -> Result<vk::SurfaceKHR> {
 		DeviceBuilder::create_surface_inner(
-			&self.entry,
-			&self.instance,
+			&self.inner.entry,
+			&self.inner.instance,
 			window.window_handle().unwrap().as_raw(),
 			display.display_handle().unwrap().as_raw(),
 		)

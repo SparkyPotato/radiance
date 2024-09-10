@@ -2,7 +2,7 @@
 
 use std::{
 	mem::ManuallyDrop,
-	sync::{Mutex, MutexGuard},
+	sync::{Arc, Mutex, MutexGuard},
 };
 
 use ash::{ext, khr, vk};
@@ -24,7 +24,6 @@ pub use crate::device::queue::{
 	Transfer,
 };
 use crate::{
-	arena::Arena,
 	device::{descriptor::Descriptors, queue::QueueData},
 	Result,
 };
@@ -33,9 +32,7 @@ pub mod descriptor;
 mod init;
 mod queue;
 
-/// Has everything you need to do Vulkan stuff.
-pub struct Device {
-	arena: Arena,
+struct DeviceInner {
 	physical_device: vk::PhysicalDevice,
 	device: ash::Device,
 	as_ext: khr::acceleration_structure::Device,
@@ -50,57 +47,63 @@ pub struct Device {
 	entry: ash::Entry,
 }
 
+/// Has everything you need to do Vulkan stuff.
+#[derive(Clone)]
+pub struct Device {
+	inner: Arc<DeviceInner>,
+}
+
 impl Device {
-	pub fn arena(&self) -> &Arena { &self.arena }
-
-	pub fn reset_arena(&mut self) { self.arena.reset() }
-
 	pub fn graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<Pipeline> {
-		self.shaders.create_graphics_pipeline(desc).map_err(Into::into)
+		self.inner.shaders.create_graphics_pipeline(desc).map_err(Into::into)
 	}
 
 	pub fn compute_pipeline(&self, layout: vk::PipelineLayout, shader: ShaderInfo) -> Result<Pipeline> {
-		self.shaders.create_compute_pipeline(layout, shader).map_err(Into::into)
+		self.inner
+			.shaders
+			.create_compute_pipeline(layout, shader)
+			.map_err(Into::into)
 	}
 
-	pub fn hotreload_status(&self) -> HotreloadStatus { self.shaders.status() }
+	pub fn hotreload_status(&self) -> HotreloadStatus { self.inner.shaders.status() }
 
-	pub fn entry(&self) -> &ash::Entry { &self.entry }
+	pub fn entry(&self) -> &ash::Entry { &self.inner.entry }
 
-	pub fn instance(&self) -> &ash::Instance { &self.instance }
+	pub fn instance(&self) -> &ash::Instance { &self.inner.instance }
 
-	pub fn device(&self) -> &ash::Device { &self.device }
+	pub fn device(&self) -> &ash::Device { &self.inner.device }
 
-	pub fn physical_device(&self) -> vk::PhysicalDevice { self.physical_device }
+	pub fn physical_device(&self) -> vk::PhysicalDevice { self.inner.physical_device }
 
-	pub fn as_ext(&self) -> &khr::acceleration_structure::Device { &self.as_ext }
+	pub fn as_ext(&self) -> &khr::acceleration_structure::Device { &self.inner.as_ext }
 
-	pub fn rt_ext(&self) -> &khr::ray_tracing_pipeline::Device { &self.rt_ext }
+	pub fn rt_ext(&self) -> &khr::ray_tracing_pipeline::Device { &self.inner.rt_ext }
 
-	pub fn surface_ext(&self) -> Option<&khr::surface::Instance> { self.surface_ext.as_ref() }
+	pub fn surface_ext(&self) -> Option<&khr::surface::Instance> { self.inner.surface_ext.as_ref() }
 
-	pub fn debug_utils_ext(&self) -> Option<&ext::debug_utils::Device> { self.debug_utils_ext.as_ref() }
+	pub fn debug_utils_ext(&self) -> Option<&ext::debug_utils::Device> { self.inner.debug_utils_ext.as_ref() }
 
-	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.allocator.lock().unwrap() }
+	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.inner.allocator.lock().unwrap() }
 
-	pub fn descriptors(&self) -> &Descriptors { &self.descriptors }
+	pub fn descriptors(&self) -> &Descriptors { &self.inner.descriptors }
 
-	pub fn queue_families(&self) -> Queues<u32> { self.queues.map_ref(|data| data.family()) }
+	pub fn queue_families(&self) -> Queues<u32> { self.inner.queues.map_ref(|data| data.family()) }
 
-	pub fn queue<TY: QueueType>(&self) -> MutexGuard<'_, vk::Queue> { self.queues.get::<TY>().queue() }
+	pub fn queue<TY: QueueType>(&self) -> MutexGuard<'_, vk::Queue> { self.inner.queues.get::<TY>().queue() }
 
-	pub fn current_sync_point<TY: QueueType>(&self) -> SyncPoint<TY> { self.queues.get::<TY>().current() }
+	pub fn current_sync_point<TY: QueueType>(&self) -> SyncPoint<TY> { self.inner.queues.get::<TY>().current() }
 
 	pub fn submit<TY: QueueType>(
 		&self, wait: QueueWait, bufs: &[vk::CommandBuffer], signal: &[SyncStage<vk::Semaphore>], fence: vk::Fence,
 	) -> Result<SyncPoint<TY>> {
-		self.queues
+		self.inner
+			.queues
 			.get::<TY>()
-			.submit(&self.queues, self, wait, bufs, signal, fence)
+			.submit(&self.inner.queues, self, wait, bufs, signal, fence)
 	}
 }
 
-impl Drop for Device {
+impl Drop for DeviceInner {
 	fn drop(&mut self) {
 		unsafe {
 			// Drop the allocator before the device.

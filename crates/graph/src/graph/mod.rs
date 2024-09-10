@@ -93,12 +93,14 @@ impl RenderGraph {
 		})
 	}
 
-	pub fn frame<'pass, 'graph>(&'graph mut self, device: &'graph Device) -> Frame<'pass, 'graph> {
+	pub fn frame<'pass, 'graph>(
+		&'graph mut self, device: &'graph Device, arena: &'graph Arena,
+	) -> Frame<'pass, 'graph> {
 		Frame {
 			graph: self,
 			device,
-			passes: Vec::new_in(device.arena()),
-			virtual_resources: Vec::new_in(device.arena()),
+			passes: Vec::new_in(arena),
+			virtual_resources: Vec::new_in(arena),
 		}
 	}
 
@@ -148,12 +150,11 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 
 	pub fn device(&self) -> &'graph Device { &self.device }
 
-	pub fn arena(&self) -> &'graph Arena { self.device.arena() }
+	pub fn arena(&self) -> &'graph Arena { self.passes.allocator() }
 
 	pub fn start_region(&mut self, name: &str) {
 		let name = name.as_bytes().iter().copied().chain([0]);
-		self.passes
-			.push(FrameEvent::RegionStart(name.collect_in(self.device.arena())));
+		self.passes.push(FrameEvent::RegionStart(name.collect_in(self.arena())));
 	}
 
 	pub fn end_region(&mut self) { self.passes.push(FrameEvent::RegionEnd); }
@@ -171,7 +172,7 @@ impl Frame<'_, '_> {
 	/// Run the frame.
 	pub fn run(self) -> Result<()> {
 		let device = self.device;
-		let arena = device.arena();
+		let arena = self.arena();
 		let data = &mut self.graph.frame_data[self.graph.curr_frame];
 		data.reset(device)?;
 		unsafe {
@@ -190,7 +191,7 @@ impl Frame<'_, '_> {
 			sync,
 			mut resource_map,
 			graph,
-		} = self.compile(device)?;
+		} = self.compile(device, arena)?;
 
 		let span = span!(Level::TRACE, "run passes");
 		let _e = span.enter();
@@ -268,9 +269,10 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		let id = id.id.wrapping_sub(self.frame.graph.resource_base_id);
 
 		unsafe {
+			let arena = self.frame.arena();
 			let res = self.frame.virtual_resources.get_unchecked_mut(id);
 			res.lifetime.end = self.frame.passes.len() as _;
-			T::add_read_usage(res, self.frame.passes.len() as _, usage, self.frame.device.arena());
+			T::add_read_usage(res, self.frame.passes.len() as _, usage, arena);
 		}
 	}
 
@@ -281,12 +283,13 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		let real_id = self.frame.virtual_resources.len();
 		let id = real_id.wrapping_add(self.frame.graph.resource_base_id);
 
+		let arena = self.frame.arena();
 		let ty = desc.ty(
 			self.frame.passes.len() as _,
 			usage,
 			&mut self.frame.virtual_resources,
 			self.frame.graph.resource_base_id,
-			self.frame.device.arena(),
+			arena,
 		);
 
 		self.frame.virtual_resources.push(VirtualResourceData {
@@ -336,7 +339,7 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 	/// Build the pass with the given callback.
 	pub fn build(self, callback: impl FnOnce(PassContext<'_, 'graph>) + 'pass) {
 		let pass = PassData {
-			callback: Box::new_in(callback, self.frame.device.arena()),
+			callback: Box::new_in(callback, self.frame.arena()),
 		};
 		self.frame.passes.push(FrameEvent::Pass(pass));
 		self.frame.end_region();

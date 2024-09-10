@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use egui::{CentralPanel, Context, PointerButton, RichText, Ui};
 use radiance_asset::{rref::RRef, scene, AssetSystem, Uuid};
 use radiance_egui::to_texture_id;
@@ -6,19 +8,19 @@ use radiance_passes::{
 	debug::mesh::DebugMesh,
 	mesh::{RenderInfo, VisBuffer},
 };
-use tracing::{event, Level};
 use vek::Vec2;
 use winit::event::WindowEvent;
 
 use crate::{
 	ui::{
 		debug::Debug,
-		notif::{NotifStack, NotifType, PushNotif},
+		notif::NotifStack,
 		render::{
 			camera::{CameraController, Mode},
 			edit::Editor,
 			picking::Picker,
 		},
+		task::{TaskNotif, TaskPool},
 	},
 	window::Window,
 };
@@ -30,6 +32,7 @@ mod picking;
 enum Scene {
 	None,
 	Unloaded(Uuid),
+	Loading(oneshot::Receiver<Option<RRef<scene::Scene>>>),
 	Loaded(RRef<scene::Scene>),
 }
 
@@ -58,10 +61,10 @@ impl Renderer {
 
 	pub fn render<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, window: &Window, debug: &Debug,
-		system: Option<&AssetSystem>,
+		system: Option<Arc<AssetSystem>>, notifs: &mut NotifStack, pool: &TaskPool,
 	) {
 		CentralPanel::default().show(ctx, |ui| {
-			if let Some(x) = self.render_inner(frame, ctx, ui, window, system, debug) {
+			if let Some(x) = self.render_inner(frame, ctx, ui, window, debug, system, notifs, pool) {
 				if x {
 					ui.centered_and_justified(|ui| {
 						ui.label(RichText::new("no scene loaded").size(20.0));
@@ -76,23 +79,47 @@ impl Renderer {
 	}
 
 	fn render_inner<'pass>(
-		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, ui: &mut Ui, window: &Window,
-		system: Option<&AssetSystem>, debug: &Debug,
+		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, ui: &mut Ui, window: &Window, debug: &Debug,
+		system: Option<Arc<AssetSystem>>, notifs: &mut NotifStack, pool: &TaskPool,
 	) -> Option<bool> {
 		let Some(system) = system else {
 			return Some(true);
 		};
 		let scene = match self.scene {
 			Scene::None => return Some(true),
-			Scene::Unloaded(s) => match system.initialize::<scene::Scene>(frame.device(), s) {
-				Ok(s) => {
+			Scene::Unloaded(sc) => {
+				let dev = frame.device().clone();
+				let (s, r) = oneshot::channel();
+				notifs.push(
+					"loading scene",
+					TaskNotif::new(
+						"loading",
+						pool.spawn(move || match system.initialize::<scene::Scene>(&dev, sc) {
+							Ok(sc) => {
+								s.send(Some(sc)).unwrap();
+								Ok(())
+							},
+							Err(e) => {
+								s.send(None).unwrap();
+								Err(e)
+							},
+						}),
+					),
+				);
+				self.scene = Scene::Loading(r);
+				return Some(true);
+			},
+			Scene::Loading(ref mut r) => match r.try_recv() {
+				Ok(Some(s)) => {
+					let s = s.clone();
 					self.scene = Scene::Loaded(s.clone());
 					s
 				},
-				Err(e) => {
-					event!(Level::ERROR, "error loading scene: {:?}", e);
-					return None;
+				Ok(None) => {
+					self.scene = Scene::None;
+					return Some(true);
 				},
+				Err(_) => return Some(true),
 			},
 			Scene::Loaded(ref s) => s.clone(),
 		};
@@ -146,19 +173,9 @@ impl Renderer {
 		}
 	}
 
-	pub fn save(&mut self, system: Option<&AssetSystem>, notifs: &mut NotifStack) {
-		match (&self.scene, system) {
-			(Scene::Loaded(scene), Some(sys)) if self.editor.is_dirty(scene) => {
-				notifs.push(
-					"save scene",
-					if let Err(e) = sys.save(scene) {
-						PushNotif::new(NotifType::Error, format!("failed to save: {e}"))
-					} else {
-						PushNotif::new(NotifType::Info, "success")
-					},
-				);
-			},
-			_ => {},
+	pub fn save(&mut self, system: Option<Arc<AssetSystem>>, notifs: &mut NotifStack, pool: &TaskPool) {
+		if let Scene::Loaded(ref scene) = self.scene {
+			self.editor.save(system, scene, notifs, pool);
 		}
 	}
 
