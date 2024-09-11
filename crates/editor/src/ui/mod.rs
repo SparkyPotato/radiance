@@ -33,7 +33,7 @@ impl UiState {
 		Ok(Self {
 			fonts,
 			debug: Debug::new(),
-			assets: AssetManager::new(&pool),
+			assets: AssetManager::new(device, &pool),
 			renderer: Renderer::new(device)?,
 			notifs: NotifStack::new(),
 			pool,
@@ -63,7 +63,7 @@ impl UiState {
 					let load = ui.button("load").clicked();
 					if new || load {
 						if let Some(path) = FileDialog::new().pick_folder() {
-							self.assets.open(path, &self.pool);
+							self.assets.open(frame.device(), path, &self.pool);
 						}
 					}
 					if ui.button("save").clicked() {

@@ -1,10 +1,15 @@
+use std::{
+	ops::{Deref, DerefMut},
+	sync::Arc,
+};
+
 use ash::vk;
 use bincode::{Decode, Encode};
 use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
 use parking_lot::{MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use radiance_graph::{
-	graph::Resource,
+	graph::{Frame, Resource},
 	resource::{Buffer, BufferDesc, GpuPtr, Resource as _},
 };
 use static_assertions::const_assert_eq;
@@ -16,12 +21,15 @@ use crate::{
 	io::{SliceWriter, Writer},
 	mesh::{map_aabb, GpuAabb, Mesh},
 	rref::{DelRes, RRef},
+	scene::runtime::{SceneRuntime, TransformUpdate},
 	Asset,
 	InitContext,
 	LoadError,
 };
 
-#[derive(Copy, Clone, Encode, Decode, NoUninit)]
+mod runtime;
+
+#[derive(Copy, Clone, Encode, Decode, NoUninit, PartialEq)]
 #[repr(C)]
 pub struct Transform {
 	#[bincode(with_serde)]
@@ -68,10 +76,12 @@ pub struct Node {
 }
 
 pub struct Scene {
+	runtime: Arc<SceneRuntime>,
 	instance_buffer: Buffer,
 	pub cameras: Vec<Camera>,
 	nodes: RwLock<Vec<Node>>,
 	max_depth: u32,
+	dirty_transforms: RwLock<Vec<TransformUpdate>>,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -108,18 +118,78 @@ impl Scene {
 		RwLockReadGuard::map(self.nodes.read(), |x| &x[i as usize])
 	}
 
-	pub fn node_name(&self, i: u32) -> MappedRwLockWriteGuard<'_, String> {
-		RwLockWriteGuard::map(self.nodes.write(), |x| &mut x[i as usize].name)
+	pub fn edit_node(&self, i: u32) -> NodeEditor {
+		let node = RwLockWriteGuard::map(self.nodes.write(), |x| &mut x[i as usize]);
+		NodeEditor {
+			scene: self,
+			instance: i,
+			orig: node.transform,
+			node,
+		}
 	}
+
+	pub fn update_dirty<'pass>(&'pass self, frame: &mut Frame<'pass, '_>) {
+		self.runtime.update(
+			frame,
+			self.instances(),
+			UpdateIterator {
+				updates: &self.dirty_transforms,
+			},
+		)
+	}
+}
+
+pub struct NodeEditor<'a> {
+	scene: &'a Scene,
+	instance: u32,
+	orig: Transform,
+	node: MappedRwLockWriteGuard<'a, Node>,
+}
+
+impl Deref for NodeEditor<'_> {
+	type Target = Node;
+
+	fn deref(&self) -> &Self::Target { self.node.deref() }
+}
+
+impl DerefMut for NodeEditor<'_> {
+	fn deref_mut(&mut self) -> &mut Self::Target { self.node.deref_mut() }
+}
+
+impl Drop for NodeEditor<'_> {
+	fn drop(&mut self) {
+		let transform = self.node.transform;
+		if transform != self.orig {
+			self.scene.dirty_transforms.write().push(TransformUpdate {
+				instance: self.instance,
+				transform,
+			});
+		}
+	}
+}
+
+struct UpdateIterator<'a> {
+	updates: &'a RwLock<Vec<TransformUpdate>>,
+}
+
+impl Iterator for UpdateIterator<'_> {
+	type Item = TransformUpdate;
+
+	fn next(&mut self) -> Option<Self::Item> { self.updates.write().pop() }
+}
+
+impl ExactSizeIterator for UpdateIterator<'_> {
+	fn len(&self) -> usize { self.updates.read().len() }
 }
 
 impl Asset for Scene {
 	type Import = DataScene;
+	type Runtime = SceneRuntime;
 
 	const MODIFIABLE: bool = true;
 	const TYPE: Uuid = uuid!("c394ec13-387e-4af1-9873-fb4e399d4a52");
 
-	fn initialize(mut ctx: InitContext<'_>) -> Result<RRef<Self>, LoadError> {
+	fn initialize(mut ctx: InitContext<'_, Self::Runtime>) -> Result<RRef<Self>, LoadError> {
 		let s = span!(Level::TRACE, "decode scene");
 		let _e = s.enter();
 
@@ -164,10 +234,12 @@ impl Asset for Scene {
 			.collect::<Result<_, LoadError>>()?;
 
 		Ok(ctx.make(Scene {
+			runtime: ctx.runtime.clone(),
 			instance_buffer,
 			cameras: s.cameras,
 			nodes: RwLock::new(nodes),
 			max_depth,
+			dirty_transforms: RwLock::new(Vec::new()),
 		}))
 	}
 

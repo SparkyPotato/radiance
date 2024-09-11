@@ -9,7 +9,7 @@ use egui::{Align, Align2, Context, FontId, Label, Layout, PointerButton, Progres
 use egui_extras::Size;
 use egui_grid::GridBuilder;
 use radiance_asset::{gltf::GltfImporter, mesh::Mesh, scene::Scene, Asset, AssetSystem, DirView, Importer, Uuid};
-use radiance_graph::graph::Frame;
+use radiance_graph::{device::Device, graph::Frame};
 use rustc_hash::FxHashSet;
 use tracing::{event, Level};
 
@@ -119,7 +119,7 @@ pub struct AssetManager {
 impl AssetManager {
 	const CELL_SIZE: f32 = 75.0;
 
-	pub fn new(pool: &TaskPool) -> Self {
+	pub fn new(device: &Device, pool: &TaskPool) -> Self {
 		let mut this = Self {
 			system: None,
 			open: None,
@@ -128,16 +128,17 @@ impl AssetManager {
 			selection: FxHashSet::default(),
 		};
 		if let Some(s) = std::env::args().nth(1) {
-			this.open(s, pool);
+			this.open(device, s, pool);
 		}
 		this
 	}
 
-	pub fn open(&mut self, path: impl Into<PathBuf>, pool: &TaskPool) {
+	pub fn open(&mut self, device: &Device, path: impl Into<PathBuf>, pool: &TaskPool) {
 		let buf = std::fs::canonicalize(path.into()).unwrap();
+		let d = device.clone();
 		self.open = Some(pool.spawn(move || {
 			let existed = buf.exists();
-			let Ok(s) = AssetSystem::new(&buf) else {
+			let Ok(s) = AssetSystem::new(&d, &buf) else {
 				return (None, false);
 			};
 			let s = Arc::new(s);

@@ -1,17 +1,19 @@
 use std::{
+	any::Any,
 	error::Error,
 	fmt::{Debug, Display},
 	fs::{File, OpenOptions},
 	hash::BuildHasherDefault,
 	io::Read,
 	path::{Path, PathBuf},
+	sync::Arc,
 };
 
 use bytemuck::{checked::from_bytes, Pod, Zeroable};
 use crossbeam_channel::{Receiver, Sender};
 use dashmap::{mapref::entry::Entry, DashMap};
 use radiance_graph::{device::Device, graph::Frame};
-use rustc_hash::FxHasher;
+use rustc_hash::{FxHashMap, FxHasher};
 pub use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -46,24 +48,34 @@ impl AssetHeader {
 
 pub type LResult<T> = Result<RRef<T>, LoadError>;
 
-pub struct InitContext<'a> {
+pub struct InitContext<'a, T> {
 	pub name: &'a str,
 	pub device: &'a Device,
 	pub uuid: Uuid,
 	pub data: Reader,
 	pub sys: &'a AssetSystem,
+	pub runtime: Arc<T>,
 }
 
-impl InitContext<'_> {
+impl<C> InitContext<'_, C> {
 	fn make<T: Asset>(&self, obj: T) -> RRef<T> { RRef::new(obj, self.uuid, self.sys.deleter.clone()) }
+}
+
+pub trait AssetRuntime: 'static + Send + Sync {
+	fn initialize(device: &Device) -> radiance_graph::Result<Self>
+	where
+		Self: Sized;
+
+	fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync>;
 }
 
 pub trait Asset: Sized {
 	const TYPE: Uuid;
 	const MODIFIABLE: bool;
 	type Import;
+	type Runtime: AssetRuntime;
 
-	fn initialize(ctx: InitContext<'_>) -> LResult<Self>;
+	fn initialize(ctx: InitContext<'_, Self::Runtime>) -> LResult<Self>;
 
 	fn write(&self, into: Writer) -> Result<(), std::io::Error>;
 
@@ -89,6 +101,156 @@ pub trait Importer {
 }
 
 type FxDashMap<K, V> = DashMap<K, V, BuildHasherDefault<FxHasher>>;
+
+pub struct AssetSystem {
+	deleter: Sender<DelRes>,
+	delete_recv: Receiver<DelRes>,
+	loaded: FxDashMap<Uuid, RWeak>,
+	path_lookup: FxDashMap<Uuid, PathBuf>,
+	runtimes: FxHashMap<Uuid, Arc<dyn AssetRuntime>>,
+	root: Dir,
+}
+
+impl AssetSystem {
+	pub fn new(device: &Device, path: &Path) -> radiance_graph::Result<Self> {
+		let root = Dir {
+			path: path.to_path_buf(),
+			sub: FxDashMap::default(),
+		};
+		let path_lookup = DashMap::default();
+		for item in WalkDir::new(path).into_iter().filter_map(|x| x.ok()) {
+			let fp = item.path();
+			let p = fp.strip_prefix(path).unwrap_or(item.path());
+			if fp.is_file() {
+				let Ok(header) = AssetHeader::from_path(fp) else {
+					continue;
+				};
+				root.add(p, Some(header));
+				path_lookup.insert(header.asset, fp.to_path_buf());
+			} else {
+				root.add(p, None);
+			}
+		}
+
+		let (send, recv) = crossbeam_channel::unbounded();
+		let mut this = Self {
+			deleter: send,
+			delete_recv: recv,
+			loaded: DashMap::default(),
+			path_lookup,
+			runtimes: FxHashMap::default(),
+			root,
+		};
+		this.register::<mesh::Mesh>(device)?;
+		this.register::<scene::Scene>(device)?;
+		Ok(this)
+	}
+
+	pub fn register<T: Asset>(&mut self, device: &Device) -> radiance_graph::Result<()> {
+		self.runtimes.insert(T::TYPE, Arc::new(T::Runtime::initialize(device)?));
+		Ok(())
+	}
+
+	pub fn view(&self, cursor: PathBuf) -> AssetSystemView { AssetSystemView { sys: self, cursor } }
+
+	pub fn initialize<T: Asset>(&self, device: &Device, uuid: Uuid) -> Result<RRef<T>, LoadError> {
+		match self.loaded.entry(uuid) {
+			Entry::Occupied(mut o) => match o.get().clone().upgrade() {
+				Some(x) => Ok(x),
+				None => {
+					let r = self.load_from_disk::<T>(device, uuid)?;
+					o.insert(r.downgrade());
+					Ok(r)
+				},
+			},
+			Entry::Vacant(v) => {
+				let r = self.load_from_disk::<T>(device, uuid)?;
+				v.insert(r.downgrade());
+				Ok(r)
+			},
+		}
+	}
+
+	pub fn save<T: Asset>(&self, asset: &RRef<T>) -> Result<(), std::io::Error> {
+		assert!(T::MODIFIABLE, "Can only save modifiable assets");
+
+		let path = self.path_lookup.get(&asset.uuid()).unwrap();
+		let mut file = OpenOptions::new().read(true).write(true).open(&*path)?;
+		let header = AssetHeader::from_file(&mut file)?;
+		if header.ty != T::TYPE {
+			return Err(std::io::Error::other("asset type mismatch").into());
+		}
+		asset.write(Writer::from_file(file)?)
+	}
+
+	fn load_from_disk<T: Asset>(&self, device: &Device, uuid: Uuid) -> Result<RRef<T>, LoadError> {
+		let path = self.path_lookup.get(&uuid).unwrap();
+		let mut file = File::open(&*path)?;
+		let header = AssetHeader::from_file(&mut file)?;
+		if header.ty != T::TYPE {
+			return Err(std::io::Error::other("asset type mismatch").into());
+		}
+
+		T::initialize(InitContext {
+			name: path.file_name().unwrap().to_str().unwrap(),
+			device,
+			uuid: header.asset,
+			data: Reader::from_file(file)?,
+			sys: self,
+			runtime: Arc::downcast(
+				self.runtimes
+					.get(&T::TYPE)
+					.expect("asset has not been registered")
+					.clone()
+					.as_any(),
+			)
+			.unwrap(),
+		})
+	}
+
+	pub fn tick(&self, frame: &mut Frame) {
+		while let Ok(x) = self.delete_recv.try_recv() {
+			match x {
+				DelRes::Resource(x) => frame.delete(x),
+			}
+		}
+	}
+
+	pub unsafe fn destroy(self, device: &Device) {
+		for (_, a) in self.loaded {
+			assert!(a.is_dead(), "Cannot destroy `AssetSystem` with currently loaded assets")
+		}
+
+		for x in self.delete_recv.try_iter() {
+			match x {
+				DelRes::Resource(r) => unsafe { r.destroy(device) },
+			}
+		}
+	}
+}
+
+pub enum LoadError {
+	Vulkan(radiance_graph::Error),
+	Io(std::io::Error),
+}
+impl From<std::io::Error> for LoadError {
+	fn from(value: std::io::Error) -> Self { Self::Io(value) }
+}
+impl From<radiance_graph::Error> for LoadError {
+	fn from(value: radiance_graph::Error) -> Self { Self::Vulkan(value) }
+}
+impl Display for LoadError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Vulkan(e) => Debug::fmt(e, f),
+			Self::Io(e) => Display::fmt(e, f),
+		}
+	}
+}
+impl Debug for LoadError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Display::fmt(self, f) }
+}
+impl Error for LoadError {}
 
 #[derive(Clone, Debug)]
 enum DirEntry {
@@ -196,138 +358,6 @@ impl Dir {
 		}
 	}
 }
-
-pub struct AssetSystem {
-	deleter: Sender<DelRes>,
-	delete_recv: Receiver<DelRes>,
-	loaded: FxDashMap<Uuid, RWeak>,
-	path_lookup: FxDashMap<Uuid, PathBuf>,
-	root: Dir,
-}
-
-impl AssetSystem {
-	pub fn new(path: &Path) -> radiance_graph::Result<Self> {
-		let root = Dir {
-			path: path.to_path_buf(),
-			sub: FxDashMap::default(),
-		};
-		let path_lookup = DashMap::default();
-		for item in WalkDir::new(path).into_iter().filter_map(|x| x.ok()) {
-			let fp = item.path();
-			let p = fp.strip_prefix(path).unwrap_or(item.path());
-			if fp.is_file() {
-				let Ok(header) = AssetHeader::from_path(fp) else {
-					continue;
-				};
-				root.add(p, Some(header));
-				path_lookup.insert(header.asset, fp.to_path_buf());
-			} else {
-				root.add(p, None);
-			}
-		}
-
-		let (send, recv) = crossbeam_channel::unbounded();
-		Ok(Self {
-			deleter: send,
-			delete_recv: recv,
-			loaded: DashMap::default(),
-			path_lookup,
-			root,
-		})
-	}
-
-	pub fn view(&self, cursor: PathBuf) -> AssetSystemView { AssetSystemView { sys: self, cursor } }
-
-	pub fn initialize<T: Asset>(&self, device: &Device, uuid: Uuid) -> Result<RRef<T>, LoadError> {
-		match self.loaded.entry(uuid) {
-			Entry::Occupied(mut o) => match o.get().clone().upgrade() {
-				Some(x) => Ok(x),
-				None => {
-					let r = self.load_from_disk::<T>(device, uuid)?;
-					o.insert(r.downgrade());
-					Ok(r)
-				},
-			},
-			Entry::Vacant(v) => {
-				let r = self.load_from_disk::<T>(device, uuid)?;
-				v.insert(r.downgrade());
-				Ok(r)
-			},
-		}
-	}
-
-	pub fn save<T: Asset>(&self, asset: &RRef<T>) -> Result<(), std::io::Error> {
-		assert!(T::MODIFIABLE, "Can only save modifiable assets");
-
-		let path = self.path_lookup.get(&asset.uuid()).unwrap();
-		let mut file = OpenOptions::new().read(true).write(true).open(&*path)?;
-		let header = AssetHeader::from_file(&mut file)?;
-		if header.ty != T::TYPE {
-			return Err(std::io::Error::other("asset type mismatch").into());
-		}
-		asset.write(Writer::from_file(file)?)
-	}
-
-	fn load_from_disk<T: Asset>(&self, device: &Device, uuid: Uuid) -> Result<RRef<T>, LoadError> {
-		let path = self.path_lookup.get(&uuid).unwrap();
-		let mut file = File::open(&*path)?;
-		let header = AssetHeader::from_file(&mut file)?;
-		if header.ty != T::TYPE {
-			return Err(std::io::Error::other("asset type mismatch").into());
-		}
-
-		T::initialize(InitContext {
-			name: path.file_name().unwrap().to_str().unwrap(),
-			device,
-			uuid: header.asset,
-			data: Reader::from_file(file)?,
-			sys: self,
-		})
-	}
-
-	pub fn tick(&self, frame: &mut Frame) {
-		while let Ok(x) = self.delete_recv.try_recv() {
-			match x {
-				DelRes::Resource(x) => frame.delete(x),
-			}
-		}
-	}
-
-	pub unsafe fn destroy(self, device: &Device) {
-		for (_, a) in self.loaded {
-			assert!(a.is_dead(), "Cannot destroy `AssetSystem` with currently loaded assets")
-		}
-
-		for x in self.delete_recv.try_iter() {
-			match x {
-				DelRes::Resource(r) => unsafe { r.destroy(device) },
-			}
-		}
-	}
-}
-
-pub enum LoadError {
-	Vulkan(radiance_graph::Error),
-	Io(std::io::Error),
-}
-impl From<std::io::Error> for LoadError {
-	fn from(value: std::io::Error) -> Self { Self::Io(value) }
-}
-impl From<radiance_graph::Error> for LoadError {
-	fn from(value: radiance_graph::Error) -> Self { Self::Vulkan(value) }
-}
-impl Display for LoadError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::Vulkan(e) => Debug::fmt(e, f),
-			Self::Io(e) => Display::fmt(e, f),
-		}
-	}
-}
-impl Debug for LoadError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { Display::fmt(self, f) }
-}
-impl Error for LoadError {}
 
 pub struct AssetSystemView<'a> {
 	sys: &'a AssetSystem,

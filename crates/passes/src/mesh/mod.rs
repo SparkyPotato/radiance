@@ -31,6 +31,20 @@ pub struct Camera {
 	pub view: Mat4<f32>,
 }
 
+impl Camera {
+	pub fn projection(&self, aspect: f32) -> Mat4<f32> {
+		let h = (self.fov / 2.0).tan().recip();
+		let w = h / aspect;
+		let near = self.near;
+		Mat4::new(
+			w, 0.0, 0.0, 0.0, //
+			0.0, h, 0.0, 0.0, //
+			0.0, 0.0, 0.0, near, //
+			0.0, 0.0, 1.0, 0.0, //
+		)
+	}
+}
+
 #[derive(Clone)]
 pub struct RenderInfo {
 	pub scene: RRef<Scene>,
@@ -154,23 +168,14 @@ pub struct CameraData {
 
 impl CameraData {
 	fn new(aspect: f32, camera: Camera) -> Self {
-		let h = (camera.fov / 2.0).tan().recip();
-		let w = h / aspect;
-		let near = camera.near;
-		let proj = Mat4::new(
-			w, 0.0, 0.0, 0.0, //
-			0.0, h, 0.0, 0.0, //
-			0.0, 0.0, 0.0, near, //
-			0.0, 0.0, 1.0, 0.0, //
-		);
+		let proj = camera.projection(aspect);
 		let view = camera.view;
 		let view_proj = proj * view;
-
 		Self {
 			view,
 			view_proj,
-			h,
-			near,
+			h: proj.cols.y.y,
+			near: camera.near,
 		}
 	}
 }

@@ -1,5 +1,6 @@
 module scene_update;
 
+import graph;
 import asset;
 
 struct TransformUpdate {

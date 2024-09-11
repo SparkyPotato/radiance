@@ -47,7 +47,7 @@ impl Picker {
 
 	pub fn run<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, visbuffer: VisBufferReader, click: Option<egui::Vec2>,
-	) -> Option<u32> {
+	) {
 		let mut pass = frame.pass("mousepick");
 		let ret = pass.resource(
 			BufferDesc {
@@ -61,7 +61,6 @@ impl Picker {
 		);
 		visbuffer.add(&mut pass, Shader::Compute, false);
 
-		let sel = self.selection;
 		let pix = click.map(|x| Vec2::new(x.x as _, x.y as _)).unwrap_or_default();
 		pass.build(move |mut pass| unsafe {
 			let ret = pass.get(ret);
@@ -84,7 +83,6 @@ impl Picker {
 			);
 			self.frames += 1;
 		});
-		sel
 	}
 
 	pub unsafe fn destroy(self, device: &Device) { self.pass.destroy(device); }

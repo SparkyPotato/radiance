@@ -113,7 +113,7 @@ impl Renderer {
 				Ok(Some(s)) => {
 					let s = s.clone();
 					self.scene = Scene::Loaded(s.clone());
-					s
+					return Some(true);
 				},
 				Ok(None) => {
 					self.scene = Scene::None;
@@ -121,7 +121,7 @@ impl Renderer {
 				},
 				Err(_) => return Some(true),
 			},
-			Scene::Loaded(ref s) => s.clone(),
+			Scene::Loaded(ref s) => s,
 		};
 
 		self.editor.render(ui, &scene, &mut self.picker);
@@ -142,7 +142,7 @@ impl Renderer {
 		let visbuffer = self.visbuffer.run(
 			frame,
 			RenderInfo {
-				scene,
+				scene: scene.clone(),
 				camera: self.camera.get(),
 				size: s,
 				debug_info: debug.debug_vis().requires_debug_info(),
@@ -150,16 +150,18 @@ impl Renderer {
 		);
 
 		let clicked = ctx.input(|x| pointer_in && x.pointer.primary_clicked());
-		let selected = self.picker.run(
+		let img = self
+			.debug
+			.run(frame, debug.debug_vis(), visbuffer, self.picker.get_sel().into_iter());
+		let resp = ui.image((to_texture_id(img), size));
+		self.editor
+			.draw_gizmo(frame, ui, resp.rect, scene, &self.camera, &mut self.picker);
+
+		self.picker.run(
 			frame,
 			visbuffer.reader,
 			clicked.then(|| pointer_pos.map(|x| x - rect.min)).flatten(),
 		);
-
-		let img = self
-			.debug
-			.run(frame, debug.debug_vis(), visbuffer, selected.into_iter());
-		ui.image((to_texture_id(img), size));
 
 		Some(false)
 	}

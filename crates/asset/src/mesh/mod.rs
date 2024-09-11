@@ -1,9 +1,10 @@
-use std::{array, usize};
+use std::{any::Any, array, sync::Arc, usize};
 
 use ash::vk;
 use bytemuck::{NoUninit, Pod, Zeroable};
 use crossbeam_channel::Sender;
 use radiance_graph::{
+	device::Device,
 	graph::Resource,
 	resource::{Buffer, BufferDesc, Resource as _},
 };
@@ -17,6 +18,7 @@ use crate::{
 	io::{SliceWriter, Writer},
 	rref::DelRes,
 	Asset,
+	AssetRuntime,
 	InitContext,
 	LResult,
 };
@@ -78,13 +80,27 @@ pub struct Mesh {
 	pub(super) aabb: Aabb<f32>,
 }
 
+pub struct MeshRuntime {}
+
+impl AssetRuntime for MeshRuntime {
+	fn initialize(_: &Device) -> radiance_graph::Result<Self>
+	where
+		Self: Sized,
+	{
+		Ok(Self {})
+	}
+
+	fn as_any(self: Arc<Self>) -> Arc<dyn Any + Send + Sync> { self }
+}
+
 impl Asset for Mesh {
 	type Import = import::FullMesh;
+	type Runtime = MeshRuntime;
 
 	const MODIFIABLE: bool = false;
 	const TYPE: Uuid = uuid!("0ab1a518-ced8-41c9-ae55-9c208a461636");
 
-	fn initialize(mut ctx: InitContext<'_>) -> LResult<Self> {
+	fn initialize(mut ctx: InitContext<'_, Self::Runtime>) -> LResult<Self> {
 		let s = span!(Level::TRACE, "decode mesh");
 		let _e = s.enter();
 
