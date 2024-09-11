@@ -46,7 +46,7 @@ impl Picker {
 	pub fn select(&mut self, index: u32) { self.selection = Some(index); }
 
 	pub fn run<'pass>(
-		&'pass mut self, frame: &mut Frame<'pass, '_>, visbuffer: VisBufferReader, click: Option<egui::Vec2>,
+		&'pass mut self, frame: &mut Frame<'pass, '_>, visbuffer: VisBufferReader, click: Option<egui::Pos2>,
 	) {
 		let mut pass = frame.pass("mousepick");
 		let ret = pass.resource(

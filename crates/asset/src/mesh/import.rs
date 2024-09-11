@@ -381,17 +381,21 @@ fn convert_meshlets(vertices: Vec<Vertex>, meshlets: Meshlets, bvh: Vec<BvhNode>
 
 fn compute_boundary(indices: &[u32], out: &mut [bool]) {
 	let mut edge_set = FxHashSet::default();
+	let mut edge_edge_set = FxHashSet::default();
 	for tri in indices.chunks(3) {
 		for (v0, v1) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[0], tri[2])] {
 			let edge = (v0.min(v1), v0.max(v1));
 			if edge_set.insert(edge) {
-				out[v0 as usize] = false;
-				out[v1 as usize] = false;
+				// Never seen this before, it's on the boundary.
+				edge_edge_set.insert(edge);
 			} else {
-				out[v0 as usize] = true;
-				out[v1 as usize] = true;
+				edge_edge_set.remove(&edge);
 			}
 		}
+	}
+	for (v0, v1) in edge_edge_set {
+		out[v0 as usize] = true;
+		out[v1 as usize] = true;
 	}
 }
 

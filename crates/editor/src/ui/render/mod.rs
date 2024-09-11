@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use egui::{CentralPanel, Context, PointerButton, RichText, Ui};
+use egui::{CentralPanel, Context, Image, PointerButton, RichText, Sense, Ui};
 use radiance_asset::{rref::RRef, scene, AssetSystem, Uuid};
 use radiance_egui::to_texture_id;
 use radiance_graph::{device::Device, graph::Frame, Result};
@@ -128,10 +128,9 @@ impl Renderer {
 
 		let rect = ui.available_rect_before_wrap();
 		let size = rect.size();
+		let resp = ui.allocate_rect(rect, Sense::click());
 
-		let pointer_pos = ctx.input(|x| x.pointer.hover_pos());
-		let pointer_in = pointer_pos.map(|x| rect.contains(x)).unwrap_or(false);
-		if ctx.input(|x| pointer_in && x.pointer.button_down(PointerButton::Secondary)) {
+		if ctx.input(|x| resp.contains_pointer() && x.pointer.button_down(PointerButton::Secondary)) {
 			self.camera.set_mode(window, Mode::Camera);
 		} else {
 			self.camera.set_mode(window, Mode::Default);
@@ -149,19 +148,16 @@ impl Renderer {
 			},
 		);
 
-		let clicked = ctx.input(|x| pointer_in && x.pointer.primary_clicked());
+		let clicked = resp.clicked();
 		let img = self
 			.debug
 			.run(frame, debug.debug_vis(), visbuffer, self.picker.get_sel().into_iter());
-		let resp = ui.image((to_texture_id(img), size));
+		ui.put(rect, Image::new((to_texture_id(img), size)));
 		self.editor
 			.draw_gizmo(frame, ui, resp.rect, scene, &self.camera, &mut self.picker);
 
-		self.picker.run(
-			frame,
-			visbuffer.reader,
-			clicked.then(|| pointer_pos.map(|x| x - rect.min)).flatten(),
-		);
+		self.picker
+			.run(frame, visbuffer.reader, clicked.then(|| resp.hover_pos().unwrap()));
 
 		Some(false)
 	}

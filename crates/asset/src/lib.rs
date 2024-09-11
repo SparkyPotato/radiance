@@ -418,8 +418,10 @@ impl AssetSystemView<'_> {
 
 	pub fn writer(&self, path: &Path, header: AssetHeader) -> Result<Writer, std::io::Error> {
 		let full_path = self.cursor.join(path);
-		let w = Writer::from_path(&self.sys.root.path.join(&full_path), header);
+		let fs_path = self.sys.root.path.join(&full_path);
+		let w = Writer::from_path(&fs_path, header);
 		self.sys.root.add(&full_path, Some(header));
+		self.sys.path_lookup.insert(header.asset, fs_path);
 		w
 	}
 }
