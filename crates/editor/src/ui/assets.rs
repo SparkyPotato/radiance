@@ -33,20 +33,25 @@ struct ImportNotif {
 	latest: Progress,
 }
 
+impl ImportNotif {
+	fn get(&mut self) -> &Progress {
+		for progress in self.recv.try_iter() {
+			self.latest = progress;
+		}
+		&self.latest
+	}
+}
+
 impl Notification for ImportNotif {
 	fn ty(&mut self) -> NotifType {
-		match self.latest {
+		match self.get() {
 			Progress::Error(_) => NotifType::Error,
 			_ => NotifType::Info,
 		}
 	}
 
 	fn draw(&mut self, ui: &mut Ui, _: &Fonts) {
-		for progress in self.recv.try_iter() {
-			self.latest = progress;
-		}
-
-		match &self.latest {
+		match self.get() {
 			Progress::Discovering => {
 				ui.label("discovering");
 			},
@@ -63,13 +68,13 @@ impl Notification for ImportNotif {
 	}
 
 	fn expired(&mut self, _: Duration) -> bool {
-		match self.latest {
+		match self.get() {
 			Progress::Finished(x) => x.elapsed() > Duration::from_secs(5),
 			_ => false,
 		}
 	}
 
-	fn dismissable(&mut self) -> bool { matches!(self.latest, Progress::Error(_) | Progress::Finished(_)) }
+	fn dismissable(&mut self) -> bool { matches!(self.get(), Progress::Error(_) | Progress::Finished(_)) }
 }
 
 struct ImportRequest {
@@ -194,6 +199,7 @@ impl AssetManager {
 							);
 						}
 
+						let mut mv = None;
 						ui.vertical(|ui| {
 							ui.add_space(5.0);
 							ui.horizontal(|ui| {
@@ -225,21 +231,33 @@ impl AssetManager {
 								ui.separator();
 
 								for (i, component) in self.cursor.components().enumerate() {
-									if ui
-										.text_button(RichText::new(component.as_os_str().to_string_lossy()).heading())
-										.clicked()
-									{
+									let button = ui
+										.text_button(RichText::new(component.as_os_str().to_string_lossy()).heading());
+									if button.clicked() {
 										self.cursor = self.cursor.components().take(i + 1).collect::<PathBuf>();
 										self.selection.clear();
 										break;
+									} else if let Some(x) = button.dnd_release_payload::<FxHashSet<String>>() {
+										let len = self.cursor.components().count();
+										mv = Some((std::iter::repeat_n("../", len - i - 1).collect(), x));
 									}
 									ui.label(RichText::new("/").heading());
 								}
 							});
 							ui.add_space(5.0);
 
-							self.draw_assets(ui, renderer, fonts);
+							if let Some(m) = self.draw_assets(ui, renderer, fonts) {
+								mv = Some(m);
+							}
 						});
+
+						let Some(ref sys) = self.system else {
+							return;
+						};
+						if let Some((name, mv)) = mv {
+							let view = sys.view(self.cursor.clone());
+							let _ = view.move_into(&name, mv.iter().map(|x| x.as_str()));
+						}
 					}
 				} else {
 					ui.centered_and_justified(|ui| {
@@ -249,14 +267,18 @@ impl AssetManager {
 			});
 	}
 
-	fn draw_assets(&mut self, ui: &mut Ui, renderer: &mut Renderer, fonts: &Fonts) {
-		let Some(ref sys) = self.system else { return };
+	fn draw_assets(
+		&mut self, ui: &mut Ui, renderer: &mut Renderer, fonts: &Fonts,
+	) -> Option<(String, Arc<FxHashSet<String>>)> {
+		let Some(ref sys) = self.system else {
+			return None;
+		};
 
 		let view = sys.view(self.cursor.clone());
 		let count = view.entries().count() + self.creating_dir.is_some() as usize;
 
 		if count == 0 {
-			return;
+			return None;
 		}
 
 		let rect = ui.available_rect_before_wrap();
@@ -331,9 +353,9 @@ impl AssetManager {
 			for x in self.selection.drain() {
 				let _ = view.delete(&x);
 			}
-		} else if let Some((name, mv)) = mv {
-			let _ = view.move_into(&name, mv.iter().map(|x| x.as_str()));
 		}
+
+		mv
 	}
 
 	fn draw_asset(

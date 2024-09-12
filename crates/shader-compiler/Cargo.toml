@@ -8,6 +8,5 @@ ash = { workspace = true  }
 hassle-rs = { workspace = true }
 notify-debouncer-full = { workspace = true }
 rspirv = { workspace = true }
-rustc-hash = { workspace = true }
 slang = { workspace = true, features = ["static"] }
 

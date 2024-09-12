@@ -85,6 +85,7 @@ impl Importer for GltfImporter {
 			meshes: self.gltf.meshes().count() as _,
 			scenes: self.gltf.scenes().count() as _,
 		};
+		progress(0.0);
 
 		let prog = AtomicUsize::new(0);
 		let meshes: Vec<_> = self
@@ -311,7 +312,7 @@ impl GltfImporter {
 
 			let normals = prim
 				.get(&gltf::Semantic::Normals)
-				.ok_or(gltf::Error::Io(std::io::Error::other("invalid gltf")))?;
+				.ok_or_else(|| gltf::Error::Io(std::io::Error::other("invalid gltf")))?;
 			let (normals, ty, comp) = self.accessor(normals)?;
 			if comp != Dimensions::Vec3 || ty != DataType::F32 {
 				return Err(gltf::Error::Io(std::io::Error::other("invalid gltf")));
@@ -340,7 +341,7 @@ impl GltfImporter {
 
 			let indices = prim
 				.indices()
-				.ok_or(gltf::Error::Io(std::io::Error::other("invalid gltf")))?;
+				.ok_or_else(|| gltf::Error::Io(std::io::Error::other("invalid gltf")))?;
 			let (indices, ty, comp) = self.accessor(indices)?;
 			if comp != Dimensions::Scalar {
 				return Err(gltf::Error::Io(std::io::Error::other("invalid gltf")));

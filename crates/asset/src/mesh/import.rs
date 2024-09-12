@@ -28,7 +28,7 @@ pub struct FullMesh {
 #[derive(Clone)]
 struct MeshletGroup {
 	aabb: Aabb<f32>,
-	lod_bounds: Aabb<f32>,
+	lod_bounds: Sphere<f32, f32>,
 	parent_error: f32,
 	meshlets: Range<u32>,
 }
@@ -38,7 +38,6 @@ struct Meshlets {
 	tris: Vec<u8>,
 	groups: Vec<MeshletGroup>,
 	meshlets: Vec<Meshlet>,
-	lod_bounds: Vec<Aabb<f32>>,
 }
 
 impl Meshlets {
@@ -51,7 +50,6 @@ impl Meshlets {
 			m.index_offset += tri_offset;
 			m
 		}));
-		self.lod_bounds.extend(other.lod_bounds);
 		self.vertex_remap.extend(other.vertex_remap);
 		self.tris.extend(other.tris);
 		self.groups.extend(other.groups.into_iter().map(|mut g| {
@@ -138,21 +136,29 @@ pub fn import(name: &str, mesh: FullMesh) -> Mesh {
 	convert_meshlets(mesh.vertices, meshlets, bvh, depth)
 }
 
-fn generate_meshlets(vertices: &[Vertex], indices: &[u32], error: Option<(Aabb<f32>, f32)>) -> Meshlets {
+fn generate_meshlets(vertices: &[Vertex], indices: &[u32], error: Option<(Sphere<f32, f32>, f32)>) -> Meshlets {
 	let s = trace_span!("building meshlets");
 	let _e = s.enter();
 
 	let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
 	let ms = meshopt::build_meshlets(indices, &adapter, 128, 124, 0.0);
-	let (meshlets, lod_bounds) = ms
+	let meshlets = ms
 		.meshlets
 		.iter()
-		.map(|m| {
+		.enumerate()
+		.map(|(i, m)| {
 			let m_vertices = &ms.vertices[m.vertex_offset as usize..(m.vertex_offset + m.vertex_count) as usize];
 			let m_indices =
 				&ms.triangles[m.triangle_offset as usize..(m.triangle_offset + m.triangle_count * 3) as usize];
 			let aabb = calc_aabb(m_vertices.iter().map(|&x| &vertices[x as usize]));
-			let (lod_bounds, error) = error.unwrap_or((aabb, 0.0));
+			let bounds = meshopt::compute_meshlet_bounds(ms.get(i), &adapter);
+			let (lod_bounds, error) = error.unwrap_or((
+				Sphere {
+					center: bounds.center.into(),
+					radius: bounds.radius,
+				},
+				0.0,
+			));
 			let mut max_edge_length = 0.0f32;
 			for t in m_indices.chunks(3) {
 				for (v1, v2) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
@@ -165,28 +171,24 @@ fn generate_meshlets(vertices: &[Vertex], indices: &[u32], error: Option<(Aabb<f
 			}
 			max_edge_length = max_edge_length.sqrt();
 
-			(
-				Meshlet {
-					vert_offset: m.vertex_offset,
-					vert_count: m.vertex_count as _,
-					index_offset: m.triangle_offset,
-					tri_count: m.triangle_count as _,
-					aabb,
-					lod_bounds: aabb_to_sphere(lod_bounds),
-					error,
-					max_edge_length,
-				},
+			Meshlet {
+				vert_offset: m.vertex_offset,
+				vert_count: m.vertex_count as _,
+				index_offset: m.triangle_offset,
+				tri_count: m.triangle_count as _,
+				aabb,
 				lod_bounds,
-			)
+				error,
+				max_edge_length,
+			}
 		})
-		.unzip();
+		.collect();
 
 	Meshlets {
 		vertex_remap: ms.vertices,
 		tris: ms.triangles,
 		groups: Vec::new(),
 		meshlets,
-		lod_bounds,
 	}
 }
 
@@ -227,7 +229,7 @@ fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> usize {
 	let mut last_group = 0;
 	let mut group = MeshletGroup {
 		aabb: aabb_default(),
-		lod_bounds: aabb_default(),
+		lod_bounds: Sphere::default(),
 		parent_error: f32::MAX,
 		meshlets: range.start as u32..0,
 	};
@@ -240,13 +242,13 @@ fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> usize {
 
 			last_group = next;
 			group.aabb = aabb_default();
-			group.lod_bounds = aabb_default();
+			group.lod_bounds = Sphere::default();
 			group.meshlets.start = end;
 		}
 
 		let m = meshlets.meshlets[p];
 		group.aabb = group.aabb.union(m.aabb);
-		group.lod_bounds = group.lod_bounds.union(meshlets.lod_bounds[p]);
+		group.lod_bounds = merge_spheres(group.lod_bounds, m.lod_bounds);
 		out[i] = m;
 	}
 	group.meshlets.end = (out.len() + range.start) as u32;
@@ -399,29 +401,6 @@ fn compute_boundary(indices: &[u32], out: &mut [bool]) {
 	}
 }
 
-#[cfg(feature = "disabled")]
-fn dump_groups_to_obj(name: &str, lod: usize, vertices: &[Vertex], meshlets: &Meshlets, first: usize) {
-	let mut o = String::new();
-	for v in vertices.iter() {
-		o.push_str(&format!("v {} {} {}\n", v.position.x, v.position.y, v.position.z));
-	}
-	for (i, g) in meshlets.groups[first..].iter().enumerate() {
-		o.push_str(&format!("o group {}\n", i));
-		for m in meshlets.meshlets[(g.meshlets.start as usize)..(g.meshlets.end as usize)].iter() {
-			let verts = &meshlets.vertex_remap[m.vertices()];
-			for t in meshlets.tris[m.tris()].chunks(3) {
-				o.push_str(&format!(
-					"f {} {} {}\n",
-					verts[t[0] as usize] + 1,
-					verts[t[1] as usize] + 1,
-					verts[t[2] as usize] + 1,
-				));
-			}
-		}
-	}
-	std::fs::write(format!("{name}_grouped_{lod}.obj"), o).unwrap();
-}
-
 pub fn aabb_default() -> Aabb<f32> {
 	Aabb {
 		min: Vec3::broadcast(f32::MAX),
@@ -438,10 +417,20 @@ pub fn calc_aabb<'a>(vertices: impl IntoIterator<Item = &'a Vertex>) -> Aabb<f32
 	aabb
 }
 
-pub fn aabb_to_sphere(aabb: Aabb<f32>) -> Sphere<f32, f32> {
-	Sphere {
-		center: aabb.center(),
-		radius: aabb.half_size().magnitude(),
+pub fn merge_spheres(a: Sphere<f32, f32>, b: Sphere<f32, f32>) -> Sphere<f32, f32> {
+	let sr = a.radius.min(b.radius);
+	let br = a.radius.max(b.radius);
+	let len = (a.center - b.center).magnitude();
+	if len + sr < br || sr == 0.0 || len == 0.0 {
+		if a.radius > b.radius {
+			a
+		} else {
+			b
+		}
+	} else {
+		let radius = (sr + br + len) / 2.0;
+		let center = (a.center + b.center + (a.radius - b.radius) * (a.center - b.center) / len) / 2.0;
+		Sphere { center, radius }
 	}
 }
 
@@ -582,32 +571,28 @@ impl BvhBuilder {
 	}
 
 	fn build_inner(
-		&self, groups: &[MeshletGroup], out: &mut Vec<BvhNode>, temp: &mut Vec<Aabb<f32>>, max_depth: &mut u32,
-		node: u32, depth: u32,
+		&self, groups: &[MeshletGroup], out: &mut Vec<BvhNode>, max_depth: &mut u32, node: u32, depth: u32,
 	) -> u32 {
 		*max_depth = depth.max(*max_depth);
 		let node = &self.nodes[node as usize];
 		let onode = out.len();
 		out.push(BvhNode::default());
-		temp.push(aabb_default());
 
-		let mut lod_aabb = aabb_default();
 		for (i, &child_id) in node.children.iter().enumerate() {
 			let child = &self.nodes[child_id as usize];
 			if child.group != u32::MAX {
 				let group = &groups[child.group as usize];
 				let out = &mut out[onode];
 				out.aabbs[i] = group.aabb;
-				out.lod_bounds[i] = aabb_to_sphere(group.lod_bounds);
+				out.lod_bounds[i] = group.lod_bounds;
 				out.parent_errors[i] = group.parent_error;
 				out.child_offsets[i] = group.meshlets.start;
 				out.child_counts[i] = group.meshlets.len() as u8;
-				lod_aabb = lod_aabb.union(group.lod_bounds);
 			} else {
-				let child_id = self.build_inner(groups, out, temp, max_depth, child_id, depth + 1);
+				let child_id = self.build_inner(groups, out, max_depth, child_id, depth + 1);
 				let child = &out[child_id as usize];
 				let mut aabb = aabb_default();
-				let mut child_lod_aabb = aabb_default();
+				let mut lod_bounds = Sphere::default();
 				let mut parent_error = 0.0f32;
 				for i in 0..8 {
 					if child.child_counts[i] == 0 {
@@ -615,19 +600,18 @@ impl BvhBuilder {
 					}
 
 					aabb = aabb.union(child.aabbs[i]);
-					child_lod_aabb = child_lod_aabb.union(temp[child_id as usize]);
 					parent_error = parent_error.max(child.parent_errors[i]);
+					lod_bounds = merge_spheres(lod_bounds, child.lod_bounds[i]);
 				}
+
 				let out = &mut out[onode];
 				out.aabbs[i] = aabb;
-				out.lod_bounds[i] = aabb_to_sphere(child_lod_aabb);
+				out.lod_bounds[i] = lod_bounds;
 				out.parent_errors[i] = parent_error;
 				out.child_offsets[i] = child_id;
 				out.child_counts[i] = u8::MAX;
-				lod_aabb = lod_aabb.union(child_lod_aabb);
 			}
 		}
-		temp[onode] = lod_aabb;
 
 		onode as _
 	}
@@ -635,9 +619,8 @@ impl BvhBuilder {
 	fn build(mut self, groups: &[MeshletGroup]) -> (Vec<BvhNode>, u32) {
 		let root = self.build_temp();
 		let mut out = vec![];
-		let mut temp = vec![];
 		let mut max_depth = 0;
-		let root = self.build_inner(groups, &mut out, &mut temp, &mut max_depth, root, 1);
+		let root = self.build_inner(groups, &mut out, &mut max_depth, root, 1);
 		assert_eq!(root, 0, "root must be 0");
 		(out, max_depth)
 	}

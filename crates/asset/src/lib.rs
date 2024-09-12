@@ -5,7 +5,7 @@ use std::{
 	fs::{File, OpenOptions},
 	hash::BuildHasherDefault,
 	io::Read,
-	path::{Path, PathBuf},
+	path::{Component, Path, PathBuf},
 	sync::Arc,
 };
 
@@ -388,7 +388,16 @@ impl AssetSystemView<'_> {
 	}
 
 	pub fn move_into<'a>(&self, into: &str, from: impl Iterator<Item = &'a str>) -> Result<(), std::io::Error> {
-		let full_into = self.cursor.join(into);
+		let mut full_into = self.cursor.clone();
+		let as_path = Path::new(into);
+		for c in as_path.components() {
+			match c {
+				Component::ParentDir => {
+					full_into.pop();
+				},
+				x => full_into.push(x),
+			}
+		}
 		let full_froms: Vec<_> = from.map(|x| self.cursor.join(x)).collect();
 		let path_to_entry = self
 			.sys

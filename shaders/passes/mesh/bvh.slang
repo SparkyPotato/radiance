@@ -59,7 +59,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupIndex) {
 	let aabb = n.aabbs[subnode];
 	let lod_bounds = n.lod_bounds[subnode];
 	let parent_error = n.parent_errors[subnode];
-	if (c.frustum_cull(aabb) || c.should_render(lod_bounds, parent_error, 0.f).x)
+	if (c.frustum_cull(aabb) || c.should_render(lod_bounds, parent_error))
 		return;
 	p.node_offset = n.child_offsets[subnode];
 	write(!c.oc_cull(aabb), n.child_counts[subnode], p);

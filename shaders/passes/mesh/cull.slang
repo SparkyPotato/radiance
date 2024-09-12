@@ -184,7 +184,8 @@ public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
 }
 
 public struct Cull {
-	f32x3 scale;
+	f32 scale;
+	f32 min_scale;
 	f32x4x4 mv;
 	f32x4x4 mvp;
 	f32x2 screen;
@@ -198,7 +199,8 @@ public struct Cull {
 	public __init(Camera* camera, Transform transform, u32x2 res, Tex<f32, D2> hzb, Sampler hzb_sampler) {
 		Cull ret;
 		let trans_mat = transform.mat();
-		ret.scale = transform.scale;
+		ret.scale = max3(transform.scale.x, transform.scale.y, transform.scale.z);
+		ret.min_scale = min3(transform.scale.x, transform.scale.y, transform.scale.z);
 		ret.mv = mul(camera[0].view, trans_mat);
 		ret.mvp = mul(occ_camera(camera).view_proj, trans_mat);
 		ret.screen = f32x2(res);
@@ -233,19 +235,19 @@ public struct Cull {
 	}
 
 	f32 project_error(f32x4 bounds, f32 error) {
-		let scale = max3(this.scale.x, this.scale.y, this.scale.z);
 		let center = mul(this.mv, f32x4(bounds.xyz, 1.f)).xyz;
-		let radius = bounds.w * scale;
-		let closest = f32x3(center.xy, max(center.z - radius, this.near));
+		let radius = bounds.w * this.scale;
+		let depth = max(center.z - radius, this.near);
+		let err = error * this.scale;
+		let closest = f32x3(center.xy, depth);
 		let d2 = dot(closest, closest);
-		let r = error * scale;
-		return (this.h * r * max(this.screen.x, this.screen.y)) / sqrt(max(d2 - r * r, 0.f));
+		let r2 = err * err;
+		return (this.h * err * max(this.screen.x, this.screen.y)) / sqrt(max(d2 - r2, 0.f));
 	}
 
-	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge_length) {
+	public bool should_render(f32x4 lod_bounds, f32 error) {
 		let err = this.project_error(lod_bounds, error);
-		let edge = abs(this.project_error(lod_bounds, edge_length));
-		return bool2(err < 1.f, edge >= 0.f);
+		return err < 1.f;
 	}
 
 	public bool oc_cull(Aabb aabb) {

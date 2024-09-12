@@ -10,6 +10,7 @@ codegen-units = 24
 
 [profile.dev]
 debug = true
+opt-level = 1
 [profile.release]
 debug = true
 
@@ -27,7 +28,6 @@ egui_grid = "0.5.1"
 egui-winit = "0.27.2"
 gltf = { version = "1.4.0" }
 gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", features = ["vulkan", "visualizer"] }
-half = { version = "2.4.1", features = ["bytemuck", "num-traits"] }
 hashbrown = { version = "0.14.3", features = ["nightly"] }
 hassle-rs = { version = "0.11.0" }
 metis = "0.2.1"
