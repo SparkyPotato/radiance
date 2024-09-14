@@ -30,8 +30,7 @@ pub enum DebugVis {
 	Overdraw(u32, u32),
 	HwSw,
 	Normals,
-	HzbMip,
-	HzbUv,
+	Error,
 }
 
 impl DebugVis {
@@ -44,8 +43,7 @@ impl DebugVis {
 			DebugVis::Overdraw(..) => 2,
 			DebugVis::HwSw => 3,
 			DebugVis::Normals => 4,
-			DebugVis::HzbMip => 5,
-			DebugVis::HzbUv => 6,
+			DebugVis::Error => 5,
 		}
 	}
 }

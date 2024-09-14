@@ -51,6 +51,8 @@ impl FrameData {
 
 	pub fn reset(&mut self, device: &Device) -> Result<()> {
 		unsafe {
+			let span = span!(Level::TRACE, "wait for gpu");
+			let _e = span.enter();
 			// Let GPU finish this frame before doing anything else.
 			self.sync.wait(device)?;
 			self.pool.reset(device)?;

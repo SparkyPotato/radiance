@@ -156,8 +156,11 @@ impl Renderer {
 		self.editor
 			.draw_gizmo(frame, ui, resp.rect, scene, &self.camera, &mut self.picker);
 
-		self.picker
-			.run(frame, visbuffer.reader, clicked.then(|| resp.hover_pos().unwrap()));
+		self.picker.run(
+			frame,
+			visbuffer.reader,
+			clicked.then(|| resp.interact_pointer_pos().unwrap()),
+		);
 
 		Some(false)
 	}

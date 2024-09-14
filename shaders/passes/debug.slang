@@ -4,7 +4,7 @@ import graph;
 import graph.util;
 import asset;
 import passes.mesh.cull;
-import passes.mesh.visbuffer;
+import passes.visbuffer;
 
 enum DebugVis : u32 {
 	Triangles,
@@ -12,6 +12,7 @@ enum DebugVis : u32 {
 	Overdraw,
 	HwSw,
 	Normals,
+	Error,
 }
 
 struct PushConstants {
@@ -144,6 +145,22 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		}
 		case DebugVis.Normals: {
 			col = abs(tri.normal());
+			break;
+		}
+		case DebugVis.Error: {
+			let instance = Constants.instances[p.meshlet.instance];
+			let meshlet = instance.meshlet(p.meshlet.node_offset);
+			let res = Constants.read.size();
+			let cull = Cull(Constants.camera, instance.transform, res, {}, {});
+			let error = cull.error_distance(meshlet.lod_bounds);
+
+			let count = f32x2(25.f, 40.f);
+			let start = floor(input.uv * count) / count;
+			let size = f32x2(4.f, 5.f) / res;
+			let h = hash(p.meshlet.instance) ^ hash(p.meshlet.node_offset);
+			col = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255)) / 255.f;
+			let digit = print(input.uv, start, size, error, 0.f, 8.f);
+			col = select(digit, 0.f, col);
 			break;
 		}
 	}

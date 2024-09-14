@@ -113,10 +113,12 @@ fn main() {
 						let arena_size = state.arena.memory_usage();
 						state.arena.reset();
 						let mut frame = state.graph.frame(&state.device, &state.arena);
-
-						state.ui.begin_frame(&state.window);
-						state.state.render(&mut frame, &state.ui.ctx, &state.window, arena_size);
-						let id = state.ui.run(&mut frame, &mut state.window).unwrap();
+						let id = {
+							tracy::zone!("pass generation");
+							state.ui.begin_frame(&state.window);
+							state.state.render(&mut frame, &state.ui.ctx, &state.window, arena_size);
+							state.ui.run(&mut frame, &mut state.window).unwrap()
+						};
 
 						frame.run().unwrap();
 						state.window.present(&state.device, id).unwrap();

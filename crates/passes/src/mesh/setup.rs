@@ -237,11 +237,7 @@ impl Setup {
 			},
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
-				usages: if needs_clear {
-					&[ImageUsageType::TransferWrite]
-				} else {
-					&[]
-				},
+				usages: &[ImageUsageType::OverrideLayout(vk::ImageLayout::READ_ONLY_OPTIMAL)],
 				view_type: None,
 				subresource: Subresource::default(),
 			},
@@ -256,7 +252,7 @@ impl Setup {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		let size = ((12 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
+		let size = ((36 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
 		let bvh_queues = [(); 3].map(|_| {
 			pass.resource(
 				BufferDesc {

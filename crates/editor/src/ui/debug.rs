@@ -37,6 +37,7 @@ impl Debug {
 			2 => "overdraw",
 			3 => "hw/sw",
 			4 => "normals",
+			5 => "error",
 			_ => unreachable!(),
 		}
 	}
@@ -46,13 +47,14 @@ impl Debug {
 			let mut sel = self.debug_vis.to_u32() as usize;
 			ComboBox::from_label("debug vis")
 				.selected_text(Self::text_of_index(sel))
-				.show_index(ui, &mut sel, 5, Self::text_of_index);
+				.show_index(ui, &mut sel, 6, Self::text_of_index);
 			self.debug_vis = match sel {
 				0 => DebugVis::Triangles,
 				1 => DebugVis::Meshlets,
 				2 => DebugVis::Overdraw(self.bottom, self.top),
 				3 => DebugVis::HwSw,
 				4 => DebugVis::Normals,
+				5 => DebugVis::Error,
 				_ => unreachable!(),
 			};
 

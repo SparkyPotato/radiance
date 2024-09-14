@@ -3,7 +3,7 @@ module mesh;
 import graph;
 import asset;
 import cull;
-import visbuffer;
+import passes.visbuffer;
 
 struct VertexOutput {
 	f32x4 position : SV_Position;
@@ -97,7 +97,7 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 		VisBufferData data = { init.mid, gtid };
 		// TODO: not strictly correct
 		let backface = edge_fn(HWPos[i.x], HWPos[i.y], HWPos[i.z]) < 0.f;
-		visbuffer[gtid] = { data.encode(), false };
+		visbuffer[gtid] = { data.encode(), backface };
 	}
 }
 
@@ -106,6 +106,8 @@ f32x3 uv_vert(Init init, u32 gtid) {
 	let dim = f32x2(Constants.output.size());
 	return f32x3(v.xy * dim, v.z);
 }
+
+groupshared f32x3 SWPos[128];
 
 // https://fgiesen.wordpress.com/2013/02/08/triangle-rasterization-in-practice/
 // https://fgiesen.wordpress.com/2013/02/10/optimizing-the-basic-rasterizer/
@@ -117,22 +119,17 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let tri_count = init.meshlet.tri_count;
 	let dim = Constants.output.size();
 
-	// for some reason, using groupshared memory to transform vertices causes a
-	// GPU crash due to a misaligned memory access.
-	// so i do this subgroup funkiness.
-	u32x3 t;
-	if (gtid < tri_count)
-		t = init.tri(gtid);
-	else
-		t = 0;
-	let verts = load_verts(init, t);
+	if (gtid < vert_count) {
+		SWPos[gtid] = uv_vert(init, gtid);
+	}
 
 	if (gtid >= tri_count)
 		return;
 
-	let v0 = verts[0];
-	let v1 = verts[1];
-	let v2 = verts[2];
+	let t = init.tri(gtid);
+	let v0 = SWPos[t.x];
+	let v1 = SWPos[t.y];
+	let v2 = SWPos[t.z];
 	VisBufferData data = { init.mid, gtid };
 	let write = data.encode();
 
@@ -169,7 +166,9 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 }
 
 f32x3x3 load_verts(Init init, u32x3 t) {
-	return f32x3x3(uv_vert(init, t.x), uv_vert(init, t.y), uv_vert(init, t.z));
+	// for some reason, using groupshared memory to transform vertices causes a
+	// GPU crash due to a misaligned memory access.
+	// so i do this subgroup funkiness.
 
 	f32x3 verts[3];
 	let min_vert = WaveActiveMin(min3(t.x, t.y, t.z));

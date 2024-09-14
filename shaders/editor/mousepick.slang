@@ -1,5 +1,5 @@
 import graph;
-import passes.mesh.visbuffer;
+import passes.visbuffer;
 
 struct PushConstants {
 	VisBufferReader read;

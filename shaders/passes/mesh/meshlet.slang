@@ -44,7 +44,7 @@ void main(u32 id: SV_DispatchThreadID) {
 	let instance = Constants.instances[p.instance];
 	let meshlet = instance.meshlet(p.node_offset);
 	let c = Cull(Constants.camera, instance.transform, Constants.res, Constants.hzb, Constants.hzb_sampler);
-	if (c.frustum_cull(meshlet.aabb) || !c.should_render(meshlet.lod_bounds, meshlet.error))
-		return;
-	write(!c.oc_cull(meshlet.aabb), true, { p.instance, p.node_offset });
+	let render = c.should_render(meshlet.lod_bounds, meshlet.error, meshlet.max_edge_length);
+	if (c.in_frustum(meshlet.aabb) && render.x)
+		write(c.unoccluded(meshlet.aabb), render.y, { p.instance, p.node_offset });
 }

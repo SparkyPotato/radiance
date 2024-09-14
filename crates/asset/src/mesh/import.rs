@@ -421,7 +421,7 @@ pub fn merge_spheres(a: Sphere<f32, f32>, b: Sphere<f32, f32>) -> Sphere<f32, f3
 	let sr = a.radius.min(b.radius);
 	let br = a.radius.max(b.radius);
 	let len = (a.center - b.center).magnitude();
-	if len + sr < br || sr == 0.0 || len == 0.0 {
+	if len + sr <= br || sr == 0.0 || len == 0.0 {
 		if a.radius > b.radius {
 			a
 		} else {

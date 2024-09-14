@@ -208,7 +208,7 @@ impl<T: Resource> PersistentCache<T> {
 					desc,
 					next_layout,
 				));
-				Ok((handle, next_layout))
+				Ok((handle, vk::ImageLayout::UNDEFINED))
 			},
 			Entry::Occupied(mut o) => {
 				let (o, d, l) = o.get_mut();
@@ -232,7 +232,7 @@ impl<T: Resource> PersistentCache<T> {
 					}
 					*d = desc;
 					*l = next_layout;
-					Ok((handle, next_layout))
+					Ok((handle, vk::ImageLayout::UNDEFINED))
 				}
 			},
 		}

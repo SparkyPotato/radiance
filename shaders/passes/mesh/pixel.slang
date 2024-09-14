@@ -1,7 +1,7 @@
 module pixel;
 
 import graph;
-import visbuffer;
+import passes.visbuffer;
 
 struct PushConstants {
 	u8 _offset[48];

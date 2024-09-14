@@ -248,25 +248,24 @@ impl VisBuffer {
 	}
 
 	fn pipeline(device: &Device, layout: vk::PipelineLayout, sw: bool, early: bool, debug: bool) -> Result<Pipeline> {
-		let spec: &[&str] = if debug {
-			if early {
-				&["passes.mesh.debug", "passes.mesh.early"]
-			} else {
-				&["passes.mesh.debug", "passes.mesh.late"]
-			}
-		} else {
-			if early {
-				&["passes.mesh.early"]
-			} else {
-				&["passes.mesh.late"]
-			}
-		};
 		if sw {
 			device.compute_pipeline(
 				layout,
 				ShaderInfo {
-					shader: "passes.mesh.mesh.sw",
-					spec,
+					shader: "passes.mesh.sw.c",
+					spec: if debug {
+						if early {
+							&["DEBUG", "EARLY"]
+						} else {
+							&["DEBUG"]
+						}
+					} else {
+						if early {
+							&["EARLY"]
+						} else {
+							&[]
+						}
+					},
 				},
 			)
 		} else {
@@ -274,7 +273,19 @@ impl VisBuffer {
 				shaders: &[
 					ShaderInfo {
 						shader: "passes.mesh.mesh.hw",
-						spec,
+						spec: if debug {
+							if early {
+								&["passes.mesh.debug", "passes.mesh.early"]
+							} else {
+								&["passes.mesh.debug", "passes.mesh.late"]
+							}
+						} else {
+							if early {
+								&["passes.mesh.early"]
+							} else {
+								&["passes.mesh.late"]
+							}
+						},
 					},
 					ShaderInfo {
 						shader: "passes.mesh.pixel.main",
@@ -384,32 +395,23 @@ impl VisBuffer {
 				&[pass.device.descriptors().set()],
 				&[],
 			);
-			dev.cmd_bind_descriptor_sets(
-				buf,
-				vk::PipelineBindPoint::COMPUTE,
-				self.layout,
-				0,
-				&[pass.device.descriptors().set()],
-				&[],
-			);
 
-			let pc = PushConstants {
-				instances: io.instances,
-				camera: pass.get(io.camera).ptr(),
-				early_hw: pass.get(io.meshlets[0]).ptr(),
-				early_sw: pass.get(io.meshlets[1]).ptr(),
-				late_hw: pass.get(io.meshlets[2]).ptr(),
-				late_sw: pass.get(io.meshlets[3]).ptr(),
-				output: visbuffer.storage_id.unwrap(),
-				debug: io.debug.map(|d| d.get(&mut pass)),
-				_pad: 0,
-			};
 			dev.cmd_push_constants(
 				buf,
 				self.layout,
-				vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT,
+				vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::COMPUTE,
 				0,
-				bytes_of(&pc),
+				bytes_of(&PushConstants {
+					instances: io.instances,
+					camera: pass.get(io.camera).ptr(),
+					early_hw: pass.get(io.meshlets[0]).ptr(),
+					early_sw: pass.get(io.meshlets[1]).ptr(),
+					late_hw: pass.get(io.meshlets[2]).ptr(),
+					late_sw: pass.get(io.meshlets[3]).ptr(),
+					output: visbuffer.storage_id.unwrap(),
+					debug: io.debug.map(|d| d.get(&mut pass)),
+					_pad: 0,
+				}),
 			);
 
 			dev.cmd_bind_pipeline(
@@ -451,7 +453,14 @@ impl VisBuffer {
 					}
 				},
 			);
-			dev.cmd_push_constants(buf, self.layout, vk::ShaderStageFlags::COMPUTE, 0, bytes_of(&pc));
+			dev.cmd_bind_descriptor_sets(
+				buf,
+				vk::PipelineBindPoint::COMPUTE,
+				self.layout,
+				0,
+				&[pass.device.descriptors().set()],
+				&[],
+			);
 			dev.cmd_dispatch_indirect(buf, read_sw.buffer, 0);
 		}
 	}

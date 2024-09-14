@@ -45,6 +45,7 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupIndex) {
 	let node = id >> 3;
 	let subnode = id & 7;
 
+	// Always keep the check *before* `read.done()`.
 	let should_exit = node >= Constants.read.len();
 	if (gtid == 0)
 		Constants.read.done();
@@ -59,8 +60,8 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupIndex) {
 	let aabb = n.aabbs[subnode];
 	let lod_bounds = n.lod_bounds[subnode];
 	let parent_error = n.parent_errors[subnode];
-	if (c.frustum_cull(aabb) || c.should_render(lod_bounds, parent_error))
-		return;
-	p.node_offset = n.child_offsets[subnode];
-	write(!c.oc_cull(aabb), n.child_counts[subnode], p);
+	if (c.in_frustum(aabb) && c.should_visit_bvh(lod_bounds, parent_error)) {
+		p.node_offset = n.child_offsets[subnode];
+		write(c.unoccluded(aabb), n.child_counts[subnode], p);
+	}
 }

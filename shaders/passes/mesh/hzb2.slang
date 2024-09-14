@@ -3,7 +3,7 @@ module hzb2;
 /// Stolen from https://github.com/Themaister/Granite/blob/master/assets/shaders/post/hiz.comp
 
 import graph;
-import visbuffer;
+import passes.visbuffer;
 
 struct PushConstants {
 	STex<f32, D2, Incoherent, NonUniform> mip5;

@@ -1,8 +1,8 @@
 module debug;
 
 import graph;
-import visbuffer;
-import visbuffer_extra;
+import passes.visbuffer;
+import passes.visbuffer_extra;
 
 public struct DebugImpl : VisbufferDebug {
 	STex<u32, D2> overdraw_tex;

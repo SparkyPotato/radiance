@@ -55,22 +55,73 @@ struct Meshlet {
 	}
 };
 
+struct Transform {
+	float3 translation;
+	float4 rotation;
+	float3 scale;
+
+	float4x4 trans_mat() {
+		float x = this.translation.x;
+		float y = this.translation.y;
+		float z = this.translation.z;
+		// clang-format off
+		float4x4 ret = {
+			1.f, 0.f, 0.f, x  ,
+			0.f, 1.f, 0.f, y  ,
+			0.f, 0.f, 1.f, z  ,
+			0.f, 0.f, 0.f, 1.f
+		};
+		// clang-format on
+		return ret;
+	}
+
+	float4x4 rot_mat() {
+		float x = this.rotation.x;
+		float y = this.rotation.y;
+		float z = this.rotation.z;
+		float w = this.rotation.w;
+		float x2 = x * x;
+		float y2 = y * y;
+		float z2 = z * z;
+
+		// clang-format off
+		float4x4 ret = {
+			1.f - 2.f * (y2 + z2), 2.f * (x * y - z * w), 2.f * (x * z + y * w), 0.f,
+			2.f * (x * y + z * w), 1.f - 2.f * (x2 + z2), 2.f * (y * z - x * w), 0.f,
+			2.f * (x * z - y * w), 2.f * (y * z + x * w), 1.f - 2.f * (x2 + y2), 0.f,
+			0.f                  , 0.f                  , 0.f                  , 1.f
+		};
+		// clang-format on
+		return ret;
+	}
+
+	float4x4 scale_mat() {
+		float x = this.scale.x;
+		float y = this.scale.y;
+		float z = this.scale.z;
+		// clang-format off
+		float4x4 ret = {
+			x  , 0.f, 0.f, 0.f,
+			0.f, y  , 0.f, 0.f,
+			0.f, 0.f, z  , 0.f,
+			0.f, 0.f, 0.f, 1.f
+		};
+		// clang-format on
+		return ret;
+	}
+
+	float4x4 mat() {
+		return mul(this.trans_mat(), mul(this.rot_mat(), this.scale_mat()));
+	}
+};
+
 struct Instance {
-	float transform[12];
+	Transform transform;
 	uint64_t mesh;
 	Aabb aabb;
 
 	float4x4 get_transform() {
-		float t[12] = this.transform;
-		// clang-format off
-		float4x4 ret = {
-			t[0], t[3], t[6], t[9], 
-			t[1], t[4], t[7], t[10], 
-			t[2], t[5], t[8], t[11], 
-			0.f, 0.f, 0.f, 1.f,
-		};
-		// clang-format on
-		return ret;
+		return this.transform.mat();
 	}
 
 	Meshlet meshlet(uint offset) {

@@ -171,6 +171,9 @@ impl Frame<'_, '_> {
 
 	/// Run the frame.
 	pub fn run(self) -> Result<()> {
+		let span = span!(Level::TRACE, "exec frame");
+		let _e = span.enter();
+
 		let device = self.device;
 		let arena = self.arena();
 		let data = &mut self.graph.frame_data[self.graph.curr_frame];

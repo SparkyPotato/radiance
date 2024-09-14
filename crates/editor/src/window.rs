@@ -75,6 +75,8 @@ impl Window {
 
 	pub fn present(&mut self, device: &Device, id: u32) -> Result<()> {
 		unsafe {
+			tracy::zone!("present");
+
 			self.cleanup_old(device)?;
 
 			let (_, rendered) = self.semas[self.curr_frame];

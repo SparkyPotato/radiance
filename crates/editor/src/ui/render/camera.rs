@@ -95,7 +95,7 @@ impl CameraController {
 		} else {
 			dir.normalized()
 		};
-		self.pos += dir * self.move_speed * ctx.input(|x| x.stable_dt);
+		self.pos += dir * self.move_speed * ctx.input(|x| x.unstable_dt);
 	}
 
 	pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {

@@ -125,7 +125,6 @@ impl Asset for Mesh {
 				readback: false,
 			},
 		)?;
-
 		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
 
 		for node in m.bvh {

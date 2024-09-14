@@ -35,12 +35,8 @@ public struct BvhQueue {
 
 	u32 reserve(u32 len, u32 bits, u32 count) {
 		let base = atomic_add(this.data->len, count);
-		let extra = select(base == 0, 1, 0);
-		let curr = base >> bits;
-		let req = this.clamp_end(len, base + count) >> bits;
-		let add = extra + req - curr;
-		if (add > 0)
-			atomic_add(this.data->dispatch.x, add);
+		let req = (this.clamp_end(len, base + count) + (1 << bits) - 1) >> bits;
+		atomic_max(this.data->dispatch.x, req);
 		return base;
 	}
 
@@ -105,7 +101,6 @@ public struct MeshletQueue {
 	}
 
 	public void push(u32 len, NodePointer pointer) {
-		let us = WaveMatch(u64(this.data));
 		let rel = WavePrefixCountBits(true);
 		let total = WaveActiveCountBits(true);
 		u32 pos;
@@ -223,41 +218,81 @@ public struct Cull {
 
 	// https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
 	// https://fgiesen.wordpress.com/2010/10/17/view-frustum-culling/
-	public bool frustum_cull(Aabb aabb) {
-		[unroll]
+	public bool in_frustum(Aabb aabb) {
 		for (int i = 0; i < 5; i++) {
 			let plane = this.planes[i];
 			let sign_flipped = asfloat(asuint(aabb.half_extent) ^ this.flips[i]);
 			if (dot(aabb.center + sign_flipped, plane.xyz) > -plane.w)
-				return false;
+				return true;
 		}
-		return true;
+		return false;
 	}
 
-	f32 project_error(f32x4 bounds, f32 error) {
+	// 2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere (Michael Mara, Morgan McGuire).
+	// We get the projected bounds on the axis that is the longest upon projection (need to be conservative!),
+	// which is the one from (0, 0) to the sphere's center.
+	public f32 error_distance(f32x4 bounds) {
 		let center = mul(this.mv, f32x4(bounds.xyz, 1.f)).xyz;
 		let radius = bounds.w * this.scale;
-		let depth = max(center.z - radius, this.near);
-		let err = error * this.scale;
-		let closest = f32x3(center.xy, depth);
-		let d2 = dot(closest, closest);
-		let r2 = err * err;
-		return (this.h * err * max(this.screen.x, this.screen.y)) / sqrt(max(d2 - r2, 0.f));
+
+		if (center.z + radius <= this.near)
+			return 0.f;
+
+		let dist2 = dot(center, center);
+		let a = sqrt(dist2 - center.z * center.z);
+		let proj_center = f32x2(a, center.z);
+		let t2 = dist2 - radius * radius;
+		var t = sqrt(max(t2, 0.f));
+		let in_sphere = t2 < 0.f;
+
+		// cos(theta) = t / dist
+		// sin(theta) = r / dist
+		// T = t * rotate(theta) * proj_center / dist,
+		// removing the dist divide in cos, sin
+		// ncos(theta) = t
+		// nsin(theta) = r
+		// rotate(theta) == rotate(ntheta) / dist
+		// therefore, T = t * rotate(ntheta) * proj_center / dist2
+		// saving us two divides and a sqrt!
+		let ncos = t;
+		let nsin = radius;
+		var wt_z = dot(f32x2(-nsin, ncos), proj_center) / dist2;
+		let t_z = t * wt_z;
+
+		if (in_sphere || t_z < this.near) {
+			let off = this.near - center.z;
+			let k = sqrt(radius * radius - off * off);
+			let t = f32x2(a + k, this.near);
+			wt_z = t.y / length(t);
+		}
+
+		return wt_z * max(center.z - radius, this.near);
+	}	
+
+	public f32 error_scale(bool max) {
+		// Don't divide by 2 because the error is already divided by 2 during build.
+		return this.screen.y * this.h * (max ? this.scale : this.min_scale);
 	}
 
-	public bool should_render(f32x4 lod_bounds, f32 error) {
-		let err = this.project_error(lod_bounds, error);
-		return err < 1.f;
+	public bool should_visit_bvh(f32x4 lod_bounds, f32 parent_error) {
+		return this.error_distance(lod_bounds) <= this.error_scale(false) * parent_error;
 	}
 
-	public bool oc_cull(Aabb aabb) {
+	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge) {
+		let dist = this.error_distance(lod_bounds);
+		let scale = this.error_scale(false);
+		let hw_scale = this.error_scale(true);
+		return bool2(dist > scale * error, dist < hw_scale * edge / 128.f);
+	}
+
+	public bool unoccluded(Aabb aabb) {
 		if (let saabb = project_aabb(this.mvp, this.near, aabb)) {
 			let size = (saabb.max - saabb.min).xy * this.screen * 0.5f;
 			let level = ceil(log2(max(size.x, size.y)));
 			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, (saabb.min + saabb.max).xy * 0.5f, level);
-			return saabb.min.z < curr_depth;
+			return saabb.max.z >= curr_depth;
 		}
-		return false;
+		return true;
 	}
 }
 
