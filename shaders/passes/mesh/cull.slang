@@ -210,22 +210,26 @@ public struct Cull {
 		ret.planes[3] = normalize_plane(mvp[3] - mvp[1]);
 		ret.planes[4] = normalize_plane(mvp[2]);
 		[unroll]
-		for (int i = 0; i < 5; i++) {
+		for (int i = 0; i < ret.planes.getCount(); i++) {
 			ret.flips[i] = asuint(ret.planes[i].xyz) & 0x80000000;
 		}
 		return ret;
 	}
 
+	bool outside_plane(Aabb aabb, i32 i) {
+		let plane = this.planes[i];
+		let sign_flipped = asfloat(asuint(aabb.half_extent) ^ this.flips[i]);
+		return dot(aabb.center + sign_flipped, plane.xyz) <= -plane.w;
+	}
+
 	// https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
 	// https://fgiesen.wordpress.com/2010/10/17/view-frustum-culling/
 	public bool in_frustum(Aabb aabb) {
-		for (int i = 0; i < 5; i++) {
-			let plane = this.planes[i];
-			let sign_flipped = asfloat(asuint(aabb.half_extent) ^ this.flips[i]);
-			if (dot(aabb.center + sign_flipped, plane.xyz) > -plane.w)
-				return true;
+		for (int i = 0; i < this.planes.getCount(); i++) {
+			if (this.outside_plane(aabb, i)) 
+				return false;
 		}
-		return false;
+		return true;
 	}
 
 	// 2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere (Michael Mara, Morgan McGuire).
@@ -282,7 +286,7 @@ public struct Cull {
 		let dist = this.error_distance(lod_bounds);
 		let scale = this.error_scale(false);
 		let hw_scale = this.error_scale(true);
-		return bool2(dist > scale * error, dist < hw_scale * edge / 128.f);
+		return bool2(dist > scale * error, dist < hw_scale * edge / 64.f);
 	}
 
 	public bool unoccluded(Aabb aabb) {

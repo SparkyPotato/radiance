@@ -10,29 +10,24 @@ Build and run with `cargo run --release -- ./test-project`.
 
 Double click folders/assets to navigate around, and drop a GLTF file into the window to import. You can use `gen.py` to repeatedly instance any GLTF for testing.
 
-`dragon_100_100_100/scenes/Scene` is the Stanford Dragon repeated 100 times across each dimension, a total of 1 million dragons and about 800 billion triangles. The other test models couldn't be shipped due to GitHub size limits.
+`Dragon/Scene` is the Stanford Dragon repeated 200 times across each dimension, a total of 8 million dragons and about 6.4 trillion triangles. The other test models couldn't be shipped due to GitHub size limits.
 
 # In action
-![](screenshots/xyzrgb-dragon-closeup.png)
-1 million XYZRGB Stanford Dragons at 165 FPS. At 7.2 million triangles each, the scene has about 7.2 trillion triangles in total. Renders at 165 FPS.
+Due to the large instance count and lack of impostor support, the dragon scene has rather lackluster performance, taking about 5ms per frame (~200 FPS).
 
-![](screenshots/xyzrgb-dragon-inside.png)
-The same scene as above, showing the interior of the instanced block. Renders at 85 FPS.
+![](screenshots/dragon_meshlets.png)
+Clusters of the Dragon scene.
+![](screenshots/dragon_overdraw.png)
+Overdraw in the Dragon scene.
+![](screenshots/dragon_tris.png)
+Triangles in the Dragon scene.
+![](screenshots/dragon_sw.png)
+This shows the distribution of hardware rasterized vs software rasterized meshlets.
+Red is hardware rasterized while green and yellow are software rasterized.
 
-![](screenshots/xyzrgb-dragon-triangle-density.png)
-The same view as above, showing the density of triangles rendered.
+![](screenshots/lucy_normals.png)
+1 million instances of the Stanford Lucy scan, leading to a total of 28 trillion triangles, rendered at 1.5ms per frame (650 FPS).
 
-![](screenshots/xyzrgb-dragon-overdraw.png)
-The same scene as above, viewed from far away with heavy overdraw. This results in a massive drop to around 55 FPS.
+![](screenshots/lucy_overdraw.png)
+Going far away leads to a large amount of overdraw, dropping the performance down to 4.5ms per frame.
 
-![](screenshots/lucy-closeup.png)
-1 million instanced Stanford Lucy scans for a total of about 28 trillion triangles. Renders at 60 FPS.
-
-![](screenshots/lucy-overdraw.png)
-The same scene as above, as a worst-case scenario. Falls to an unusable 18 FPS.
-
-![](screenshots/dragon-closeup.png)
-1 million Stanford Dragons for a total of 800 billion triangles, at 200 FPS.
-
-![](screenshots/dragon-overdraw.png)
-The same scene as above, with heavy overdraw. Causes a drop to 54 FPS.
