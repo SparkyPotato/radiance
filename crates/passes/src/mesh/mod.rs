@@ -248,24 +248,25 @@ impl VisBuffer {
 	}
 
 	fn pipeline(device: &Device, layout: vk::PipelineLayout, sw: bool, early: bool, debug: bool) -> Result<Pipeline> {
+		let spec: &[_] = if debug {
+			if early {
+				&["passes.mesh.debug", "passes.mesh.early"]
+			} else {
+				&["passes.mesh.debug", "passes.mesh.late"]
+			}
+		} else {
+			if early {
+				&["passes.mesh.early"]
+			} else {
+				&["passes.mesh.late"]
+			}
+		};
 		if sw {
 			device.compute_pipeline(
 				layout,
 				ShaderInfo {
-					shader: "passes.mesh.sw.c",
-					spec: if debug {
-						if early {
-							&["DEBUG", "EARLY"]
-						} else {
-							&["DEBUG"]
-						}
-					} else {
-						if early {
-							&["EARLY"]
-						} else {
-							&[]
-						}
-					},
+					shader: "passes.mesh.mesh.sw",
+					spec,
 				},
 			)
 		} else {
@@ -273,19 +274,7 @@ impl VisBuffer {
 				shaders: &[
 					ShaderInfo {
 						shader: "passes.mesh.mesh.hw",
-						spec: if debug {
-							if early {
-								&["passes.mesh.debug", "passes.mesh.early"]
-							} else {
-								&["passes.mesh.debug", "passes.mesh.late"]
-							}
-						} else {
-							if early {
-								&["passes.mesh.early"]
-							} else {
-								&["passes.mesh.late"]
-							}
-						},
+						spec,
 					},
 					ShaderInfo {
 						shader: "passes.mesh.pixel.main",

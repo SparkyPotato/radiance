@@ -57,15 +57,16 @@ bool is_instance_highlighted(u32 id) {
 	return false;
 }
 
+// https://github.com/kennethmoreland-com/kennethmoreland-com.github.io/blob/master/color-advice/inferno/inferno.ipynb
 f32x3 heatmap(f32 heat) {
 	f32x3 cols[] = {
-		f32x3(0.f, 0.f, 0.f), f32x3(0.f, 0.f, 1.f), f32x3(0.f, 1.f, 1.f), f32x3(0.f, 1.f, 0.f),
-		f32x3(1.f, 1.f, 0.f), f32x3(1.f, 0.f, 0.f), f32x3(1.f, 1.f, 1.f),
+		f32x3(0.f, 0.f, 4.f), f32x3(40.f, 11.f, 84.f), f32x3(101.f, 21.f, 110.f), f32x3(159.f, 42.f, 99.f),
+		f32x3(212.f, 72.f, 66.f), f32x3(245.f, 125.f, 21.f), f32x3(250.f, 193.f, 39.f), f32x3(252.f, 255.f, 164.f),
 	};
 	let scaled = heat * (cols.getCount() - 1.f);
 	let bot = u32(floor(scaled));
 	let top = u32(ceil(scaled));
-	return lerp(cols[bot], cols[top], scaled - f32(bot));
+	return lerp(cols[bot], cols[top], scaled - f32(bot)) / 255.f;
 }
 
 f32x3 sobel(f32x2 uv, f32x3 col, u32 instance) {

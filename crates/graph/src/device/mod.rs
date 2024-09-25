@@ -54,10 +54,12 @@ pub struct Device {
 }
 
 impl Device {
+	#[track_caller]
 	pub fn graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<Pipeline> {
 		self.inner.shaders.create_graphics_pipeline(desc).map_err(Into::into)
 	}
 
+	#[track_caller]
 	pub fn compute_pipeline(&self, layout: vk::PipelineLayout, shader: ShaderInfo) -> Result<Pipeline> {
 		self.inner
 			.shaders

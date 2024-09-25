@@ -120,16 +120,19 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let dim = Constants.output.size();
 
 	if (gtid < vert_count) {
-		SWPos[gtid] = uv_vert(init, gtid);
+		// SWPos[gtid] = uv_vert(init, gtid);
 	}
 
 	if (gtid >= tri_count)
 		return;
 
 	let t = init.tri(gtid);
-	let v0 = SWPos[t.x];
-	let v1 = SWPos[t.y];
-	let v2 = SWPos[t.z];
+	// let v0 = SWPos[t.x];
+	// let v1 = SWPos[t.y];
+	// let v2 = SWPos[t.z];
+	let v0 = uv_vert(init, t.x);
+	let v1 = uv_vert(init, t.y);
+	let v2 = uv_vert(init, t.z);
 	VisBufferData data = { init.mid, gtid };
 	let write = data.encode();
 
@@ -163,33 +166,6 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	} else {
 		bounding(minv, maxv, w_x, w_y, w_row, z_x, z_y, z_row, write);
 	}
-}
-
-f32x3x3 load_verts(Init init, u32x3 t) {
-	// for some reason, using groupshared memory to transform vertices causes a
-	// GPU crash due to a misaligned memory access.
-	// so i do this subgroup funkiness.
-
-	f32x3 verts[3];
-	let min_vert = WaveActiveMin(min3(t.x, t.y, t.z));
-	let max_vert = WaveActiveMax(max3(t.x, t.y, t.z));
-	u32 wave_count = WaveGetLaneCount();
-	[unroll]
-	for (int base = min_vert; base <= max_vert; base += wave_count) {
-		var i = base + WaveGetLaneIndex();
-		i = select(i <= max_vert, i, 0);
-		let v = uv_vert(init, i);
-
-		[unroll]
-		for (int j = 0; j < 3; j++) {
-			let wave_index = i32(t[j]) - base;
-			let valid = wave_index > 0 && wave_index < wave_count;
-			let got = WaveReadLaneAt(v, select(valid, wave_index, 0));
-			if (valid)
-				verts[j] = got;
-		}
-	}
-	return f32x3x3(verts[0], verts[1], verts[2]);
 }
 
 void scanline(i32x2 minv, i32x2 maxv, f32x3 w_x, f32x3 w_y, f32x3 w_row, f32 z_x, f32 z_y, f32 z_row, u32 write) {

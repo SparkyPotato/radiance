@@ -288,6 +288,7 @@ impl RuntimeShared {
 		Ok((spirv, dec.0))
 	}
 
+	#[track_caller]
 	fn create_compute_pipeline(
 		this: Arc<Mutex<Self>>, layout: vk::PipelineLayout, shader: ShaderInfo,
 	) -> Result<Pipeline, vk::Result> {
@@ -313,6 +314,7 @@ impl RuntimeShared {
 		Ok(Pipeline(inner, this))
 	}
 
+	#[track_caller]
 	fn create_graphics_pipeline(this: Arc<Mutex<Self>>, desc: &GraphicsPipelineDesc) -> Result<Pipeline, vk::Result> {
 		let mut t = this.lock().unwrap();
 		let desc = desc.owned();
@@ -337,6 +339,7 @@ impl RuntimeShared {
 		Ok(Pipeline(inner, this))
 	}
 
+	#[track_caller]
 	fn create_compute_pipeline_inner(
 		b: &mut ShaderBuilder, d: vk::Device, c: vk::PFN_vkCreateComputePipelines, layout: vk::PipelineLayout,
 		shader: ShaderInfo,
@@ -365,6 +368,7 @@ impl RuntimeShared {
 		}
 	}
 
+	#[track_caller]
 	fn create_graphics_pipeline_inner(
 		b: &mut ShaderBuilder, d: vk::Device, c: vk::PFN_vkCreateGraphicsPipelines, desc: &GraphicsPipelineDescOwned,
 	) -> Result<vk::Pipeline, Result<vk::Result, String>> {
@@ -531,10 +535,12 @@ impl ShaderRuntime {
 		}
 	}
 
+	#[track_caller]
 	pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<Pipeline, vk::Result> {
 		RuntimeShared::create_graphics_pipeline(self.shared.clone(), &desc)
 	}
 
+	#[track_caller]
 	pub fn create_compute_pipeline(
 		&self, layout: vk::PipelineLayout, shader: ShaderInfo,
 	) -> Result<Pipeline, vk::Result> {

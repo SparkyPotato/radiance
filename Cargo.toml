@@ -53,7 +53,7 @@ tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracy = { package = "tracy_full", version = "1.7.1", features = ["tracing", "enable"] }
 transform-gizmo-egui = "0.2.0"
 uuid = { version = "1.7.0", features = ["v4", "fast-rng", "serde"] }
-vek = { version = "0.16.1", features = ["bytemuck", "serde"] }
+vek = { version = "0.17.1", features = ["bytemuck", "serde"] }
 walkdir = "2.5.0"
 winit = "0.29.15"
 zstd = "0.13.0"
