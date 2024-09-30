@@ -145,7 +145,7 @@ impl HzbGen {
 				}
 				let dev = pass.device;
 				outs[i as usize] = Some(
-					pass.get_caches()
+					pass.caches()
 						.image_views
 						.get(
 							dev,
@@ -163,6 +163,7 @@ impl HzbGen {
 							},
 						)
 						.unwrap()
+						.0
 						.storage_id
 						.unwrap(),
 				);

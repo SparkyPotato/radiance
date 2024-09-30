@@ -34,11 +34,11 @@ impl<T: Resource> ResourceList<T> {
 		}
 	}
 
-	pub fn get_or_create(&mut self, device: &Device, desc: T::Desc<'_>) -> Result<T::Handle> {
+	pub fn get_or_create(&mut self, device: &Device, desc: T::Desc<'_>) -> Result<(T::Handle, bool)> {
 		let ret = match self.resources.get_mut(self.cursor) {
 			Some(resource) => {
 				resource.unused = 0;
-				resource.inner.handle()
+				(resource.inner.handle(), false)
 			},
 			None => {
 				let resource = T::create(device, desc)?;
@@ -47,18 +47,11 @@ impl<T: Resource> ResourceList<T> {
 					inner: resource,
 					unused: 0,
 				});
-				handle
+				(handle, true)
 			},
 		};
 		self.cursor += 1;
 		Ok(ret)
-	}
-
-	pub fn get_all_used(&self) -> impl Iterator<Item = T::Handle> + '_ {
-		// Everything before the cursor was just used.
-		self.resources[..self.cursor]
-			.iter()
-			.map(|resource| resource.inner.handle())
 	}
 
 	pub unsafe fn reset(&mut self, device: &Device) {
@@ -111,7 +104,7 @@ impl<T: Resource> ResourceCache<T> {
 	}
 
 	/// Get an unused resource with the given descriptor. Is valid until [`Self::reset`] is called.
-	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<T::Handle> {
+	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<(T::Handle, bool)> {
 		let list = self.resources.entry(desc).or_insert_with(ResourceList::new);
 		list.get_or_create(device, desc.to_named("Graph Resource"))
 	}
@@ -136,7 +129,7 @@ impl<T: Resource> UniqueCache<T> {
 	}
 
 	/// Get the resource with the given descriptor. Is valid until [`Self::reset`] is called.
-	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<T::Handle> {
+	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<(T::Handle, bool)> {
 		match self.resources.entry(desc) {
 			Entry::Vacant(v) => {
 				let resource = T::create(device, desc.to_named("Graph Resource"))?;
@@ -145,12 +138,12 @@ impl<T: Resource> UniqueCache<T> {
 					inner: resource,
 					unused: 0,
 				});
-				Ok(handle)
+				Ok((handle, true))
 			},
 			Entry::Occupied(mut o) => {
 				let o = o.get_mut();
 				o.unused = 0;
-				Ok(o.inner.handle())
+				Ok((o.inner.handle(), false))
 			},
 		}
 	}
@@ -180,8 +173,15 @@ impl<T: Resource> UniqueCache<T> {
 	}
 }
 
+struct PersistentResource<T: Resource> {
+	resource: TrackedResource<T>,
+	desc: T::Desc<'static>,
+	age: u64,
+	layout: vk::ImageLayout,
+}
+
 pub struct PersistentCache<T: Resource> {
-	resources: FxHashMap<&'static str, (TrackedResource<T>, T::Desc<'static>, vk::ImageLayout)>,
+	resources: FxHashMap<&'static str, PersistentResource<T>>,
 }
 
 impl<T: Resource> PersistentCache<T> {
@@ -195,33 +195,35 @@ impl<T: Resource> PersistentCache<T> {
 	/// Get the resource with the given descriptor. Is valid until [`Self::reset`] is called.
 	pub fn get(
 		&mut self, device: &Device, desc: T::Desc<'static>, next_layout: vk::ImageLayout,
-	) -> Result<(T::Handle, vk::ImageLayout)> {
+	) -> Result<(T::Handle, bool, vk::ImageLayout)> {
 		match self.resources.entry(desc.name()) {
 			Entry::Vacant(v) => {
 				let resource = T::create(device, desc)?;
 				let handle = resource.handle();
-				v.insert((
-					TrackedResource {
+				v.insert(PersistentResource {
+					resource: TrackedResource {
 						inner: resource,
 						unused: 0,
 					},
 					desc,
-					next_layout,
-				));
-				Ok((handle, vk::ImageLayout::UNDEFINED))
+					age: 0,
+					layout: next_layout,
+				});
+				Ok((handle, true, vk::ImageLayout::UNDEFINED))
 			},
 			Entry::Occupied(mut o) => {
-				let (o, d, l) = o.get_mut();
-				if *d == desc {
-					o.unused = 0;
-					let old = *l;
-					*l = next_layout;
-					Ok((o.inner.handle(), old))
+				let r = o.get_mut();
+				if r.desc == desc {
+					r.resource.unused = 0;
+					let old = r.layout;
+					r.layout = next_layout;
+					r.age += 1;
+					Ok((r.resource.inner.handle(), r.age < 2, old))
 				} else {
 					let resource = T::create(device, desc)?;
 					let handle = resource.handle();
 					let old = std::mem::replace(
-						o,
+						&mut r.resource,
 						TrackedResource {
 							inner: resource,
 							unused: 0,
@@ -230,9 +232,10 @@ impl<T: Resource> PersistentCache<T> {
 					unsafe {
 						old.inner.destroy(device);
 					}
-					*d = desc;
-					*l = next_layout;
-					Ok((handle, vk::ImageLayout::UNDEFINED))
+					r.age = 0;
+					r.desc = desc;
+					r.layout = next_layout;
+					Ok((handle, true, vk::ImageLayout::UNDEFINED))
 				}
 			},
 		}
@@ -243,10 +246,10 @@ impl<T: Resource> PersistentCache<T> {
 	/// # Safety
 	/// All resources returned by [`Self::get`] must not be used after this call.
 	pub unsafe fn reset(&mut self, device: &Device) {
-		self.resources.retain(|_, (res, ..)| {
-			res.unused += 1;
-			if res.unused >= DESTROY_LAG {
-				std::mem::take(&mut res.inner).destroy(device);
+		self.resources.retain(|_, r| {
+			r.resource.unused += 1;
+			if r.resource.unused >= DESTROY_LAG {
+				std::mem::take(&mut r.resource.inner).destroy(device);
 				false
 			} else {
 				true
@@ -255,9 +258,9 @@ impl<T: Resource> PersistentCache<T> {
 	}
 
 	pub fn destroy(self, device: &Device) {
-		for (_, (res, ..)) in self.resources {
+		for (_, r) in self.resources {
 			unsafe {
-				res.inner.destroy(device);
+				r.resource.inner.destroy(device);
 			}
 		}
 	}

@@ -2,10 +2,10 @@ use ash::vk;
 use tracing::{span, Level};
 
 use crate::{
-	arena::{Arena, IteratorAlloc},
+	arena::Arena,
 	cmd::CommandPool,
 	device::{Device, Graphics, QueueWaitOwned, SyncPoint, SyncStage},
-	graph::compile::{DependencyInfo, EventInfo, QueueSync, Sync},
+	graph::compile::{DependencyInfo, QueueSync, Sync},
 	resource::{Buffer, Image, ImageView, Resource as _, AS},
 	Result,
 };
@@ -129,12 +129,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 			// No cross-queue sync.
 			(false, false) => {
 				self.start_buf(device)?; // May be the first pass, ensure the buffer is started.
-				emit_queue_sync(
-					device,
-					self.cached_wait.binary_semaphores.allocator(),
-					self.buf,
-					&sync.queue,
-				);
+				emit_queue_sync(device, self.buf, &sync.queue);
 			},
 			// Only signal.
 			(true, false) => {
@@ -149,12 +144,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 				// already done.
 				extend_dep_info(&mut sync.queue.barriers, sync.cross_queue.signal_barriers);
 				extend_dep_info(&mut sync.queue.barriers, sync.cross_queue.wait_barriers);
-				emit_queue_sync(
-					device,
-					self.cached_wait.binary_semaphores.allocator(),
-					self.buf,
-					&sync.queue,
-				);
+				emit_queue_sync(device, self.buf, &sync.queue);
 
 				// The semaphores must be signaled as soon as possible, so submit now.
 				self.submit(device, &sync.cross_queue.signal)?;
@@ -177,12 +167,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 				// soon.
 				extend_dep_info(&mut sync.queue.barriers, sync.cross_queue.signal_barriers);
 				extend_dep_info(&mut sync.queue.barriers, sync.cross_queue.wait_barriers);
-				emit_queue_sync(
-					device,
-					self.cached_wait.binary_semaphores.allocator(),
-					self.buf,
-					&sync.queue,
-				);
+				emit_queue_sync(device, self.buf, &sync.queue);
 			},
 			// Both.
 			(true, true) => {
@@ -194,12 +179,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 				// Emit the pre-signal barriers, but also the main queue barriers so we can save on a
 				// `vkCmdPipelineBarrier`.
 				extend_dep_info(&mut sync.queue.barriers, sync.cross_queue.signal_barriers);
-				emit_queue_sync(
-					device,
-					self.cached_wait.binary_semaphores.allocator(),
-					self.buf,
-					&sync.queue,
-				);
+				emit_queue_sync(device, self.buf, &sync.queue);
 
 				// The semaphores must be signaled as soon as possible, so submit now.
 				self.submit(device, &sync.cross_queue.signal)?;
@@ -215,22 +195,16 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 		Ok(self.buf)
 	}
 
-	pub fn finish(mut self, device: &Device, pre_submit: impl FnOnce(vk::CommandBuffer)) -> Result<()> {
+	pub fn finish(mut self, device: &Device) -> Result<()> {
 		let mut sync = self.sync.next().unwrap();
 
 		debug_assert!(sync.cross_queue.wait.is_empty(), "Cannot wait after the last pass");
 
 		// Emit all barriers as the last command.
 		extend_dep_info(&mut sync.queue.barriers, sync.cross_queue.signal_barriers);
-		emit_queue_sync(
-			device,
-			self.cached_wait.binary_semaphores.allocator(),
-			self.buf,
-			&sync.queue,
-		);
+		emit_queue_sync(device, self.buf, &sync.queue);
 
 		// Submit and signal all the semaphores we need to.
-		pre_submit(self.buf);
 		self.data.sync = self.submit_inner(device, &sync.cross_queue.signal)?;
 
 		Ok(())
@@ -281,37 +255,14 @@ fn dependency_info<'a>(info: &'a DependencyInfo) -> vk::DependencyInfo<'a> {
 		.image_memory_barriers(&info.image_barriers)
 }
 
-fn emit_queue_sync(device: &Device, arena: &Arena, buf: vk::CommandBuffer, sync: &QueueSync) {
+fn emit_queue_sync(device: &Device, buf: vk::CommandBuffer, sync: &QueueSync) {
 	emit_barriers(device, buf, &sync.barriers);
-	emit_event_waits(device, arena, buf, &sync.wait_events);
-	emit_event_sets(device, buf, &sync.set_events);
 }
 
 fn emit_barriers(device: &Device, buf: vk::CommandBuffer, info: &DependencyInfo) {
 	unsafe {
 		if !info.barriers.is_empty() || !info.image_barriers.is_empty() {
 			device.device().cmd_pipeline_barrier2(buf, &dependency_info(info));
-		}
-	}
-}
-
-fn emit_event_sets(device: &Device, buf: vk::CommandBuffer, events: &[EventInfo]) {
-	for event in events {
-		unsafe {
-			device
-				.device()
-				.cmd_set_event2(buf, event.event, &dependency_info(&event.info));
-		}
-	}
-}
-
-fn emit_event_waits(device: &Device, arena: &Arena, buf: vk::CommandBuffer, events: &[EventInfo]) {
-	if !events.is_empty() {
-		let infos: Vec<_, _> = events.iter().map(|e| dependency_info(&e.info)).collect_in(arena);
-		let events: Vec<_, _> = events.iter().map(|e| e.event).collect_in(arena);
-
-		unsafe {
-			device.device().cmd_wait_events2(buf, &events, &infos);
 		}
 	}
 }

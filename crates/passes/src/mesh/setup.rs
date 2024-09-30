@@ -189,7 +189,7 @@ impl Setup {
 	pub fn new() -> Self { Self { inner: None } }
 
 	pub fn run(&mut self, frame: &mut Frame, info: &RenderInfo, hzb_sampler: SamplerId) -> Resources {
-		let (needs_clear, prev) = match &mut self.inner {
+		let (mut needs_clear, prev) = match &mut self.inner {
 			Some(Persistent { scene, camera }) => {
 				let prev = *camera;
 				*camera = info.camera;
@@ -252,7 +252,7 @@ impl Setup {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		let size = ((36 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
+		let size = ((4 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
 		let bvh_queues = [(); 3].map(|_| {
 			pass.resource(
 				BufferDesc {
@@ -327,6 +327,8 @@ impl Setup {
 		});
 
 		pass.build(move |mut pass| unsafe {
+			needs_clear |= pass.is_uninit(hzb);
+
 			let dev = pass.device.device();
 			let buf = pass.buf;
 			let mut writer = pass.get(camera).data.as_mut();

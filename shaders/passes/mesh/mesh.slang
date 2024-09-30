@@ -107,7 +107,7 @@ f32x3 uv_vert(Init init, u32 gtid) {
 	return f32x3(v.xy * dim, v.z);
 }
 
-groupshared f32x3 SWPos[128];
+// groupshared f32x3 SWPos[128];
 
 // https://fgiesen.wordpress.com/2013/02/08/triangle-rasterization-in-practice/
 // https://fgiesen.wordpress.com/2013/02/10/optimizing-the-basic-rasterizer/

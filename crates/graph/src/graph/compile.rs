@@ -7,7 +7,6 @@ use crate::{
 	arena::{Arena, IteratorAlloc},
 	device::{Device, QueueWaitOwned, SyncStage},
 	graph::{
-		cache::ResourceList,
 		virtual_resource::{
 			compatible_formats,
 			BufferData,
@@ -70,21 +69,11 @@ pub struct DependencyInfo<'graph> {
 	pub image_barriers: Vec<vk::ImageMemoryBarrier2<'static>, &'graph Arena>,
 }
 
-#[derive(Debug)]
-pub struct EventInfo<'graph> {
-	pub event: vk::Event,
-	pub info: DependencyInfo<'graph>,
-}
-
 /// Synchronization on the main queue.
 #[derive(Debug)]
 pub struct QueueSync<'graph> {
 	/// Pipeline barriers to execute.
 	pub barriers: DependencyInfo<'graph>,
-	/// Events to wait on.
-	pub wait_events: Vec<EventInfo<'graph>, &'graph Arena>,
-	/// Events to set.
-	pub set_events: Vec<EventInfo<'graph>, &'graph Arena>,
 }
 
 /// Synchronization between passes.
@@ -149,6 +138,15 @@ impl<'graph> Resource<'graph> {
 			Resource::Image(res) => res,
 			Resource::Buffer(_) => unreachable!("expected image got buffer"),
 			Resource::Data(..) => unreachable!("expected image got cpu data"),
+		}
+	}
+
+	pub fn uninit(&self) -> bool {
+		match self {
+			Resource::Data(_, DataState::Uninit) => true,
+			Resource::Data(_, DataState::Init { .. }) => false,
+			Resource::Buffer(b) => b.uninit,
+			Resource::Image(i) => i.uninit,
 		}
 	}
 }
@@ -342,14 +340,14 @@ impl<'graph> ResourceAliaser<'graph> {
 							usage: desc.usage,
 							readback: desc.readback,
 						};
-						data.handle = match (data.desc.loc, data.desc.persist) {
+						(data.handle, data.uninit) = match (data.desc.loc, data.desc.persist) {
 							(BufferLoc::GpuOnly, Some(name)) => {
-								graph
+								let x = graph
 									.caches
 									.persistent_buffers
 									.get(device, per_desc(name), vk::ImageLayout::UNDEFINED)
-									.expect("failed to allocated graph buffer")
-									.0
+									.expect("failed to allocated graph buffer");
+								(x.0, x.1)
 							},
 							(BufferLoc::GpuOnly, None) => graph
 								.caches
@@ -364,10 +362,10 @@ impl<'graph> ResourceAliaser<'graph> {
 							},
 							(BufferLoc::Readback, x) => {
 								let name = x.expect("readback buffers must be persistent");
-								graph.caches.readback_buffers[graph.curr_frame]
+								let x = graph.caches.readback_buffers[graph.curr_frame]
 									.get(device, per_desc(name), vk::ImageLayout::UNDEFINED)
-									.expect("failed to allocated graph buffer")
-									.0
+									.expect("failed to allocated graph buffer");
+								(x.0, x.1)
 							},
 						};
 					}
@@ -390,9 +388,9 @@ impl<'graph> ResourceAliaser<'graph> {
 							samples: data.desc.samples,
 							usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
 						};
-						data.handle = if let Some(name) = data.desc.persist {
+						(data.handle, data.uninit) = if let Some(name) = data.desc.persist {
 							let next_layout = data.usages.last_key_value().unwrap().1.as_prev().image_layout;
-							graph
+							let x = graph
 								.caches
 								.persistent_images
 								.get(
@@ -409,16 +407,15 @@ impl<'graph> ResourceAliaser<'graph> {
 									},
 									next_layout,
 								)
-								.expect("failed to allocate graph image")
+								.expect("failed to allocate graph image");
+							((x.0, x.2), x.1)
 						} else {
-							(
-								graph
-									.caches
-									.images
-									.get(device, desc)
-									.expect("failed to allocate graph image"),
-								vk::ImageLayout::UNDEFINED,
-							)
+							let x = graph
+								.caches
+								.images
+								.get(device, desc)
+								.expect("failed to allocate graph image");
+							((x.0, vk::ImageLayout::UNDEFINED), x.1)
 						};
 					}
 				},
@@ -541,14 +538,10 @@ impl<'graph> InProgressCrossQueueSync<'graph> {
 }
 
 impl<'graph> InProgressSync<'graph> {
-	fn finish(
-		self, set_events: Vec<EventInfo<'graph>, &'graph Arena>, wait_events: Vec<EventInfo<'graph>, &'graph Arena>,
-	) -> Sync<'graph> {
+	fn finish(self) -> Sync<'graph> {
 		Sync {
 			queue: QueueSync {
 				barriers: self.queue.finish(false, false),
-				set_events,
-				wait_events,
 			},
 			cross_queue: self.cross_queue.finish(),
 		}
@@ -566,7 +559,6 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 
 struct SyncBuilder<'temp, 'pass, 'graph> {
 	sync: Vec<InProgressSync<'graph>, &'graph Arena>,
-	events: ArenaMap<'graph, SyncPair<u32>, InProgressDependencyInfo<'graph>>,
 	passes: &'temp Vec<FrameEvent<'pass, 'graph>, &'graph Arena>,
 }
 
@@ -584,22 +576,21 @@ impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
 			})
 			.take(passes.len() + 1)
 			.collect_in(arena),
-			events: ArenaMap::with_hasher_in(Default::default(), arena),
 			passes,
 		}
 	}
 
 	/// Create a barrier between two passes.
 	///
-	/// If a global barrier is required, pass `Image::null()` and `ImageAspectFlags::empty()`. If no layout transition
-	/// is required, an image barrier will be converted to a global barrier.
-	///
-	/// This will internally use either a pipeline barrier or an event, depending on what is optimal.
+	/// If a global barrier is required, pass `Image::null()` and `ImageAspectFlags::empty()`.
+	/// If no layout transition is required, an image barrier will be converted to a global barrier.
 	fn barrier(
-		&mut self, image: vk::Image, subresource: Subresource, prev_pass: u32, prev_access: AccessInfo, next_pass: u32,
-		next_access: AccessInfo,
+		&mut self, image: vk::Image, subresource: Subresource, _prev_pass: u32, prev_access: AccessInfo,
+		next_pass: u32, next_access: AccessInfo,
 	) {
-		let dep_info = self.get_dep_info(prev_pass, next_pass);
+		// As late as possible.
+		let next = Self::before_pass(next_pass);
+		let dep_info = &mut self.sync[next as usize].queue;
 		Self::insert_info(dep_info, image, subresource, prev_access, next_access);
 	}
 
@@ -660,25 +651,6 @@ impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
 		})
 	}
 
-	fn get_dep_info(&mut self, prev_pass: u32, next_pass: u32) -> &mut InProgressDependencyInfo<'graph> {
-		let pass_in_between = self.passes[(prev_pass as usize + 1)..(next_pass as usize)]
-			.iter()
-			.any(|x| matches!(x, FrameEvent::Pass(_)));
-		let prev = Self::after_pass(prev_pass);
-		let next = Self::before_pass(next_pass);
-
-		if pass_in_between {
-			// Use an event, since there is some gap between the previous and next access.
-			let arena = *self.events.allocator();
-			self.events
-				.entry(SyncPair { from: prev, to: next })
-				.or_insert_with(|| InProgressDependencyInfo::default(arena))
-		} else {
-			// We can use a barrier here, since the resource will be used right after.
-			&mut self.sync[prev as usize].queue
-		}
-	}
-
 	#[inline]
 	fn insert_info(
 		dep_info: &mut InProgressDependencyInfo<'graph>, image: vk::Image, subresource: Subresource,
@@ -689,7 +661,10 @@ impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
 			next_access.stage_mask = vk::PipelineStageFlags2::ALL_COMMANDS;
 		}
 
-		if prev_access.image_layout == next_access.image_layout || image == vk::Image::null() {
+		if prev_access.image_layout == next_access.image_layout
+			|| next_access.image_layout == vk::ImageLayout::UNDEFINED
+			|| image == vk::Image::null()
+		{
 			// No transition required, use a global barrier instead.
 			let access = dep_info
 				.barriers
@@ -719,48 +694,9 @@ impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
 
 	fn after_pass(pass: u32) -> u32 { pass + 1 }
 
-	fn finish(
-		self, device: &Device, event_list: &mut ResourceList<crate::resource::Event>,
-	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
+	fn finish(self) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
 		let arena = *self.sync.allocator();
-		let mut events_forward: ArenaMap<'_, u32, ArenaMap<'_, _, _>> =
-			ArenaMap::with_capacity_and_hasher_in(self.events.len(), Default::default(), arena);
-		let mut events_backward: ArenaMap<'_, u32, Vec<_>> =
-			ArenaMap::with_capacity_and_hasher_in(self.events.len(), Default::default(), arena);
-		for (pair, info) in self.events {
-			events_forward
-				.entry(pair.from)
-				.or_insert_with(|| ArenaMap::with_hasher_in(Default::default(), arena))
-				.insert(pair.to, info);
-			events_backward.entry(pair.to).or_default().push(pair.from);
-		}
-
-		// Go through events, getting rid of any that have the same sync applied on the main queue
-		let mut all_sync: Vec<Sync, _> = Vec::with_capacity_in(self.sync.len(), arena);
-		let mut events_in_flight =
-			ArenaMap::with_capacity_and_hasher_in(events_forward.len(), Default::default(), arena);
-		for (pass, sync) in self.sync.into_iter().enumerate() {
-			let pass = pass as u32;
-			let mut wait_events = Vec::new_in(arena);
-			events_in_flight.extend(events_forward.remove(&pass).map(|i| (pass, i)));
-			for from in events_backward.remove(&pass).into_iter().flatten() {
-				let events = events_in_flight.get_mut(&from).unwrap();
-				if let Some(info) = events.remove(&pass) {
-					let info = info.finish(false, false);
-					let event = event_list.get_or_create(device, ())?;
-					all_sync[from as usize].queue.set_events.push(EventInfo {
-						event,
-						info: info.clone(),
-					});
-					wait_events.push(EventInfo { event, info });
-				}
-			}
-			events_in_flight.retain(|_, ev| {
-				ev.retain(|_, info| *info != sync.queue);
-				!ev.is_empty()
-			});
-			all_sync.push(sync.finish(Vec::new_in(arena), wait_events));
-		}
+		let mut all_sync: Vec<_, _> = self.sync.into_iter().map(|x| x.finish()).collect_in(arena);
 
 		if let Some(sync) = all_sync.last_mut() {
 			sync.queue.barriers.barriers.push(
@@ -904,9 +840,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 		}
 	}
 
-	fn sync(
-		&mut self, device: &Device, event_list: &mut ResourceList<crate::resource::Event>,
-	) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
+	fn sync(&mut self) -> Result<Vec<Sync<'graph>, &'graph Arena>> {
 		let mut sync = SyncBuilder::new(self.resource_map.arena(), self.passes);
 
 		for buffer in self.resource_map.buffers() {
@@ -917,7 +851,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 			self.do_sync_for(&mut sync, image)
 		}
 
-		sync.finish(device, event_list)
+		sync.finish()
 	}
 }
 
@@ -946,7 +880,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			let span = span!(Level::TRACE, "synchronize");
 			let _e = span.enter();
 
-			Synchronizer::new(&resource_map, &self.passes).sync(device, &mut self.graph.caches.events)
+			Synchronizer::new(&resource_map, &self.passes).sync()
 		}?;
 
 		Ok(CompiledFrame {

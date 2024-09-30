@@ -192,6 +192,7 @@ pub trait VirtualResource {
 pub struct GpuData<'graph, D, H, U> {
 	pub desc: D,
 	pub handle: H,
+	pub uninit: bool,
 	pub usages: BTreeMap<u32, U, &'graph Arena>,
 	pub swapchain: Option<(vk::Semaphore, vk::Semaphore)>,
 }
@@ -262,6 +263,7 @@ impl VirtualResourceDesc for BufferDesc {
 		VirtualResourceType::Buffer(BufferData {
 			desc: self,
 			handle: BufferHandle::default(),
+			uninit: true,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
 		})
@@ -309,6 +311,7 @@ impl VirtualResource for ImageView {
 					},
 				)
 				.expect("Failed to create image view")
+				.0
 		} else {
 			ImageView {
 				image: image.handle.0,
@@ -344,6 +347,7 @@ impl VirtualResourceDesc for ImageDesc {
 		VirtualResourceType::Image(ImageData {
 			desc: self,
 			handle: Default::default(),
+			uninit: true,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
 		})
@@ -364,6 +368,7 @@ impl VirtualResourceDesc for ExternalBuffer {
 				persist: None,
 			},
 			handle: self.handle,
+			uninit: false,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
 		})
@@ -386,6 +391,7 @@ impl VirtualResourceDesc for ExternalImage {
 		VirtualResourceType::Image(ImageData {
 			desc: self.desc,
 			handle: (self.handle, self.layout),
+			uninit: false,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
 		})
@@ -413,6 +419,7 @@ impl VirtualResourceDesc for SwapchainImage {
 				persist: None,
 			},
 			handle: (self.handle, vk::ImageLayout::UNDEFINED),
+			uninit: false,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: Some((self.available, self.rendered)),
 		})
@@ -429,6 +436,7 @@ impl VirtualResourceDesc for Res<BufferHandle> {
 		VirtualResourceType::Buffer(BufferData {
 			desc: unsafe { resources[self.id - base_id].ty.buffer_mut().desc.clone() },
 			handle: BufferHandle::default(),
+			uninit: true,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
 		})
@@ -445,6 +453,7 @@ impl VirtualResourceDesc for Res<ImageView> {
 		VirtualResourceType::Image(ImageData {
 			desc: unsafe { resources[self.id - base_id].ty.image_mut().desc.clone() },
 			handle: Default::default(),
+			uninit: true,
 			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
 			swapchain: None,
 		})
@@ -452,7 +461,7 @@ impl VirtualResourceDesc for Res<ImageView> {
 }
 
 pub fn compatible_formats(a: vk::Format, b: vk::Format) -> bool {
-	get_format_block(a) == get_format_block(b) || a == vk::Format::UNDEFINED || b == vk::Format::UNDEFINED // a == b
+	get_format_block(a) == get_format_block(b) || a == vk::Format::UNDEFINED || b == vk::Format::UNDEFINED
 }
 
 fn get_format_block(f: vk::Format) -> i32 {

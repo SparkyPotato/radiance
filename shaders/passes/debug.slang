@@ -103,7 +103,7 @@ f32x3 sobel(f32x2 uv, f32x3 col, u32 instance) {
 	}
 	let ma = max(abs(grad_x), abs(grad_y)) * 2.f;
 	if (is_instance_highlighted(instance)) {
-		return lerp(col, f32x3(1.f, 0.6f, 0.f), saturate(ma * 10.f));
+		return lerp(col, f32x3(1.f, 0.6f, 0.f), saturate(ma * 4.f));
 	} else {
 		return saturate(col * (1.f - ma));
 	}

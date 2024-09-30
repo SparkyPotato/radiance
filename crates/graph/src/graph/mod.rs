@@ -34,12 +34,12 @@ use crate::{
 	arena::{Arena, IteratorAlloc},
 	device::Device,
 	graph::{
-		cache::{PersistentCache, ResourceCache, ResourceList, UniqueCache},
+		cache::{PersistentCache, ResourceCache, UniqueCache},
 		compile::{CompiledFrame, DataState, ResourceMap},
 		frame_data::{FrameData, Submitter},
 		virtual_resource::{ResourceLifetime, VirtualResourceData},
 	},
-	resource::{Buffer, Event, Image, ImageView},
+	resource::{Buffer, Image, ImageView},
 	Result,
 };
 
@@ -67,7 +67,6 @@ pub struct Caches {
 	pub images: ResourceCache<Image>,
 	pub persistent_images: PersistentCache<Image>,
 	pub image_views: UniqueCache<ImageView>,
-	pub events: ResourceList<Event>,
 }
 
 impl RenderGraph {
@@ -82,7 +81,6 @@ impl RenderGraph {
 			images: ResourceCache::new(),
 			persistent_images: PersistentCache::new(),
 			image_views: UniqueCache::new(),
-			events: ResourceList::new(),
 		};
 
 		Ok(Self {
@@ -121,7 +119,6 @@ impl RenderGraph {
 			self.caches.image_views.destroy(device);
 			self.caches.images.destroy(device);
 			self.caches.persistent_images.destroy(device);
-			self.caches.events.destroy(device);
 		}
 	}
 
@@ -186,7 +183,6 @@ impl Frame<'_, '_> {
 			self.graph.caches.image_views.reset(device);
 			self.graph.caches.images.reset(device);
 			self.graph.caches.persistent_images.reset(device);
-			self.graph.caches.events.reset(device);
 		}
 
 		let CompiledFrame {
@@ -244,15 +240,7 @@ impl Frame<'_, '_> {
 			}
 		}
 
-		submitter.finish(device, |buf| {
-			for event in graph.caches.events.get_all_used() {
-				unsafe {
-					device
-						.device()
-						.cmd_reset_event2(buf, event, vk::PipelineStageFlags2::ALL_COMMANDS);
-				}
-			}
-		})?;
+		submitter.finish(device)?;
 
 		let len = resource_map.cleanup();
 		graph.next_frame(len);
@@ -419,7 +407,13 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		}
 	}
 
-	pub fn get_caches(&mut self) -> &mut Caches { self.caches }
+	pub fn is_uninit<T: VirtualResource>(&mut self, id: Res<T>) -> bool {
+		let id = id.id.wrapping_sub(self.base_id);
+		let res = self.resource_map.get(id as u32);
+		res.uninit()
+	}
+
+	pub fn caches(&mut self) -> &mut Caches { self.caches }
 }
 
 /// An ID to write CPU-side data.

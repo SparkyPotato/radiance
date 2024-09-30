@@ -11,7 +11,6 @@ use radiance_passes::mesh::{GpuVisBufferReader, VisBufferReader};
 use vek::Vec2;
 
 pub struct Picker {
-	frames: u64,
 	selection: Option<u32>,
 	pass: ComputePass<PushConstants>,
 }
@@ -29,7 +28,6 @@ struct PushConstants {
 impl Picker {
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
-			frames: 0,
 			selection: None,
 			pass: ComputePass::new(
 				device,
@@ -63,9 +61,10 @@ impl Picker {
 
 		let pix = click.map(|x| Vec2::new(x.x as _, x.y as _)).unwrap_or_default();
 		pass.build(move |mut pass| unsafe {
+			let uninit = pass.is_uninit(ret);
 			let ret = pass.get(ret);
 			let prev: u32 = *from_bytes(&ret.data.as_ref()[..4]);
-			if prev != u32::MAX && self.frames > 2 {
+			if prev != u32::MAX && !uninit {
 				self.selection = (prev != u32::MAX - 1).then_some(prev);
 			}
 			self.pass.dispatch(
@@ -81,7 +80,6 @@ impl Picker {
 				1,
 				1,
 			);
-			self.frames += 1;
 		});
 	}
 
