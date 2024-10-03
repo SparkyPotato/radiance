@@ -395,6 +395,8 @@ fn compute_boundary(indices: &[u32], out: &mut [bool]) {
 			}
 		}
 	}
+
+	out.fill(false);
 	for (v0, v1) in edge_edge_set {
 		out[v0 as usize] = true;
 		out[v1 as usize] = true;
