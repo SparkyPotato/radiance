@@ -279,17 +279,30 @@ fn simplify_group(
 		*g = *g && !m;
 	}
 
-	let adapter = VertexDataAdapter::new(bytemuck::cast_slice(vertices), std::mem::size_of::<Vertex>(), 0).unwrap();
 	let mut error = 0.0;
-	let simplified = meshopt::simplify_with_locks(
-		&indices,
-		&adapter,
-		group_boundary,
-		indices.len() / 2,
-		f32::MAX,
-		meshopt::SimplifyOptions::Sparse | meshopt::SimplifyOptions::ErrorAbsolute,
-		Some(&mut error),
-	);
+	let simplified = unsafe {
+		let data: &[f32] = bytemuck::cast_slice(vertices);
+		let mut res = Vec::with_capacity(indices.len());
+		let count = meshopt::ffi::meshopt_simplifyWithAttributes(
+			res.as_mut_ptr() as *mut _,
+			indices.as_ptr() as *const _,
+			indices.len(),
+			data.as_ptr(),
+			vertices.len(),
+			std::mem::size_of::<Vertex>() as _,
+			data.as_ptr().add(3),
+			std::mem::size_of::<Vertex>() as _,
+			[0.065, 0.065, 0.065, 0.005, 0.005].as_ptr(),
+			5,
+			group_boundary.as_ptr() as *const _,
+			indices.len() / 2,
+			f32::MAX,
+			(meshopt::SimplifyOptions::Sparse | meshopt::SimplifyOptions::ErrorAbsolute).bits(),
+			&mut error,
+		);
+		res.set_len(count);
+		res
+	};
 	error *= 0.5;
 
 	for m in ms {

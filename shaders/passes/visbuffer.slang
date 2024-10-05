@@ -211,6 +211,10 @@ public struct DecodedTri {
 		return this.interp(this.v0.normal, this.v1.normal, this.v2.normal);
 	}
 
+	public f32x2 uv() {
+		return this.interp(this.v0.uv, this.v1.uv, this.v2.uv);
+	}
+
 	public T interp<T : IFloat>(T a, T b, T c) {
 		return a * T(this.lambda.x) + b * T(this.lambda.y) + c * T(this.lambda.z);
 	}

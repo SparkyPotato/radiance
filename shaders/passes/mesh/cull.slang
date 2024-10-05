@@ -286,7 +286,7 @@ public struct Cull {
 		let dist = this.error_distance(lod_bounds);
 		let scale = this.error_scale(false);
 		let hw_scale = this.error_scale(true);
-		return bool2(dist > scale * error, dist < hw_scale * edge / 64.f);
+		return bool2(dist > scale * error, true /*dist < hw_scale * edge / 64.f*/);
 	}
 
 	public bool unoccluded(Aabb aabb) {

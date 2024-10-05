@@ -12,6 +12,7 @@ enum DebugVis : u32 {
 	Overdraw,
 	HwSw,
 	Normals,
+	Uvs,
 	Error,
 }
 
@@ -146,6 +147,10 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		}
 		case DebugVis.Normals: {
 			col = abs(tri.normal());
+			break;
+		}
+		case DebugVis.Uvs: {
+			col = f32x3(tri.uv(), 0.f);
 			break;
 		}
 		case DebugVis.Error: {
