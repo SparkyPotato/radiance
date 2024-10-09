@@ -271,19 +271,19 @@ impl RuntimeShared {
 		}
 
 		let (module, entry) = info.shader.rsplit_once('.').unwrap();
-		let spirv = b.load_module(module, entry, info.spec)?;
+		let mut spirv = b.load_module(module, entry, info.spec)?;
 		let byte_slice = unsafe { std::slice::from_raw_parts(spirv.as_ptr() as _, spirv.len() * 4) };
 
 		let mut dec = Dec(vk::ShaderStageFlags::empty());
 		let _ = Parser::new(byte_slice, &mut dec).parse();
-		// let mut iter = spirv.iter_mut();
-		// while let Some(w) = iter.next() {
-		// 	if *w == 14 | (3 << 16) {
-		// 		break;
-		// 	}
-		// }
-		// iter.next().unwrap();
-		// *iter.next().unwrap() = 3;
+		let mut iter = spirv.iter_mut();
+		while let Some(w) = iter.next() {
+			if *w == 14 | (3 << 16) {
+				break;
+			}
+		}
+		iter.next().unwrap();
+		*iter.next().unwrap() = 3;
 
 		Ok((spirv, dec.0))
 	}
@@ -447,7 +447,7 @@ pub enum HotreloadStatus {
 }
 
 pub struct ShaderRuntime {
-	// watcher: Debouncer<RecommendedWatcher, FileIdMap>,
+	_watcher: Debouncer<RecommendedWatcher, FileIdMap>,
 	shared: Arc<Mutex<RuntimeShared>>,
 }
 
@@ -493,6 +493,9 @@ impl ShaderRuntime {
 							ref pipelines,
 							..
 						} = *s;
+						if let Err(e) = builder.reload() {
+							println!("failed to recompile pipeline: {e:?}");
+						}
 						for (desc, out) in pipelines.iter() {
 							let new = match desc {
 								PipelineDesc::Graphics(desc) => RuntimeShared::create_graphics_pipeline_inner(
@@ -527,10 +530,10 @@ impl ShaderRuntime {
 			}
 		})
 		.unwrap();
-		// let _ = watcher.watcher().watch(&source, RecursiveMode::Recursive);
+		let _ = watcher.watcher().watch(&source, RecursiveMode::Recursive);
 
 		Self {
-			// watcher,
+			_watcher: watcher,
 			shared,
 		}
 	}

@@ -22,7 +22,7 @@ impl Debug {
 			enabled: false,
 			debug_vis: DebugVis::Meshlets,
 			bottom: 0,
-			top: 5,
+			top: 15,
 			alloc: AllocatorVisualizer::new(),
 			alloc_breakdown: false,
 			alloc_block: false,

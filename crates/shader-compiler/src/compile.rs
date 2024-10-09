@@ -1,6 +1,5 @@
 use std::{error::Error, path::PathBuf};
 
-use hassle_rs::{Dxc, DxcCompiler, DxcLibrary};
 use slang::{
 	Blob,
 	CompileTarget,
@@ -20,6 +19,7 @@ use slang::{
 
 use crate::c_str;
 
+#[derive(Clone)]
 struct CacheFs {
 	source: PathBuf,
 	cache: PathBuf,
@@ -41,23 +41,15 @@ impl FileSystem for CacheFs {
 
 pub struct ShaderBuilder {
 	_slang: GlobalSession,
-	_dxc: Dxc,
 	fs: CacheFs,
 	sesh: Session,
-	compiler: DxcCompiler,
-	library: DxcLibrary,
 }
 
 unsafe impl Send for ShaderBuilder {}
 
 impl ShaderBuilder {
-	pub fn new(source: PathBuf, cache: PathBuf) -> Result<Self, Box<dyn Error>> {
-		let fs = CacheFs {
-			source: source.clone(),
-			cache: cache.clone(),
-		};
-		let slang = GlobalSession::new()?;
-		let sesh = slang.create_session(
+	fn make_session(slang: &GlobalSession, fs: CacheFs) -> Result<Session, slang::Error> {
+		slang.create_session(
 			SessionDescBuilder::default()
 				.targets(&[TargetDescBuilder::default()
 					.format(CompileTarget::SPIRV)
@@ -66,7 +58,7 @@ impl ShaderBuilder {
 					.floating_point_mode(FloatingPointMode::FAST)
 					.line_directive_mode(LineDirectiveMode::STANDARD)
 					.force_glsl_scalar_buffer_layout(true)])
-				.file_system(CacheFs { source, cache })
+				.file_system(fs)
 				.search_paths(&[b".\0".as_ptr() as _])
 				.default_matrix_layout_mode(MatrixLayoutMode::COLUMN_MAJOR)
 				.compiler_option_entries(&mut [
@@ -75,19 +67,18 @@ impl ShaderBuilder {
 					CompilerOptionEntry::new(CompilerOptionName::USE_UP_TO_DATE_BINARY_MODULE, 1),
 					CompilerOptionEntry::new(CompilerOptionName::GLSL_FORCE_SCALAR_LAYOUT, 1),
 				]),
-		)?;
+		)
+	}
 
-		let dxc = Dxc::new(None)?;
-		let compiler = dxc.create_compiler()?;
-		let library = dxc.create_library()?;
+	pub fn new(source: PathBuf, cache: PathBuf) -> Result<Self, Box<dyn Error>> {
+		let fs = CacheFs { source, cache };
+		let slang = GlobalSession::new()?;
+		let sesh = Self::make_session(&slang, fs.clone())?;
 
 		Ok(Self {
 			_slang: slang,
-			_dxc: dxc,
 			fs,
 			sesh,
-			compiler,
-			library,
 		})
 	}
 
@@ -100,66 +91,12 @@ impl ShaderBuilder {
 		Ok(module)
 	}
 
-	fn load_hlsl(&mut self, name: &str, entry: &str, spec: &[&str]) -> Result<Vec<u32>, String> {
-		let defines: Vec<_> = spec
-			.iter()
-			.map(|&x| {
-				if let Some((n, v)) = x.split_once('=') {
-					(n, Some(v))
-				} else {
-					(x, None)
-				}
-			})
-			.collect();
-		let profile = match entry {
-			"c" => "cs_6_8",
-			_ => panic!("unknown type `{}`", entry),
-		};
-		let args: Vec<_> = [
-			"-spirv",
-			"-fspv-target-env=vulkan1.3",
-			"-HV 2021",
-			"-enable-16bit-types",
-			"-ffinite-math-only",
-			"-fvk-use-scalar-layout",
-			"-fspv-reduce-load-size",
-			"-Zi",
-		]
-		.into_iter()
-		.map(|x| x.to_string())
-		.chain(Some(format!("-T {}", profile)))
-		.chain(Some(format!("-I {}", self.fs.source.display())))
-		.collect();
-		let args: Vec<_> = args.iter().map(|x| x.as_str()).collect();
-
-		let shader = std::fs::read_to_string(name).map_err(|x| x.to_string())?;
-		let blob = self
-			.library
-			.create_blob_with_encoding_from_str(&shader)
-			.map_err(|x| x.to_string())?;
-		match self
-			.compiler
-			.compile(&blob, name, "main", profile, &args, None, &defines)
-		{
-			Ok(result) => {
-				let result_blob = result.get_result().unwrap();
-				Ok(ash::util::read_spv(&mut std::io::Cursor::new(result_blob.as_slice()))
-					.expect("failed to read spirv"))
-			},
-			Err((result, _)) => {
-				let error_blob = result.get_error_buffer().unwrap();
-				let e = self.library.get_blob_as_string(&error_blob.into()).unwrap();
-				return Err(e);
-			},
-		}
+	pub fn reload(&mut self) -> Result<(), String> {
+		self.sesh = Self::make_session(&self._slang, self.fs.clone()).map_err(fmt_error)?;
+		Ok(())
 	}
 
 	pub fn load_module(&mut self, name: &str, entry: &str, spec: &[&str]) -> Result<Vec<u32>, String> {
-		let hlsl = self.fs.source.join(name.replace('.', "/")).with_extension("hlsl");
-		if hlsl.exists() {
-			return self.load_hlsl(hlsl.as_os_str().to_str().unwrap(), entry, spec);
-		}
-
 		let mut module = self.load_raw(name)?;
 		let mut sentry = module
 			.find_entry_point_by_name(entry)
