@@ -77,9 +77,9 @@ pub fn import(name: &str, mesh: FullMesh) -> Mesh {
 			lod,
 			meshlets = simplify.len(),
 			groups = field::Empty,
-			min_error = field::Empty,
-			avg_error = field::Empty,
-			max_error = field::Empty,
+			min_size = field::Empty,
+			avg_size = field::Empty,
+			max_size = field::Empty,
 		);
 		let _e = s.enter();
 
@@ -105,25 +105,37 @@ pub fn import(name: &str, mesh: FullMesh) -> Mesh {
 					tls.borrow_mut().as_mut_slice(),
 				)?;
 				let n_meshlets = generate_meshlets(&mesh.vertices, &indices, Some((group.lod_bounds, parent_error)));
-				Some((i, parent_error, n_meshlets))
+				Some((
+					i,
+					parent_error,
+					n_meshlets,
+					group
+						.meshlets
+						.clone()
+						.map(|x| {
+							let m = &meshlets.meshlets[x as usize];
+							(m.vertices().len() * std::mem::size_of::<Vertex>() + m.tris().len()) as f32
+						})
+						.sum(),
+				))
 			})
 			.collect();
-		let mut min_error = f32::MAX;
-		let mut avg_error = 0.0f32;
-		let mut max_error = 0.0f32;
+		let mut min_size = f32::MAX;
+		let mut avg_size = 0.0f32;
+		let mut max_size = 0.0f32;
 		let count = par.len();
-		for (group, parent_error, n_meshlets) in par {
+		for (group, parent_error, n_meshlets, size) in par {
 			meshlets.add(n_meshlets);
 			meshlets.groups[group + first].parent_error = parent_error;
 
-			min_error = min_error.min(parent_error);
-			avg_error += parent_error;
-			max_error = max_error.max(parent_error);
+			min_size = min_size.min(size);
+			avg_size += size;
+			max_size = max_size.max(size);
 		}
 		if count > 0 {
-			s.record("min_error", min_error);
-			s.record("avg_error", avg_error / count as f32);
-			s.record("max_error", max_error);
+			s.record("min_size", min_size);
+			s.record("avg_size", avg_size / count as f32);
+			s.record("max_size", max_size);
 		}
 
 		bvh.add_lod(first as _, &meshlets.groups[first..]);

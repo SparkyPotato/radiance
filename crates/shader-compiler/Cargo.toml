@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 ash = { workspace = true  }
-hassle-rs = { workspace = true }
 notify-debouncer-full = { workspace = true }
 rspirv = { workspace = true }
 slang = { workspace = true, features = ["static"] }

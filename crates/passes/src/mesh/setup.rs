@@ -221,7 +221,7 @@ impl Setup {
 			},
 			BufferUsage { usages: &[] },
 		);
-		let size = info.size / 2;
+		let size = (info.size / 2 + 63) & !63;
 		let hzb = pass.resource(
 			ImageDesc {
 				format: vk::Format::R32_SFLOAT,

@@ -29,7 +29,6 @@ egui-winit = "0.27.2"
 gltf = { version = "1.4.0" }
 gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", features = ["vulkan", "visualizer"] }
 hashbrown = { version = "0.14.3", features = ["nightly"] }
-hassle-rs = { version = "0.11.0" }
 metis = "0.2.1"
 meshopt = { git = "https://github.com/SparkyPotato/meshopt-rs" }
 notify-debouncer-full = "0.3.1"

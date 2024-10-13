@@ -106,10 +106,6 @@ public void workgroup_sync_barrier() {
 	sync_barrier(Scope.Workgroup, Scope.Workgroup, Loc.Workgroup, Sem.AcqRel);
 }
 
-public void all_sync_barrier() {
-	sync_barrier(Scope.Workgroup, DEFAULT_SCOPE, Loc.Buffer | Loc.Image | Loc.Workgroup, Sem.AcqRel);
-}
-
-public void barrier_acqrel(constexpr Loc loc) {
-	barrier(DEFAULT_SCOPE, loc, Sem.AcqRel);
+public void image_sync_barrier() {
+	sync_barrier(Scope.Workgroup, DEFAULT_SCOPE, Loc.Image | Loc.Workgroup, Sem.AcqRel);
 }

@@ -292,8 +292,12 @@ public struct Cull {
 	public bool unoccluded(Aabb aabb) {
 		if (let saabb = project_aabb(this.mvp, this.near, aabb)) {
 			let size = (saabb.max - saabb.min).xy * this.screen * 0.5f;
+			let hzb_size = f32x2((u32x2(this.screen * 0.5f) + 63u) & ~63u);
+			let rescale = (this.screen * 0.5f) / hzb_size;
+
 			let level = ceil(log2(max(size.x, size.y)));
-			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, (saabb.min + saabb.max).xy * 0.5f, level);
+			let center = (saabb.min + saabb.max).xy * 0.5f * rescale;
+			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, center, level);
 			return saabb.max.z >= curr_depth;
 		}
 		return true;

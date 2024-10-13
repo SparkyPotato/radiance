@@ -81,29 +81,29 @@ public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coh
 	}
 
 	public T load(vector<u32, Shape.dimensions> pixel) {
-		// if (C.is_coherent()) {
-		//	let img = this.get();
-		//	u32 sc = DEFAULT_SCOPE;
-		//	return spirv_asm {
-		//		OpCapability VulkanMemoryModel;
-		//		result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
-		//	};
-		// } else {
-		return this.get().Load(pixel);
-		// }
+		if (C.is_coherent()) {
+			let img = this.get();
+			u32 sc = DEFAULT_SCOPE;
+			return spirv_asm {
+				OpCapability VulkanMemoryModel;
+				result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
+			};
+		} else {
+			return this.get().Load(pixel);
+		}
 	}
 
 	public void store(vector<u32, Shape.dimensions> pixel, T value) {
-		// if (C.is_coherent()) {
-		// 	let img = this.get();
-		//	u32 sc = DEFAULT_SCOPE;
-		//	spirv_asm {
-		//		OpCapability VulkanMemoryModel;
-		//		OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
-		//	};
-		// } else {
-		this.get()[pixel] = value;
-		// }
+		if (C.is_coherent()) {
+			let img = this.get();
+			u32 sc = DEFAULT_SCOPE;
+			spirv_asm {
+				OpCapability VulkanMemoryModel;
+				OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
+			};
+		} else {
+			this.get()[pixel] = value;
+		}
 	}
 
 	public T atomic_add(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
