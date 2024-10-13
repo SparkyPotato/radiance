@@ -33,9 +33,9 @@ u32x2 mip_size(u32 mip) {
 
 void store(u32x2 p, u32 mip, f32 v) {
 	let dim = mip_size(mip);
-	if (any(p >= dim)) {
-		return;
-	}
+//	if (any(p >= dim)) {
+//		return;
+//	}
 	Constants.out[mip - 1].store(p, v);
 }
 
