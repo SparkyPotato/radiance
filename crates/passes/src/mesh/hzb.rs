@@ -131,9 +131,8 @@ impl HzbGen {
 			},
 		);
 
-		let desc = pass.desc(visbuffer);
-		let size = Vec2::new(desc.size.width, desc.size.height);
 		let desc = pass.desc(out);
+		let size = Vec2::new(desc.size.width, desc.size.height) * 2;
 		pass.build(move |ctx| {
 			self.execute(
 				ctx,

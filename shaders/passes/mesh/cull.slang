@@ -291,14 +291,22 @@ public struct Cull {
 
 	public bool unoccluded(Aabb aabb) {
 		if (let saabb = project_aabb(this.mvp, this.near, aabb)) {
-			let size = (saabb.max - saabb.min).xy * this.screen * 0.5f;
-			let hzb_size = (u32x2(this.screen * 0.5f) + 63u) & ~63u;
-			let level = u32(ceil(log2(max(size.x, size.y))));
-			let center_pix = u32x2((saabb.min + saabb.max).xy * 0.25f * this.screen);
+			let hzb_size = 1 << firstbithigh(u32x2(this.screen) - 1);
+			let scale = this.screen * 0.5f;
 
-			let center = f32x2(center_pix >> level) / f32x2(hzb_size >> level);
-			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, center, level);
-			return saabb.max.z >= curr_depth;
+			let min_texel = u32x2(max(saabb.min.xy * scale, 0.f));
+			let max_texel = u32x2(min(saabb.max.xy * scale, hzb_size - 1.f));
+			let size = max_texel - min_texel + 1;
+			let max_size = max(size.x, size.y);
+
+			var mip = firstbithigh(max_size - 1) - 1;
+			let smin = min_texel >> mip;
+			let smax = max_texel >> mip;
+			if (any(smax - smin > 1)) mip += 1;
+			
+			let uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5f) / hzb_size;
+			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, uv, mip);
+			return saabb.max.z > curr_depth;
 		}
 		return true;
 	}

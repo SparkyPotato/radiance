@@ -8,8 +8,7 @@ use radiance_passes::debug::mesh::DebugVis;
 pub struct Debug {
 	pub enabled: bool,
 	debug_vis: DebugVis,
-	bottom: u32,
-	top: u32,
+	scale: f32,
 	alloc: AllocatorVisualizer,
 	alloc_breakdown: bool,
 	alloc_block: bool,
@@ -21,8 +20,7 @@ impl Debug {
 		Self {
 			enabled: false,
 			debug_vis: DebugVis::Meshlets,
-			bottom: 0,
-			top: 15,
+			scale: 0.15,
 			alloc: AllocatorVisualizer::new(),
 			alloc_breakdown: false,
 			alloc_block: false,
@@ -52,7 +50,7 @@ impl Debug {
 			self.debug_vis = match sel {
 				0 => DebugVis::Triangles,
 				1 => DebugVis::Meshlets,
-				2 => DebugVis::Overdraw(self.bottom, self.top),
+				2 => DebugVis::Overdraw(self.scale),
 				3 => DebugVis::HwSw,
 				4 => DebugVis::Normals,
 				5 => DebugVis::Uvs,
@@ -61,13 +59,11 @@ impl Debug {
 			};
 
 			match &mut self.debug_vis {
-				DebugVis::Overdraw(b, t) => {
+				DebugVis::Overdraw(s) => {
 					ui.horizontal(|ui| {
-						ui.add(DragValue::new(&mut self.bottom).speed(0.2));
-						ui.add(DragValue::new(&mut self.top).speed(0.2));
+						ui.add(DragValue::new(&mut self.scale).speed(0.01).clamp_range(0.0..=1.0));
 					});
-					*b = self.bottom;
-					*t = self.top;
+					*s = self.scale;
 				},
 				_ => {},
 			}

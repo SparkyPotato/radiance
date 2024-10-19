@@ -27,7 +27,7 @@ use crate::mesh::{CameraData, GpuVisBufferReaderDebug, RenderOutput};
 pub enum DebugVis {
 	Triangles,
 	Meshlets,
-	Overdraw(u32, u32),
+	Overdraw(f32),
 	HwSw,
 	Normals,
 	Uvs,
@@ -41,7 +41,7 @@ impl DebugVis {
 		match self {
 			DebugVis::Triangles => 0,
 			DebugVis::Meshlets => 1,
-			DebugVis::Overdraw(..) => 2,
+			DebugVis::Overdraw(_) => 2,
 			DebugVis::HwSw => 3,
 			DebugVis::Normals => 4,
 			DebugVis::Uvs => 5,
@@ -64,8 +64,8 @@ struct PushConstants {
 	highlighted: GpuPtr<u32>,
 	highlight_count: u32,
 	ty: u32,
-	bottom: u32,
-	top: u32,
+	overdraw_scale: f32,
+	pad: u32,
 }
 
 impl DebugMesh {
@@ -208,9 +208,9 @@ impl DebugMesh {
 				&[pass.device.descriptors().set()],
 				&[],
 			);
-			let (bottom, top) = match vis {
-				DebugVis::Overdraw(bottom, top) => (bottom, top),
-				_ => (0, 0),
+			let overdraw_scale = match vis {
+				DebugVis::Overdraw(s) => s,
+				_ => 0.0,
 			};
 			dev.cmd_push_constants(
 				buf,
@@ -222,10 +222,10 @@ impl DebugMesh {
 					camera: pass.get(output.camera).ptr(),
 					read: output.reader.get_debug(&mut pass),
 					highlighted: highlight.map(|x| x.ptr()).unwrap_or(GpuPtr::null()),
-					ty: vis.to_u32(),
-					bottom,
-					top,
 					highlight_count: count,
+					ty: vis.to_u32(),
+					overdraw_scale,
+					pad: 0,
 				}),
 			);
 

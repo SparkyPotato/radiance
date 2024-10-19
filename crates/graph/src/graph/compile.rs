@@ -557,13 +557,12 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 	}
 }
 
-struct SyncBuilder<'temp, 'pass, 'graph> {
+struct SyncBuilder<'graph> {
 	sync: Vec<InProgressSync<'graph>, &'graph Arena>,
-	passes: &'temp Vec<FrameEvent<'pass, 'graph>, &'graph Arena>,
 }
 
-impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
-	fn new(arena: &'graph Arena, passes: &'temp Vec<FrameEvent<'pass, 'graph>, &'graph Arena>) -> Self {
+impl<'graph> SyncBuilder<'graph> {
+	fn new(arena: &'graph Arena, passes: &Vec<FrameEvent<'_, 'graph>, &'graph Arena>) -> Self {
 		Self {
 			sync: std::iter::repeat(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
@@ -576,7 +575,6 @@ impl<'temp, 'pass, 'graph> SyncBuilder<'temp, 'pass, 'graph> {
 			})
 			.take(passes.len() + 1)
 			.collect_in(arena),
-			passes,
 		}
 	}
 

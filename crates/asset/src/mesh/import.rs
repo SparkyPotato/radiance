@@ -321,7 +321,7 @@ fn simplify_group(
 		error = error.max(m.error);
 	}
 
-	if (simplified.len() as f32 / indices.len() as f32) < 0.65 {
+	if (simplified.len() as f32 / indices.len() as f32) < 0.55 {
 		Some((simplified, error))
 	} else {
 		None

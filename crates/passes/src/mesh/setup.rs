@@ -185,6 +185,8 @@ pub struct Setup {
 	inner: Option<Persistent>,
 }
 
+fn prev_pot(x: u32) -> u32 { 1 << x.ilog2() }
+
 impl Setup {
 	pub fn new() -> Self { Self { inner: None } }
 
@@ -221,7 +223,7 @@ impl Setup {
 			},
 			BufferUsage { usages: &[] },
 		);
-		let size = (info.size / 2 + 63) & !63;
+		let size = info.size.map(prev_pot);
 		let hzb = pass.resource(
 			ImageDesc {
 				format: vk::Format::R32_SFLOAT,

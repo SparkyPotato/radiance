@@ -23,8 +23,7 @@ struct PushConstants {
 	u32* highlighted;
 	u32 highlight_count;
 	u32 vis;
-	u32 bottom;
-	u32 top;
+	f32 overdraw_scale;
 };
 
 [vk::push_constant]
@@ -58,16 +57,18 @@ bool is_instance_highlighted(u32 id) {
 	return false;
 }
 
-// https://github.com/kennethmoreland-com/kennethmoreland-com.github.io/blob/master/color-advice/inferno/inferno.ipynb
-f32x3 heatmap(f32 heat) {
-	f32x3 cols[] = {
-		f32x3(0.f, 0.f, 4.f), f32x3(40.f, 11.f, 84.f), f32x3(101.f, 21.f, 110.f), f32x3(159.f, 42.f, 99.f),
-		f32x3(212.f, 72.f, 66.f), f32x3(245.f, 125.f, 21.f), f32x3(250.f, 193.f, 39.f), f32x3(252.f, 255.f, 164.f),
-	};
-	let scaled = heat * (cols.getCount() - 1.f);
-	let bot = u32(floor(scaled));
-	let top = u32(ceil(scaled));
-	return lerp(cols[bot], cols[top], scaled - f32(bot)) / 255.f;
+// https://www.shadertoy.com/view/3lBXR3
+f32x3 inferno(f32 t) {
+	t = saturate(t);
+    let c0 = f32x3(0.0002189403691192265, 0.001651004631001012, -0.01948089843709184);
+    let c1 = f32x3(0.1065134194856116, 0.5639564367884091, 3.932712388889277);
+    let c2 = f32x3(11.60249308247187, -3.972853965665698, -15.9423941062914);
+    let c3 = f32x3(-41.70399613139459, 17.43639888205313, 44.35414519872813);
+    let c4 = f32x3(77.162935699427, -33.40235894210092, -81.80730925738993);
+    let c5 = f32x3(-71.31942824499214, 32.62606426397723, 73.20951985803202);
+    let c6 = f32x3(25.13112622477341, -12.24266895238567, -23.07032500287172);
+
+    return c0 + t * (c1 + t * (c2 + t * (c3 + t * (c4 + t * (c5 + t * c6)))));
 }
 
 f32x3 sobel(f32x2 uv, f32x3 col, u32 instance) {
@@ -131,9 +132,9 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 			break;
 		}
 		case DebugVis.Overdraw: {
-			let value = Constants.read.overdraw(input.uv);
-			let heat = clamp((f32(value) - f32(Constants.bottom)) / f32(Constants.top - Constants.bottom), 0.f, 1.f);
-			col = heatmap(heat);
+			let value = f32(Constants.read.overdraw(input.uv));
+			let heat = 1.f - exp(-value * Constants.overdraw_scale);
+			col = inferno(heat);
 			break;
 		}
 		case DebugVis.HwSw: {

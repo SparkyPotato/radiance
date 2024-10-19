@@ -27,16 +27,8 @@ f32 reduce(f32x4 v) {
 	return reduce(reduce(v.x, v.y), reduce(v.z, v.w));
 }
 
-u32x2 mip_size(u32 mip) {
-	return max(Constants.visbuffer.size() >> mip, 1);
-}
-
 void store(u32x2 p, u32 mip, f32 v) {
-	let dim = mip_size(mip);
-//	if (any(p >= dim)) {
-//		return;
-//	}
-	Constants.out[mip - 1].store(p, v);
+	Constants.out[mip].store(p, v);
 }
 
 void store4(u32x2 p, u32 mip, f32x4 v) {
@@ -47,7 +39,9 @@ void store4(u32x2 p, u32 mip, f32x4 v) {
 }
 
 f32 fetch(u32x2 p) {
-	return Constants.visbuffer.decode(p).depth;
+	let maxc = Constants.visbuffer.size() - 1;
+	let pix = min(p, maxc);
+	return Constants.visbuffer.decode(pix).depth;
 }
 
 f32x4 fetch2x2(u32x2 p) {
@@ -63,11 +57,10 @@ f32x4x4 fetch4x4(u32x2 p) {
 }
 
 f32x4 fetch2x2_6(u32x2 p) {
-	let minc = mip_size(6) - 1;
-	let x = Constants.out[5].load(min(p + u32x2(0, 0), minc));
-	let y = Constants.out[5].load(min(p + u32x2(1, 0), minc));
-	let z = Constants.out[5].load(min(p + u32x2(0, 1), minc));
-	let w = Constants.out[5].load(min(p + u32x2(1, 1), minc));
+	let x = Constants.out[5].load(p + u32x2(0, 0));
+	let y = Constants.out[5].load(p + u32x2(1, 0));
+	let z = Constants.out[5].load(p + u32x2(0, 1));
+	let w = Constants.out[5].load(p + u32x2(1, 1));
 	return f32x4(x, y, z, w);
 }
 
@@ -79,68 +72,28 @@ f32x4x4 fetch4x4_6(u32x2 p) {
 	return f32x4x4(x, y, z, w);
 }
 
-f32 reduce_mip_reg(f32x4x4 m, u32x2 p, u32 mip, bool full_res) {
-	let q0 = m[0];
-	let q1 = m[1];
-	let q2 = m[2];
-	let q3 = m[3];
-	let res = mip_size(mip);
-	var d0 = reduce(q0);
-	var d1 = reduce(q1);
-	var d2 = reduce(q2);
-	var d3 = reduce(q3);
-
-	if (!full_res) {
-		if (p.x + 1 == res.x) {
-			d0 = reduce(d0, d1);
-			d2 = reduce(d2, d3);
-		}
-
-		if (p.y + 1 == res.y) {
-			d2 = reduce(d2, d0);
-			d3 = reduce(d3, d1);
-		}
-	}
-
+f32 reduce_mip_reg(f32x4x4 m, u32x2 p, u32 mip) {
+	let d0 = reduce(m[0]);
+	let d1 = reduce(m[1]);
+	let d2 = reduce(m[2]);
+	let d3 = reduce(m[3]);
 	let ret = f32x4(d0, d1, d2, d3);
 	store4(p, mip, ret);
 	return reduce(ret);
 }
 
-f32 reduce_mip_simd(u32x2 p, u32 lid, u32 mip, f32 d, bool full_res) {
-	var res = mip_size(mip);
+f32 reduce_mip_simd(u32x2 p, u32 lid, u32 mip, f32 d) {
 	var horiz = QuadReadAcrossX(d);
 	var vert = QuadReadAcrossY(d);
 	var diag = QuadReadAcrossDiagonal(d);
-	if (!full_res) {
-		bool shoriz = p.x + 1 == res.x;
-		bool svert = p.y + 1 == res.y;
-		if (shoriz)
-			d = reduce(d, horiz);
-		if (svert)
-			d = reduce(d, vert);
-		if (shoriz && svert)
-			d = reduce(d, diag);
-	}
 	store(p, mip, d);
 
 	if (Constants.mips > mip + 1) {
 		p >>= 1;
-		res = mip_size(mip + 1);
 		d = reduce(f32x4(d, horiz, vert, diag));
 		horiz = wave_shuffle_xor(d, 0b1000);
 		vert = wave_shuffle_xor(d, 0b0100);
 		diag = wave_shuffle_xor(d, 0b1100);
-		if (!full_res) {
-			bool shoriz = p.x + 1 == res.x;
-			bool svert = p.y + 1 == res.y;
-			if (shoriz)
-				d = reduce(d, horiz);
-			if (svert)
-				d = reduce(d, vert);
-			if (shoriz && svert)
-				d = reduce(d, diag);
-		}
 		if ((lid & 3) == 0)
 			store(p, mip + 1, d);
 	}
@@ -166,11 +119,11 @@ void main(u32x2 gid: SV_GroupID) {
 	var base = gid * 64 + p * 4;
 	var m = fetch4x4(base);
 
-	f32 d = reduce_mip_reg(m, base >> 1, 1, true);
+	f32 d = reduce_mip_reg(m, base >> 1, 0);
 	if (Constants.mips <= 1)
 		return;
 
-	d = reduce_mip_simd(base >> 2, lid, 2, d, true);
+	d = reduce_mip_simd(base >> 2, lid, 1, d);
 	if (Constants.mips <= 3)
 		return;
 
@@ -179,12 +132,12 @@ void main(u32x2 gid: SV_GroupID) {
 	workgroup_sync_barrier();
 
 	if (lid < 16)
-		d = reduce_mip_simd(gid * 4 + p, lid, 4, inter[lid], true);
+		d = reduce_mip_simd(gid * 4 + p, lid, 3, inter[lid]);
 	if (Constants.mips <= 5)
 		return;
 
 	if (lid == 0)
-		store(gid.xy, 6, d);	
+		store(gid.xy, 5, d);	
 	if (Constants.mips <= 6)
 		return;
 
@@ -196,11 +149,11 @@ void main(u32x2 gid: SV_GroupID) {
 		return;
 
 	base = p * 4;
-	d = reduce_mip_reg(fetch4x4_6(base), base >> 1, 7, false);
+	d = reduce_mip_reg(fetch4x4_6(base), base >> 1, 6);
 	if (Constants.mips <= 7)
 		return;
 
-	d = reduce_mip_simd(p, lid, 8, d, false);
+	d = reduce_mip_simd(p, lid, 7, d);
 	if (Constants.mips <= 9)
 		return;
 	if ((lid & 15) == 0)
@@ -208,10 +161,10 @@ void main(u32x2 gid: SV_GroupID) {
 	workgroup_sync_barrier();
 
 	if (lid < 16)
-		d = reduce_mip_simd(p, lid, 10, inter[lid], false);
+		d = reduce_mip_simd(p, lid, 9, inter[lid]);
 	if (Constants.mips <= 11)
 		return;
 
 	if (lid == 0)
-		store(u32x2(0, 0), 12, d);
+		store(u32x2(0, 0), 11, d);
 }
