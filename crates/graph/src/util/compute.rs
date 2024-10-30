@@ -10,26 +10,14 @@ use crate::{
 };
 
 pub struct ComputePass<T> {
-	layout: vk::PipelineLayout,
 	pipeline: Pipeline,
 	_phantom: PhantomData<fn() -> T>,
 }
 
 impl<T: NoUninit> ComputePass<T> {
 	pub fn new(device: &Device, shader: ShaderInfo) -> Result<Self> {
-		let layout = unsafe {
-			device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(vk::ShaderStageFlags::COMPUTE)
-						.size(std::mem::size_of::<T>() as u32)]),
-				None,
-			)?
-		};
 		Ok(Self {
-			layout,
-			pipeline: device.compute_pipeline(layout, shader)?,
+			pipeline: device.compute_pipeline(shader)?,
 			_phantom: PhantomData,
 		})
 	}
@@ -41,12 +29,18 @@ impl<T: NoUninit> ComputePass<T> {
 		dev.cmd_bind_descriptor_sets(
 			buf,
 			vk::PipelineBindPoint::COMPUTE,
-			self.layout,
+			pass.device.layout(),
 			0,
 			&[pass.device.descriptors().set()],
 			&[],
 		);
-		dev.cmd_push_constants(buf, self.layout, vk::ShaderStageFlags::COMPUTE, 0, bytes_of(push));
+		dev.cmd_push_constants(
+			buf,
+			pass.device.layout(),
+			vk::ShaderStageFlags::COMPUTE,
+			0,
+			bytes_of(push),
+		);
 	}
 
 	pub fn dispatch(&self, push: &T, pass: &PassContext, x: u32, y: u32, z: u32) {
@@ -63,8 +57,5 @@ impl<T: NoUninit> ComputePass<T> {
 		}
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
-		self.pipeline.destroy();
-		device.device().destroy_pipeline_layout(self.layout, None);
-	}
+	pub unsafe fn destroy(self) { self.pipeline.destroy(); }
 }

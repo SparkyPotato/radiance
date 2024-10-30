@@ -51,7 +51,6 @@ impl DebugVis {
 }
 
 pub struct DebugMesh {
-	layout: vk::PipelineLayout,
 	pipeline: Pipeline,
 }
 
@@ -70,37 +69,24 @@ struct PushConstants {
 
 impl DebugMesh {
 	pub fn new(device: &Device) -> Result<Self> {
-		unsafe {
-			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(vk::ShaderStageFlags::FRAGMENT)
-						.size(std::mem::size_of::<PushConstants>() as u32)]),
-				None,
-			)?;
-
-			Ok(Self {
-				layout,
-				pipeline: device.graphics_pipeline(GraphicsPipelineDesc {
-					layout,
-					shaders: &[
-						ShaderInfo {
-							shader: "graph.util.screen",
-							..Default::default()
-						},
-						ShaderInfo {
-							shader: "passes.debug.main",
-							spec: &["passes.mesh.debug"],
-						},
-					],
-					raster: no_cull(),
-					blend: simple_blend(&[no_blend()]),
-					color_attachments: &[vk::Format::R8G8B8A8_SRGB],
-					..Default::default()
-				})?,
-			})
-		}
+		Ok(Self {
+			pipeline: device.graphics_pipeline(GraphicsPipelineDesc {
+				shaders: &[
+					ShaderInfo {
+						shader: "graph.util.screen",
+						..Default::default()
+					},
+					ShaderInfo {
+						shader: "passes.debug.main",
+						spec: &["passes.mesh.debug"],
+					},
+				],
+				raster: no_cull(),
+				blend: simple_blend(&[no_blend()]),
+				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
+				..Default::default()
+			})?,
+		})
 	}
 
 	/// `highlights` must be sorted.
@@ -203,7 +189,7 @@ impl DebugMesh {
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::GRAPHICS,
-				self.layout,
+				pass.device.layout(),
 				0,
 				&[pass.device.descriptors().set()],
 				&[],
@@ -214,7 +200,7 @@ impl DebugMesh {
 			};
 			dev.cmd_push_constants(
 				buf,
-				self.layout,
+				pass.device.layout(),
 				vk::ShaderStageFlags::FRAGMENT,
 				0,
 				bytes_of(&PushConstants {
@@ -235,8 +221,5 @@ impl DebugMesh {
 		}
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
-		self.pipeline.destroy();
-		device.device().destroy_pipeline_layout(self.layout, None);
-	}
+	pub unsafe fn destroy(self) { self.pipeline.destroy(); }
 }

@@ -131,7 +131,7 @@ impl<'a> DeviceBuilder<'a> {
 					physical_device,
 					queues,
 					allocator: ManuallyDrop::new(Mutex::new(allocator)),
-					shaders: ManuallyDrop::new(ShaderRuntime::new(&device)),
+					shaders: ManuallyDrop::new(ShaderRuntime::new(&device, descriptors.layout())),
 					descriptors,
 					device,
 				}),
@@ -297,7 +297,6 @@ impl<'a> DeviceBuilder<'a> {
 			let mut features = features.clone();
 
 			// Push the features if they don't already exist.
-			let mut features11 = vk::PhysicalDeviceVulkan11Features::default();
 			let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
 			let mut features13 = vk::PhysicalDeviceVulkan13Features::default();
 			// let mut as_features = vk::PhysicalDeviceAccelerationStructureFeaturesKHR::default();
@@ -306,7 +305,6 @@ impl<'a> DeviceBuilder<'a> {
 			let mut maint5_features = vk::PhysicalDeviceMaintenance5FeaturesKHR::default();
 			{
 				let mut next = features.p_next as *mut VkStructHeader;
-				let mut found_11 = false;
 				let mut found_12 = false;
 				let mut found_13 = false;
 				// let mut found_as = false;
@@ -316,7 +314,6 @@ impl<'a> DeviceBuilder<'a> {
 				while !next.is_null() {
 					unsafe {
 						match (*next).ty {
-							vk::PhysicalDeviceVulkan11Features::STRUCTURE_TYPE => found_11 = true,
 							vk::PhysicalDeviceVulkan12Features::STRUCTURE_TYPE => found_12 = true,
 							vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => found_13 = true,
 							// vk::PhysicalDeviceAccelerationStructureFeaturesKHR::STRUCTURE_TYPE => found_as = true,
@@ -329,11 +326,6 @@ impl<'a> DeviceBuilder<'a> {
 					}
 				}
 
-				features = if !found_11 {
-					features.push_next(&mut features11)
-				} else {
-					features
-				};
 				features = if !found_12 {
 					features.push_next(&mut features12)
 				} else {
@@ -366,17 +358,10 @@ impl<'a> DeviceBuilder<'a> {
 				};
 			}
 
-			features.features.shader_int16 = true as _;
-			features.features.shader_int64 = true as _;
-			features.features.fragment_stores_and_atomics = true as _;
 			let mut next = features.p_next as *mut VkStructHeader;
 			while !next.is_null() {
 				unsafe {
 					match (*next).ty {
-						vk::PhysicalDeviceVulkan11Features::STRUCTURE_TYPE => {
-							let features11 = &mut *(next as *mut vk::PhysicalDeviceVulkan11Features);
-							features11.storage_buffer16_bit_access = true as _;
-						},
 						vk::PhysicalDeviceVulkan12Features::STRUCTURE_TYPE => {
 							let features12 = &mut *(next as *mut vk::PhysicalDeviceVulkan12Features);
 							features12.descriptor_indexing = true as _;
@@ -393,8 +378,6 @@ impl<'a> DeviceBuilder<'a> {
 							features12.timeline_semaphore = true as _;
 							features12.buffer_device_address = true as _;
 							features12.vulkan_memory_model = true as _;
-							features12.vulkan_memory_model_device_scope = true as _;
-							features12.scalar_block_layout = true as _;
 						},
 						vk::PhysicalDeviceVulkan13Features::STRUCTURE_TYPE => {
 							let features13 = &mut *(next as *mut vk::PhysicalDeviceVulkan13Features);
@@ -477,15 +460,15 @@ impl<'a> DeviceBuilder<'a> {
 			extensions.push(khr::swapchain::NAME);
 		}
 
-		// extensions.extend([
-		// khr::acceleration_structure::NAME,
-		// khr::ray_tracing_pipeline::NAME,
-		// khr::ray_tracing_maintenance1::NAME,
-		// khr::deferred_host_operations::NAME,
-		// khr::ray_query::NAME,
-		// khr::maintenance5::NAME,
-		// khr::maintenance6::NAME,
-		// ]);
+		extensions.extend([
+			// khr::acceleration_structure::NAME,
+			// khr::ray_tracing_pipeline::NAME,
+			// khr::ray_tracing_maintenance1::NAME,
+			// khr::deferred_host_operations::NAME,
+			// khr::ray_query::NAME,
+			khr::maintenance5::NAME,
+			// khr::maintenance6::NAME,
+		]);
 		extensions
 	}
 

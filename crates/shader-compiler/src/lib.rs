@@ -50,7 +50,6 @@ pub struct GraphicsPipelineDesc<'a> {
 	pub multisample: vk::PipelineMultisampleStateCreateInfo<'static>,
 	pub blend: vk::PipelineColorBlendStateCreateInfo<'a>,
 	pub dynamic: &'a [vk::DynamicState],
-	pub layout: vk::PipelineLayout,
 	pub color_attachments: &'a [vk::Format],
 	pub depth_attachment: vk::Format,
 	pub stencil_attachment: vk::Format,
@@ -71,7 +70,6 @@ pub struct GraphicsPipelineDescOwned {
 	pub multisample: vk::PipelineMultisampleStateCreateInfo<'static>,
 	pub blend: PipelineColorBlendStateCreateInfo,
 	pub dynamic: Vec<vk::DynamicState>,
-	pub layout: vk::PipelineLayout,
 	pub color_attachments: Vec<vk::Format>,
 	pub depth_attachment: vk::Format,
 	pub stencil_attachment: vk::Format,
@@ -95,7 +93,6 @@ impl GraphicsPipelineDesc<'_> {
 				blend_constants: self.blend.blend_constants,
 			},
 			dynamic: self.dynamic.to_vec(),
-			layout: self.layout,
 			color_attachments: self.color_attachments.to_vec(),
 			depth_attachment: self.depth_attachment,
 			stencil_attachment: self.stencil_attachment,
@@ -174,7 +171,6 @@ impl Default for GraphicsPipelineDesc<'_> {
 		};
 
 		Self {
-			layout: vk::PipelineLayout::null(),
 			shaders: &[],
 			color_attachments: &[],
 			blend: BLEND,
@@ -206,7 +202,7 @@ impl Pipeline {
 
 enum PipelineDesc {
 	Graphics(GraphicsPipelineDescOwned),
-	Compute(vk::PipelineLayout, ShaderInfo),
+	Compute(ShaderInfo),
 }
 
 struct RuntimeShared {
@@ -214,6 +210,7 @@ struct RuntimeShared {
 	pipelines: Vec<(PipelineDesc, Arc<AtomicU64>)>,
 	recompiling: bool,
 	device: vk::Device,
+	layout: vk::PipelineLayout,
 	create_graphics_pipelines: vk::PFN_vkCreateGraphicsPipelines,
 	create_compute_pipelines: vk::PFN_vkCreateComputePipelines,
 	destroy_pipeline: vk::PFN_vkDestroyPipeline,
@@ -276,6 +273,7 @@ impl RuntimeShared {
 
 		let mut dec = Dec(vk::ShaderStageFlags::empty());
 		let _ = Parser::new(byte_slice, &mut dec).parse();
+		spirv.splice(5..5, [17 | (2 << 16), 5345]); // OpCapability VulkanMemoryModel
 		let mut iter = spirv.iter_mut();
 		while let Some(w) = iter.next() {
 			if *w == 14 | (3 << 16) {
@@ -289,13 +287,12 @@ impl RuntimeShared {
 	}
 
 	#[track_caller]
-	fn create_compute_pipeline(
-		this: Arc<Mutex<Self>>, layout: vk::PipelineLayout, shader: ShaderInfo,
-	) -> Result<Pipeline, vk::Result> {
+	fn create_compute_pipeline(this: Arc<Mutex<Self>>, shader: ShaderInfo) -> Result<Pipeline, vk::Result> {
 		let mut t = this.lock().unwrap();
 		let Self {
 			ref mut builder,
 			device,
+			layout,
 			create_compute_pipelines,
 			..
 		} = *t;
@@ -308,7 +305,7 @@ impl RuntimeShared {
 			},
 		};
 		let inner = Arc::new(AtomicU64::new(p.as_raw()));
-		t.pipelines.push((PipelineDesc::Compute(layout, shader), inner.clone()));
+		t.pipelines.push((PipelineDesc::Compute(shader), inner.clone()));
 		drop(t);
 
 		Ok(Pipeline(inner, this))
@@ -321,10 +318,11 @@ impl RuntimeShared {
 		let Self {
 			ref mut builder,
 			device,
+			layout,
 			create_graphics_pipelines,
 			..
 		} = *t;
-		let p = match Self::create_graphics_pipeline_inner(builder, device, create_graphics_pipelines, &desc) {
+		let p = match Self::create_graphics_pipeline_inner(builder, device, create_graphics_pipelines, layout, &desc) {
 			Ok(p) => p,
 			Err(Ok(e)) => return Err(e),
 			Err(Err(e)) => {
@@ -370,7 +368,8 @@ impl RuntimeShared {
 
 	#[track_caller]
 	fn create_graphics_pipeline_inner(
-		b: &mut ShaderBuilder, d: vk::Device, c: vk::PFN_vkCreateGraphicsPipelines, desc: &GraphicsPipelineDescOwned,
+		b: &mut ShaderBuilder, d: vk::Device, c: vk::PFN_vkCreateGraphicsPipelines, layout: vk::PipelineLayout,
+		desc: &GraphicsPipelineDescOwned,
 	) -> Result<vk::Pipeline, Result<vk::Result, String>> {
 		unsafe {
 			let mut codes = Vec::with_capacity(desc.shaders.len());
@@ -421,7 +420,7 @@ impl RuntimeShared {
 							.blend_constants(desc.blend.blend_constants),
 					)
 					.dynamic_state(&vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&desc.dynamic))
-					.layout(desc.layout)
+					.layout(layout)
 					.push_next(
 						&mut vk::PipelineRenderingCreateInfo::default()
 							.color_attachment_formats(&desc.color_attachments)
@@ -452,7 +451,7 @@ pub struct ShaderRuntime {
 }
 
 impl ShaderRuntime {
-	pub fn new<'s>(device: &ash::Device) -> Self {
+	pub fn new<'s>(device: &ash::Device, layout: vk::PipelineLayout) -> Self {
 		let c = std::env::current_exe().unwrap();
 		let mut curr = c.as_path();
 		let mut source = None;
@@ -473,6 +472,7 @@ impl ShaderRuntime {
 			pipelines: Vec::new(),
 			recompiling: false,
 			device: device.handle(),
+			layout,
 			create_graphics_pipelines: device.fp_v1_0().create_graphics_pipelines,
 			create_compute_pipelines: device.fp_v1_0().create_compute_pipelines,
 			destroy_pipeline: device.fp_v1_0().destroy_pipeline,
@@ -487,6 +487,7 @@ impl ShaderRuntime {
 						let RuntimeShared {
 							ref mut builder,
 							device,
+							layout,
 							create_graphics_pipelines,
 							create_compute_pipelines,
 							destroy_pipeline,
@@ -502,13 +503,14 @@ impl ShaderRuntime {
 									builder,
 									device,
 									create_graphics_pipelines,
+									layout,
 									desc,
 								),
-								PipelineDesc::Compute(layout, shader) => RuntimeShared::create_compute_pipeline_inner(
+								PipelineDesc::Compute(shader) => RuntimeShared::create_compute_pipeline_inner(
 									builder,
 									device,
 									create_compute_pipelines,
-									*layout,
+									layout,
 									*shader,
 								),
 							};
@@ -544,10 +546,8 @@ impl ShaderRuntime {
 	}
 
 	#[track_caller]
-	pub fn create_compute_pipeline(
-		&self, layout: vk::PipelineLayout, shader: ShaderInfo,
-	) -> Result<Pipeline, vk::Result> {
-		RuntimeShared::create_compute_pipeline(self.shared.clone(), layout, shader)
+	pub fn create_compute_pipeline(&self, shader: ShaderInfo) -> Result<Pipeline, vk::Result> {
+		RuntimeShared::create_compute_pipeline(self.shared.clone(), shader)
 	}
 
 	pub fn status(&self) -> HotreloadStatus {

@@ -60,12 +60,11 @@ impl Device {
 	}
 
 	#[track_caller]
-	pub fn compute_pipeline(&self, layout: vk::PipelineLayout, shader: ShaderInfo) -> Result<Pipeline> {
-		self.inner
-			.shaders
-			.create_compute_pipeline(layout, shader)
-			.map_err(Into::into)
+	pub fn compute_pipeline(&self, shader: ShaderInfo) -> Result<Pipeline> {
+		self.inner.shaders.create_compute_pipeline(shader).map_err(Into::into)
 	}
+
+	pub fn layout(&self) -> vk::PipelineLayout { self.inner.descriptors.layout() }
 
 	pub fn hotreload_status(&self) -> HotreloadStatus { self.inner.shaders.status() }
 

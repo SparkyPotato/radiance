@@ -151,7 +151,6 @@ pub struct VisBuffer {
 	early_meshlet_cull: MeshletCull,
 	late_meshlet_cull: MeshletCull,
 	hzb_gen: HzbGen,
-	layout: vk::PipelineLayout,
 	no_debug: [Pipeline; 4],
 	debug: [Pipeline; 4],
 	mesh: ext::mesh_shader::Device,
@@ -206,48 +205,32 @@ struct PassIO {
 
 impl VisBuffer {
 	pub fn new(device: &Device) -> Result<Self> {
-		unsafe {
-			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange::default()
-						.stage_flags(
-							vk::ShaderStageFlags::COMPUTE
-								| vk::ShaderStageFlags::MESH_EXT
-								| vk::ShaderStageFlags::FRAGMENT,
-						)
-						.size(std::mem::size_of::<PushConstants>() as _)]),
-				None,
-			)?;
-
-			Ok(Self {
-				setup: Setup::new(),
-				early_instance_cull: InstanceCull::new(device, true)?,
-				late_instance_cull: InstanceCull::new(device, false)?,
-				early_bvh_cull: BvhCull::new(device, true)?,
-				late_bvh_cull: BvhCull::new(device, false)?,
-				early_meshlet_cull: MeshletCull::new(device, true)?,
-				late_meshlet_cull: MeshletCull::new(device, false)?,
-				hzb_gen: HzbGen::new(device)?,
-				layout,
-				no_debug: [
-					Self::pipeline(device, layout, false, true, false)?,
-					Self::pipeline(device, layout, true, true, false)?,
-					Self::pipeline(device, layout, false, false, false)?,
-					Self::pipeline(device, layout, true, false, false)?,
-				],
-				debug: [
-					Self::pipeline(device, layout, false, true, true)?,
-					Self::pipeline(device, layout, true, true, true)?,
-					Self::pipeline(device, layout, false, false, true)?,
-					Self::pipeline(device, layout, true, false, true)?,
-				],
-				mesh: ext::mesh_shader::Device::new(device.instance(), device.device()),
-			})
-		}
+		Ok(Self {
+			setup: Setup::new(),
+			early_instance_cull: InstanceCull::new(device, true)?,
+			late_instance_cull: InstanceCull::new(device, false)?,
+			early_bvh_cull: BvhCull::new(device, true)?,
+			late_bvh_cull: BvhCull::new(device, false)?,
+			early_meshlet_cull: MeshletCull::new(device, true)?,
+			late_meshlet_cull: MeshletCull::new(device, false)?,
+			hzb_gen: HzbGen::new(device)?,
+			no_debug: [
+				Self::pipeline(device, false, true, false)?,
+				Self::pipeline(device, true, true, false)?,
+				Self::pipeline(device, false, false, false)?,
+				Self::pipeline(device, true, false, false)?,
+			],
+			debug: [
+				Self::pipeline(device, false, true, true)?,
+				Self::pipeline(device, true, true, true)?,
+				Self::pipeline(device, false, false, true)?,
+				Self::pipeline(device, true, false, true)?,
+			],
+			mesh: ext::mesh_shader::Device::new(device.instance(), device.device()),
+		})
 	}
 
-	fn pipeline(device: &Device, layout: vk::PipelineLayout, sw: bool, early: bool, debug: bool) -> Result<Pipeline> {
+	fn pipeline(device: &Device, sw: bool, early: bool, debug: bool) -> Result<Pipeline> {
 		let spec: &[_] = if debug {
 			if early {
 				&["passes.mesh.debug", "passes.mesh.early"]
@@ -262,13 +245,10 @@ impl VisBuffer {
 			}
 		};
 		if sw {
-			device.compute_pipeline(
-				layout,
-				ShaderInfo {
-					shader: "passes.mesh.mesh.sw",
-					spec,
-				},
-			)
+			device.compute_pipeline(ShaderInfo {
+				shader: "passes.mesh.mesh.sw",
+				spec,
+			})
 		} else {
 			device.graphics_pipeline(GraphicsPipelineDesc {
 				shaders: &[
@@ -281,7 +261,6 @@ impl VisBuffer {
 						spec: if debug { &["passes.mesh.debug"] } else { &[] },
 					},
 				],
-				layout,
 				..Default::default()
 			})
 		}
@@ -379,7 +358,7 @@ impl VisBuffer {
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::GRAPHICS,
-				self.layout,
+				pass.device.layout(),
 				0,
 				&[pass.device.descriptors().set()],
 				&[],
@@ -387,7 +366,7 @@ impl VisBuffer {
 
 			dev.cmd_push_constants(
 				buf,
-				self.layout,
+				pass.device.layout(),
 				vk::ShaderStageFlags::MESH_EXT | vk::ShaderStageFlags::FRAGMENT | vk::ShaderStageFlags::COMPUTE,
 				0,
 				bytes_of(&PushConstants {
@@ -445,7 +424,7 @@ impl VisBuffer {
 			dev.cmd_bind_descriptor_sets(
 				buf,
 				vk::PipelineBindPoint::COMPUTE,
-				self.layout,
+				pass.device.layout(),
 				0,
 				&[pass.device.descriptors().set()],
 				&[],
@@ -455,12 +434,12 @@ impl VisBuffer {
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
-		self.early_instance_cull.destroy(device);
-		self.late_instance_cull.destroy(device);
-		self.early_bvh_cull.destroy(device);
-		self.late_bvh_cull.destroy(device);
-		self.early_meshlet_cull.destroy(device);
-		self.late_meshlet_cull.destroy(device);
+		self.early_instance_cull.destroy();
+		self.late_instance_cull.destroy();
+		self.early_bvh_cull.destroy();
+		self.late_bvh_cull.destroy();
+		self.early_meshlet_cull.destroy();
+		self.late_meshlet_cull.destroy();
 		self.hzb_gen.destroy(device);
 		let [p0, p1, p2, p3] = self.no_debug;
 		p0.destroy();
@@ -472,6 +451,5 @@ impl VisBuffer {
 		p1.destroy();
 		p2.destroy();
 		p3.destroy();
-		device.device().destroy_pipeline_layout(self.layout, None);
 	}
 }

@@ -24,17 +24,40 @@ fn init_device(window: &winit::window::Window, event_loop: &EventLoop<()>) -> Re
 		// TODO: Move features somewhere else.
 		Device::builder()
 			.window(window, event_loop)
-			.device_extensions(&[ext::mesh_shader::NAME])
+			.device_extensions(&[ext::mesh_shader::NAME, ext::shader_image_atomic_int64::NAME])
 			.features(
 				vk::PhysicalDeviceFeatures2::default()
-					.features(vk::PhysicalDeviceFeatures::default())
-					.push_next(&mut vk::PhysicalDeviceVulkan12Features::default().sampler_filter_minmax(true))
+					.features(
+						vk::PhysicalDeviceFeatures::default()
+							.shader_int16(true)
+							.shader_int64(true)
+							.fragment_stores_and_atomics(true),
+					)
+					.push_next(
+						&mut vk::PhysicalDeviceVulkan11Features::default()
+							.variable_pointers(true)
+							.variable_pointers_storage_buffer(true)
+							.storage_push_constant16(true)
+							.storage_buffer16_bit_access(true),
+					)
+					.push_next(
+						&mut vk::PhysicalDeviceVulkan12Features::default()
+							.sampler_filter_minmax(true)
+							.shader_int8(true)
+							.storage_buffer8_bit_access(true)
+							.storage_push_constant8(true)
+							.scalar_block_layout(true),
+					)
 					.push_next(
 						&mut vk::PhysicalDeviceVulkan13Features::default()
 							.dynamic_rendering(true)
 							.shader_demote_to_helper_invocation(true),
 					)
-					.push_next(&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::default().mesh_shader(true)),
+					.push_next(&mut vk::PhysicalDeviceMeshShaderFeaturesEXT::default().mesh_shader(true))
+					.push_next(
+						&mut vk::PhysicalDeviceShaderImageAtomicInt64FeaturesEXT::default()
+							.shader_image_int64_atomics(true),
+					),
 			)
 			.build()
 	}

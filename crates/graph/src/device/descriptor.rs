@@ -44,7 +44,7 @@ mod bytemuck {
 
 pub struct Descriptors {
 	pool: vk::DescriptorPool,
-	layout: vk::DescriptorSetLayout,
+	layout: vk::PipelineLayout,
 	set: vk::DescriptorSet,
 	inner: Mutex<Inner>,
 }
@@ -58,8 +58,8 @@ struct Inner {
 impl Descriptors {
 	pub fn set(&self) -> vk::DescriptorSet { self.set }
 
-	/// Get a `DescriptorSetLayout` that should be used when making pipelines.
-	pub fn layout(&self) -> vk::DescriptorSetLayout { self.layout }
+	/// Get a `PipelineLayout` that should be used when making pipelines.
+	pub fn layout(&self) -> vk::PipelineLayout { self.layout }
 
 	pub fn get_image(&self, device: &Device, image: vk::ImageView) -> ImageId {
 		let mut inner = self.inner.lock().unwrap();
@@ -163,8 +163,9 @@ impl Descriptors {
 				.descriptor_count(sampler_count)
 				.stage_flags(vk::ShaderStageFlags::ALL),
 		];
-		let layout = unsafe {
-			device.create_descriptor_set_layout(
+
+		unsafe {
+			let d_layout = device.create_descriptor_set_layout(
 				&vk::DescriptorSetLayoutCreateInfo::default()
 					.bindings(&set_layout)
 					.flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
@@ -176,11 +177,9 @@ impl Descriptors {
 						]),
 					),
 				None,
-			)?
-		};
+			)?;
 
-		let pool = unsafe {
-			device.create_descriptor_pool(
+			let pool = device.create_descriptor_pool(
 				&vk::DescriptorPoolCreateInfo::default()
 					.max_sets(1)
 					.pool_sizes(&[
@@ -196,31 +195,41 @@ impl Descriptors {
 					])
 					.flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND),
 				None,
-			)?
-		};
+			)?;
 
-		let set = unsafe {
-			device.allocate_descriptor_sets(
+			let set = device.allocate_descriptor_sets(
 				&vk::DescriptorSetAllocateInfo::default()
 					.descriptor_pool(pool)
-					.set_layouts(&[layout]),
-			)?[0]
-		};
+					.set_layouts(&[d_layout]),
+			)?[0];
 
-		Ok(Descriptors {
-			pool,
-			layout,
-			set,
-			inner: Mutex::new(Inner {
-				sampled_images: FreeIndices::new(sampled_image_count),
-				storage_images: FreeIndices::new(storage_image_count),
-				samplers: FreeIndices::new(sampler_count),
-			}),
-		})
+			let layout = device.create_pipeline_layout(
+				&vk::PipelineLayoutCreateInfo::default()
+					.set_layouts(&[d_layout])
+					.push_constant_ranges(&[vk::PushConstantRange::default()
+						.size(128)
+						.offset(0)
+						.stage_flags(vk::ShaderStageFlags::ALL)]),
+				None,
+			)?;
+
+			device.destroy_descriptor_set_layout(d_layout, None);
+
+			Ok(Descriptors {
+				pool,
+				layout,
+				set,
+				inner: Mutex::new(Inner {
+					sampled_images: FreeIndices::new(sampled_image_count),
+					storage_images: FreeIndices::new(storage_image_count),
+					samplers: FreeIndices::new(sampler_count),
+				}),
+			})
+		}
 	}
 
 	pub(super) unsafe fn cleanup(&mut self, device: &ash::Device) {
-		device.destroy_descriptor_set_layout(self.layout, None);
+		device.destroy_pipeline_layout(self.layout, None);
 		device.destroy_descriptor_pool(self.pool, None);
 	}
 }

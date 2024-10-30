@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::BTreeMap, ops::Range};
 
 use meshopt::VertexDataAdapter;
 use metis::Graph;
-use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thread_local::ThreadLocal;
 use tracing::{debug_span, field, info_span, trace_span};
@@ -85,17 +85,14 @@ pub fn import(name: &str, mesh: FullMesh) -> Mesh {
 
 		let next_start = meshlets.meshlets.len();
 
-		let first = generate_groups(simplify.clone(), &mut meshlets);
+		let groups = generate_groups(simplify.clone(), &mut meshlets);
 
-		// self.dump_groups_to_obj(name, lod, &mesh.vertices, &meshlets, first);
-
-		s.record("groups", meshlets.groups.len() - first);
+		s.record("groups", groups.len());
 		let tls = ThreadLocal::new();
-		let par: Vec<_> = meshlets.groups[first..]
+		let par: Vec<_> = groups
 			.into_par_iter()
-			.enumerate()
-			.filter(|(_, x)| x.meshlets.len() > 1)
-			.filter_map(|(i, group)| {
+			.filter(|x| x.meshlets.len() > 1)
+			.filter_map(|group| {
 				let tls = tls.get_or(|| RefCell::new(vec![false; mesh.vertices.len()]));
 				let (indices, parent_error) = simplify_group(
 					&mesh.vertices,
@@ -105,28 +102,26 @@ pub fn import(name: &str, mesh: FullMesh) -> Mesh {
 					tls.borrow_mut().as_mut_slice(),
 				)?;
 				let n_meshlets = generate_meshlets(&mesh.vertices, &indices, Some((group.lod_bounds, parent_error)));
-				Some((
-					i,
-					parent_error,
-					n_meshlets,
-					group
-						.meshlets
-						.clone()
-						.map(|x| {
-							let m = &meshlets.meshlets[x as usize];
-							(m.vertices().len() * std::mem::size_of::<Vertex>() + m.tris().len()) as f32
-						})
-						.sum(),
-				))
+				let size = group
+					.meshlets
+					.clone()
+					.map(|x| {
+						let m = &meshlets.meshlets[x as usize];
+						(m.vertices().len() * std::mem::size_of::<Vertex>() + m.tris().len()) as f32
+					})
+					.sum();
+				Some((group, parent_error, n_meshlets, size))
 			})
 			.collect();
 		let mut min_size = f32::MAX;
 		let mut avg_size = 0.0f32;
 		let mut max_size = 0.0f32;
 		let count = par.len();
-		for (group, parent_error, n_meshlets, size) in par {
+		let first = meshlets.groups.len();
+		for (mut group, parent_error, n_meshlets, size) in par {
 			meshlets.add(n_meshlets);
-			meshlets.groups[group + first].parent_error = parent_error;
+			group.parent_error = parent_error;
+			meshlets.groups.push(group);
 
 			min_size = min_size.min(size);
 			avg_size += size;
@@ -139,7 +134,6 @@ pub fn import(name: &str, mesh: FullMesh) -> Mesh {
 		}
 
 		bvh.add_lod(first as _, &meshlets.groups[first..]);
-
 		simplify = next_start..meshlets.meshlets.len();
 		lod += 1;
 	}
@@ -204,7 +198,7 @@ fn generate_meshlets(vertices: &[Vertex], indices: &[u32], error: Option<(Sphere
 	}
 }
 
-fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> usize {
+fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> Vec<MeshletGroup> {
 	let s = trace_span!("grouping meshlets");
 	let _e = s.enter();
 
@@ -225,19 +219,18 @@ fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> usize {
 	xadj.push(adj.len() as i32);
 
 	let mut group_of = vec![0; range.len()];
-	let group_count = range.len().div_ceil(8);
+	let group_count = range.len().div_ceil(16);
 	Graph::new(1, group_count as _, &xadj, &adj)
 		.unwrap()
 		.set_adjwgt(&weights)
 		.part_kway(&mut group_of)
 		.unwrap();
 
-	let first = meshlets.groups.len();
-
 	let mut meshlet_reorder: Vec<_> = range.clone().collect();
 	meshlet_reorder.sort_unstable_by_key(|&x| group_of[x - range.start]);
 
-	let mut out = vec![Meshlet::default(); meshlet_reorder.len()];
+	let mut order = vec![Meshlet::default(); meshlet_reorder.len()];
+	let mut out = Vec::with_capacity(group_count);
 	let mut last_group = 0;
 	let mut group = MeshletGroup {
 		aabb: aabb_default(),
@@ -250,7 +243,7 @@ fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> usize {
 		if last_group != next {
 			let end = (i + range.start) as u32;
 			group.meshlets.end = end;
-			meshlets.groups.push(group.clone());
+			out.push(group.clone());
 
 			last_group = next;
 			group.aabb = aabb_default();
@@ -261,14 +254,14 @@ fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> usize {
 		let m = meshlets.meshlets[p];
 		group.aabb = group.aabb.union(m.aabb);
 		group.lod_bounds = merge_spheres(group.lod_bounds, m.lod_bounds);
-		out[i] = m;
+		order[i] = m;
 	}
-	group.meshlets.end = (out.len() + range.start) as u32;
-	meshlets.groups.push(group);
+	group.meshlets.end = (order.len() + range.start) as u32;
+	out.push(group);
 
-	meshlets.meshlets[range.start..].copy_from_slice(&out);
+	meshlets.meshlets[range.start..].copy_from_slice(&order);
 
-	first
+	out
 }
 
 fn simplify_group(

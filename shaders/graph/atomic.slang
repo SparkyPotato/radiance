@@ -46,6 +46,26 @@ public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	return {};
 }
 
+public T wave_atomic_add<T: __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+													 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	let rel = WavePrefixSum(value);
+	let total = WaveActiveSum(value);
+	T base;
+	if (WaveIsFirstLane())
+		base = atomic_add(dest, total, sc, loc, se);
+	return WaveReadLaneFirst(base) + rel;
+}
+
+public u32 wave_atomic_inc(__ref u32 dest, constexpr Scope sc = DEFAULT_SCOPE,
+						   constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	let rel = WavePrefixCountBits(true);
+	let total = WaveActiveCountBits(true);
+	u32 base;
+	if (WaveIsFirstLane())
+		base = atomic_add(dest, total, sc, loc, se);
+	return WaveReadLaneFirst(base) + rel;
+}
+
 public T atomic_sub<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
 												 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 	u32 sem = loc | se;

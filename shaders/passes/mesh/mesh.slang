@@ -107,7 +107,7 @@ f32x3 uv_vert(Init init, u32 gtid) {
 	return f32x3(v.xy * dim, v.z);
 }
 
-// groupshared f32x3 SWPos[128];
+groupshared f32x4 SWPos[128];
 
 // https://fgiesen.wordpress.com/2013/02/08/triangle-rasterization-in-practice/
 // https://fgiesen.wordpress.com/2013/02/10/optimizing-the-basic-rasterizer/
@@ -120,19 +120,16 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let dim = Constants.output.size();
 
 	if (gtid < vert_count) {
-		// SWPos[gtid] = uv_vert(init, gtid);
+		SWPos[gtid] = f32x4(uv_vert(init, gtid), 0.f);
 	}
 
 	if (gtid >= tri_count)
 		return;
 
 	let t = init.tri(gtid);
-	// let v0 = SWPos[t.x];
-	// let v1 = SWPos[t.y];
-	// let v2 = SWPos[t.z];
-	let v0 = uv_vert(init, t.x);
-	let v1 = uv_vert(init, t.y);
-	let v2 = uv_vert(init, t.z);
+	let v0 = SWPos[t.x].xyz;
+	let v1 = SWPos[t.y].xyz;
+	let v2 = SWPos[t.z].xyz;
 	VisBufferData data = { init.mid, gtid };
 	let write = data.encode();
 

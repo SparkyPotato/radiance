@@ -68,7 +68,6 @@ pub struct ScreenDescriptor {
 pub struct Renderer {
 	images: FxHashMap<u64, (Image, Vec2<u32>, ImageView, SamplerId)>,
 	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
-	layout: vk::PipelineLayout,
 	pipeline: Pipeline,
 	vertex_size: u64,
 	index_size: u64,
@@ -96,44 +95,26 @@ struct PushConstantsDynamic {
 
 impl Renderer {
 	pub fn new(device: &Device) -> Result<Self> {
-		let (layout, pipeline) = unsafe {
-			let layout = device.device().create_pipeline_layout(
-				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[device.descriptors().layout()])
-					.push_constant_ranges(&[vk::PushConstantRange {
-						stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-						offset: 0,
-						size: (std::mem::size_of::<PushConstantsStatic>() + std::mem::size_of::<PushConstantsDynamic>())
-							as u32,
-					}]),
-				None,
-			)?;
-
-			let pipeline = device.graphics_pipeline(GraphicsPipelineDesc {
-				layout,
-				shaders: &[
-					ShaderInfo {
-						shader: "egui.vertex",
-						..Default::default()
-					},
-					ShaderInfo {
-						shader: "egui.pixel",
-						..Default::default()
-					},
-				],
-				color_attachments: &[vk::Format::B8G8R8A8_UNORM],
-				blend: simple_blend(&[default_blend()]),
-				raster: no_cull(),
-				..Default::default()
-			})?;
-
-			(layout, pipeline)
-		};
+		let pipeline = device.graphics_pipeline(GraphicsPipelineDesc {
+			shaders: &[
+				ShaderInfo {
+					shader: "egui.vertex",
+					..Default::default()
+				},
+				ShaderInfo {
+					shader: "egui.pixel",
+					..Default::default()
+				},
+			],
+			color_attachments: &[vk::Format::B8G8R8A8_UNORM],
+			blend: simple_blend(&[default_blend()]),
+			raster: no_cull(),
+			..Default::default()
+		})?;
 
 		Ok(Self {
 			images: FxHashMap::default(),
 			samplers: FxHashMap::default(),
-			layout,
 			pipeline,
 			vertex_size: VERTEX_BUFFER_START_CAPACITY,
 			index_size: INDEX_BUFFER_START_CAPACITY,
@@ -238,7 +219,6 @@ impl Renderer {
 				device.descriptors().return_sampler(id);
 			}
 		}
-		device.device().destroy_pipeline_layout(self.layout, None);
 		self.pipeline.destroy();
 	}
 
@@ -291,14 +271,14 @@ impl Renderer {
 		pass.device.device().cmd_bind_descriptor_sets(
 			pass.buf,
 			vk::PipelineBindPoint::GRAPHICS,
-			self.layout,
+			pass.device.layout(),
 			0,
 			&[pass.device.descriptors().set()],
 			&[],
 		);
 		pass.device.device().cmd_push_constants(
 			pass.buf,
-			self.layout,
+			pass.device.layout(),
 			vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
 			0,
 			bytes_of(&PushConstantsStatic {
@@ -351,7 +331,7 @@ impl Renderer {
 					};
 					pass.device.device().cmd_push_constants(
 						pass.buf,
-						self.layout,
+						pass.device.layout(),
 						vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
 						std::mem::size_of::<PushConstantsStatic>() as u32,
 						bytes_of(&PushConstantsDynamic { image, sampler }),

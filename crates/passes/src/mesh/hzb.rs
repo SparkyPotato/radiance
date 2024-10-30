@@ -209,7 +209,7 @@ impl HzbGen {
 
 	pub fn destroy(self, device: &Device) {
 		unsafe {
-			self.pass.destroy(device);
+			self.pass.destroy();
 			device.device().destroy_sampler(self.hzb_sample, None);
 			device.descriptors().return_sampler(self.hzb_sample_id);
 		}

@@ -83,5 +83,5 @@ impl Picker {
 		});
 	}
 
-	pub unsafe fn destroy(self, device: &Device) { self.pass.destroy(device); }
+	pub unsafe fn destroy(self) { self.pass.destroy(); }
 }

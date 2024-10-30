@@ -200,7 +200,7 @@ impl Renderer {
 	pub unsafe fn destroy(mut self, device: &Device) {
 		self.scene = Scene::None;
 		self.visbuffer.destroy(device);
-		self.picker.destroy(device);
-		self.debug.destroy(device);
+		self.picker.destroy();
+		self.debug.destroy();
 	}
 }

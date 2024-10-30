@@ -42,12 +42,7 @@ void write(bool visible, u32 id) {
 	if (visible) {
 		Constants.next.push( { id, 0 });
 	} else if (EARLY) {
-		let rel = WavePrefixCountBits(true);
-		let total = WaveActiveCountBits(true);
-		u32 pos;
-		if (WaveIsFirstLane())
-			pos = atomic_add(Constants.late_instances->count, total);
-		pos = WaveReadLaneFirst(pos) + rel;
+		let pos = wave_atomic_inc(Constants.late_instances->count);
 		Constants.late_instances->instances[pos] = id;
 		if ((pos & 63) == 0)
 			atomic_add(Constants.late_instances->dispatch.x, 1);
