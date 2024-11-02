@@ -242,7 +242,6 @@ public struct Cull {
 		let proj_center = f32x2(a, center.z);
 		let t2 = dist2 - radius * radius;
 		var t = sqrt(max(t2, 0.f));
-		let in_sphere = t2 < 0.f;
 
 		// cos(theta) = t / dist
 		// sin(theta) = r / dist
@@ -258,30 +257,35 @@ public struct Cull {
 		var wt_z = dot(f32x2(-nsin, ncos), proj_center) / dist2;
 		let t_z = t * wt_z;
 
-		if (in_sphere || t_z < this.near) {
+		// If intersecting the near plane, funky business is required.
+		if (t2 < 0.f || t_z < this.near) {
 			let off = this.near - center.z;
 			let k = sqrt(radius * radius - off * off);
 			let t = f32x2(a + k, this.near);
 			wt_z = t.y / length(t);
 		}
 
+		// Project the sphere to and equivalently sized sphere along the z axis,
+		// so error_scale can be used to monotonically compare.
 		return wt_z * max(center.z - radius, this.near);
 	}	
 
-	public f32 error_scale(bool max) {
+	public f32 error_scale() {
 		// Don't divide by 2 because the error is already divided by 2 during build.
-		return this.screen.y * this.h * (max ? this.scale : this.min_scale);
+		return this.screen.y * this.h;
 	}
 
 	public bool should_visit_bvh(f32x4 lod_bounds, f32 parent_error) {
-		return this.error_distance(lod_bounds) <= this.error_scale(false) * parent_error;
+		let min_dist = this.error_scale() * this.min_scale * parent_error;
+		return this.error_distance(lod_bounds) <= min_dist;
 	}
 
 	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge) {
 		let dist = this.error_distance(lod_bounds);
-		let scale = this.error_scale(false);
-		let hw_scale = this.error_scale(true);
-		return bool2(dist > scale * error, true /*dist < hw_scale * edge / 8.f*/);
+		let scale = this.error_scale();
+		let min_dist = scale * this.min_scale * error;
+		let edge_scale = (scale / 64.f) * this.scale * edge;
+		return bool2(dist > min_dist, true /*dist < edge_scale*/);
 	}
 
 	public bool unoccluded(Aabb aabb) {

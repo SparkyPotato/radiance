@@ -1,8 +1,9 @@
 # radiance-graph
 
-A fully featured, flexible, and opinionated Vulkan render graph.
+A flexible and opinionated Vulkan render graph and initialization toolkit.
 
 The opinions enforced throughout `radiance` are:
-
-- Bindless is used for all shader resource access.
-- Images are always exclusive to a single queue family, while buffers are always shared.
+- BDA is used for all buffer access.
+- Bindless is used for all image and sampler access.
+- All resources are always shared across all queue families.
+- Only GPUs with three queue families (graphics, compute, transfer) are supported.

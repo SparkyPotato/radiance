@@ -1,8 +1,8 @@
 use ash::vk;
-use bytemuck::{bytes_of, NoUninit};
+use bytemuck::NoUninit;
 use radiance_asset::{io::SliceWriter, scene::GpuInstance};
 use radiance_graph::{
-	device::{Device, GraphicsPipelineDesc, Pipeline, ShaderInfo},
+	device::{Device, GraphicsPipelineDesc, ShaderInfo},
 	graph::{
 		BufferDesc,
 		BufferLoc,
@@ -17,7 +17,10 @@ use radiance_graph::{
 		Shader,
 	},
 	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
-	util::pipeline::{no_blend, no_cull, simple_blend},
+	util::{
+		pipeline::{no_blend, no_cull, simple_blend},
+		render::RenderPass,
+	},
 	Result,
 };
 
@@ -51,7 +54,7 @@ impl DebugVis {
 }
 
 pub struct DebugMesh {
-	pipeline: Pipeline,
+	pass: RenderPass<PushConstants>,
 }
 
 #[repr(C)]
@@ -70,22 +73,26 @@ struct PushConstants {
 impl DebugMesh {
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
-			pipeline: device.graphics_pipeline(GraphicsPipelineDesc {
-				shaders: &[
-					ShaderInfo {
-						shader: "graph.util.screen",
-						..Default::default()
-					},
-					ShaderInfo {
-						shader: "passes.debug.main",
-						spec: &["passes.mesh.debug"],
-					},
-				],
-				raster: no_cull(),
-				blend: simple_blend(&[no_blend()]),
-				color_attachments: &[vk::Format::R8G8B8A8_SRGB],
-				..Default::default()
-			})?,
+			pass: RenderPass::new(
+				device,
+				GraphicsPipelineDesc {
+					shaders: &[
+						ShaderInfo {
+							shader: "graph.util.screen",
+							..Default::default()
+						},
+						ShaderInfo {
+							shader: "passes.debug.main",
+							spec: &["passes.mesh.debug"],
+						},
+					],
+					raster: no_cull(),
+					blend: simple_blend(&[no_blend()]),
+					color_attachments: &[vk::Format::R8G8B8A8_SRGB],
+					..Default::default()
+				},
+				false,
+			)?,
 		})
 	}
 
@@ -138,9 +145,6 @@ impl DebugMesh {
 	) {
 		let out = pass.get(out);
 
-		let dev = pass.device.device();
-		let buf = pass.buf;
-
 		unsafe {
 			let highlight = highlight_buf.map(|x| pass.get(x));
 			let mut count = 0;
@@ -152,74 +156,42 @@ impl DebugMesh {
 				}
 			}
 
-			let area = vk::Rect2D::default().extent(vk::Extent2D {
-				width: out.size.width,
-				height: out.size.height,
-			});
-			dev.cmd_begin_rendering(
-				buf,
-				&vk::RenderingInfo::default()
-					.render_area(area)
-					.layer_count(1)
-					.color_attachments(&[vk::RenderingAttachmentInfo::default()
-						.image_view(out.view)
-						.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-						.load_op(vk::AttachmentLoadOp::CLEAR)
-						.clear_value(vk::ClearValue {
-							color: vk::ClearColorValue {
-								float32: [0.0, 0.0, 0.0, 1.0],
-							},
-						})
-						.store_op(vk::AttachmentStoreOp::STORE)]),
-			);
-			dev.cmd_set_viewport(
-				buf,
-				0,
-				&[vk::Viewport {
-					x: 0.0,
-					y: 0.0,
-					width: out.size.width as f32,
-					height: out.size.height as f32,
-					min_depth: 0.0,
-					max_depth: 1.0,
-				}],
-			);
-			dev.cmd_set_scissor(buf, 0, &[area]);
-			dev.cmd_bind_pipeline(buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline.get());
-			dev.cmd_bind_descriptor_sets(
-				buf,
-				vk::PipelineBindPoint::GRAPHICS,
-				pass.device.layout(),
-				0,
-				&[pass.device.descriptors().set()],
-				&[],
-			);
 			let overdraw_scale = match vis {
 				DebugVis::Overdraw(s) => s,
 				_ => 0.0,
 			};
-			dev.cmd_push_constants(
-				buf,
-				pass.device.layout(),
-				vk::ShaderStageFlags::FRAGMENT,
-				0,
-				bytes_of(&PushConstants {
+			let camera = pass.get(output.camera).ptr();
+			let read = output.reader.get_debug(&mut pass);
+			self.pass.run(
+				&pass,
+				&PushConstants {
 					instances: output.instances,
-					camera: pass.get(output.camera).ptr(),
-					read: output.reader.get_debug(&mut pass),
+					camera,
+					read,
 					highlighted: highlight.map(|x| x.ptr()).unwrap_or(GpuPtr::null()),
 					highlight_count: count,
 					ty: vis.to_u32(),
 					overdraw_scale,
 					pad: 0,
-				}),
+				},
+				vk::Extent2D {
+					width: out.size.width,
+					height: out.size.height,
+				},
+				&[vk::RenderingAttachmentInfo::default()
+					.image_view(out.view)
+					.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+					.load_op(vk::AttachmentLoadOp::CLEAR)
+					.clear_value(vk::ClearValue {
+						color: vk::ClearColorValue {
+							float32: [0.0, 0.0, 0.0, 1.0],
+						},
+					})
+					.store_op(vk::AttachmentStoreOp::STORE)],
+				|dev, buf| dev.device().cmd_draw(buf, 3, 1, 0, 0),
 			);
-
-			dev.cmd_draw(buf, 3, 1, 0, 0);
-
-			dev.cmd_end_rendering(buf);
 		}
 	}
 
-	pub unsafe fn destroy(self) { self.pipeline.destroy(); }
+	pub unsafe fn destroy(self) { self.pass.destroy(); }
 }
