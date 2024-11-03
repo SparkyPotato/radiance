@@ -330,7 +330,7 @@ public struct Cull {
 		let scale = this.error_scale();
 		let min_dist = scale * this.min_scale * error;
 		let edge_scale = (scale / 64.f) * this.scale * edge;
-		return bool2(dist > min_dist, true /*dist < edge_scale*/);
+		return bool2(dist > min_dist, dist < edge_scale);
 	}
 
 	public bool unoccluded(Aabb aabb) {

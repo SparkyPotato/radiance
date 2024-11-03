@@ -130,11 +130,6 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	maxv = min(maxv, minv + 31);  // Try not to TDR
 	if (any(minv > maxv))
 		return;
-	
-	Constants.output.write(clamp(v0.xy, f32x2(0, 0), f32x2(dim - 1)), v0.z, write, 1);
-	Constants.output.write(clamp(v1.xy, f32x2(0, 0), f32x2(dim - 1)), v1.z, write, 1);
-	Constants.output.write(clamp(v2.xy, f32x2(0, 0), f32x2(dim - 1)), v2.z, write, 1);
-	return;
 
 	let w_x = f32x3(v1.y - v2.y, v2.y - v0.y, v0.y - v1.y);
 	let w_y = f32x3(v2.x - v1.x, v0.x - v2.x, v1.x - v0.x);
