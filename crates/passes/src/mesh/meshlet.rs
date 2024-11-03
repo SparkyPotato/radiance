@@ -27,13 +27,9 @@ struct PushConstants {
 	camera: GpuPtr<CameraData>,
 	hzb: ImageId,
 	hzb_sampler: SamplerId,
-	read: GpuPtr<u8>,
-	late: GpuPtr<u8>,
-	hw: GpuPtr<u8>,
-	sw: GpuPtr<u8>,
+	queue: GpuPtr<u8>,
+	render: GpuPtr<u8>,
 	res: Vec2<u32>,
-	len: u32,
-	_pad: u32,
 }
 
 impl MeshletCull {
@@ -59,58 +55,31 @@ impl MeshletCull {
 
 		let camera = resources.camera(&mut pass);
 		let hzb = resources.hzb(&mut pass);
-		if self.early {
-			resources.output(&mut pass, resources.meshlet_queues[1]);
-		}
-		let read = resources.input(
-			&mut pass,
-			if self.early {
-				resources.meshlet_queues[0]
-			} else {
-				resources.meshlet_queues[1]
-			},
-		);
-		let hw = resources.output(
-			&mut pass,
-			if self.early {
-				resources.meshlet_render_lists[0]
-			} else {
-				resources.meshlet_render_lists[2]
-			},
-		);
-		let sw = resources.output(
-			&mut pass,
-			if self.early {
-				resources.meshlet_render_lists[1]
-			} else {
-				resources.meshlet_render_lists[3]
-			},
-		);
+		let queue = if self.early {
+			resources.input_output(&mut pass, resources.meshlet_queue)
+		} else {
+			resources.input(&mut pass, resources.meshlet_queue)
+		};
+		let render = resources.output(&mut pass, resources.meshlet_render);
 
 		let instances = info.scene.instances();
 		let hzb_sampler = resources.hzb_sampler;
-		let late = resources.meshlet_queues[1];
 		let res = info.size;
-		let len = resources.len;
 		pass.build(move |mut pass| {
-			let read = pass.get(read);
+			let queue = pass.get(queue);
 			self.pass.dispatch_indirect(
 				&PushConstants {
 					instances,
 					camera: pass.get(camera).ptr(),
 					hzb: pass.get(hzb).id.unwrap(),
 					hzb_sampler,
-					read: read.ptr(),
-					late: pass.get(late).ptr(),
-					hw: pass.get(hw).ptr(),
-					sw: pass.get(sw).ptr(),
+					queue: queue.ptr(),
+					render: pass.get(render).ptr(),
 					res,
-					len,
-					_pad: 0,
 				},
 				&pass,
-				read.buffer,
-				std::mem::size_of::<u32>(),
+				queue.buffer,
+				std::mem::size_of::<u32>() * if self.early { 2 } else { 6 },
 			);
 		});
 	}

@@ -18,10 +18,7 @@ struct PrimitiveOutput {
 struct PushConstants {
 	Instance* instances;
 	Camera* camera;
-	MeshletQueue early_hw;
-	MeshletQueue early_sw;
-	MeshletQueue late_hw;
-	MeshletQueue late_sw;
+	MeshletQueue queue;
 	VisBufferTex output;
 }
 
@@ -34,24 +31,14 @@ struct Init {
 	Meshlet meshlet;
 	f32x4x4 mvp;
 
-	__init(u32 gid, constexpr bool hw) {
+	__init(u32 gid, u32 gtid, constexpr bool hw) {
 		NodePointer p;
-		if (EARLY) {
-			if (hw) {
-				p = Constants.early_hw.get(gid);
-				this.mid = gid;
-			} else {
-				p = Constants.early_sw.get(gid);
-				this.mid = Constants.early_hw.len() + gid;
-			}
+		if (hw) {
+			p = Constants.queue.get_hw(gid);
+			this.mid = Constants.queue.hw_id(gid);
 		} else {
-			if (hw) {
-				p = Constants.late_hw.get(gid);
-				this.mid = Constants.early_hw.len() + Constants.early_sw.len() + gid;
-			} else {
-				p = Constants.late_sw.get(gid);
-				this.mid = Constants.early_hw.len() + Constants.early_sw.len() + Constants.late_hw.len() + gid;
-			}
+			p = Constants.queue.get_sw(gid);
+			this.mid = Constants.queue.sw_id(gid);
 		}
 		let instance = Constants.instances[p.instance];
 		this.mesh = instance.mesh;
@@ -79,7 +66,7 @@ groupshared f32x2 HWPos[128];
 [numthreads(128, 1, 1)]
 void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput vertices[128],
 		out indices u32x3 triangles[124], out primitives PrimitiveOutput visbuffer[124]) {
-	let init = Init(gid, true);
+	let init = Init(gid, gtid, true);
 	let vert_count = init.meshlet.vertex_count;
 	let tri_count = init.meshlet.tri_count;
 	SetMeshOutputCounts(vert_count, tri_count);
@@ -114,7 +101,7 @@ groupshared f32x4 SWPos[128];
 [shader("compute")]
 [numthreads(128, 1, 1)]
 void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
-	let init = Init(gid, false);
+	let init = Init(gid, gtid, false);
 	let vert_count = init.meshlet.vertex_count;
 	let tri_count = init.meshlet.tri_count;
 	let dim = Constants.output.size();

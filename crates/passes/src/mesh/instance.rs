@@ -57,8 +57,7 @@ impl InstanceCull {
 
 		let camera = resources.camera(&mut pass);
 		let hzb = resources.hzb(&mut pass);
-		let early = resources.output(&mut pass, resources.bvh_queues[0]);
-		let late = resources.output(&mut pass, resources.bvh_queues[2]);
+		let next = resources.output(&mut pass, resources.bvh_queues[!self.early as usize]);
 		let late_instances = if self.early {
 			resources.output(&mut pass, resources.late_instances)
 		} else {
@@ -76,7 +75,7 @@ impl InstanceCull {
 				camera: pass.get(camera).ptr(),
 				hzb: pass.get(hzb).id.unwrap(),
 				hzb_sampler,
-				next: pass.get(if self.early { early } else { late }).ptr(),
+				next: pass.get(next).ptr(),
 				late_instances: latei.ptr(),
 				instance_count,
 				res,

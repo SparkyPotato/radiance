@@ -54,10 +54,9 @@ pub struct Resources {
 	pub hzb: Res<ImageView>,
 	pub hzb_sampler: SamplerId,
 	pub late_instances: Res<BufferHandle>,
-	pub len: u32,
-	pub bvh_queues: [Res<BufferHandle>; 3],
-	pub meshlet_queues: [Res<BufferHandle>; 2],
-	pub meshlet_render_lists: [Res<BufferHandle>; 4],
+	pub bvh_queues: [Res<BufferHandle>; 2],
+	pub meshlet_queue: Res<BufferHandle>,
+	pub meshlet_render: Res<BufferHandle>,
 	pub visbuffer: Res<ImageView>,
 	pub debug: Option<DebugRes>,
 }
@@ -109,22 +108,6 @@ impl Resources {
 		buf
 	}
 
-	pub fn mesh(&self, pass: &mut PassBuilder) -> [Res<BufferHandle>; 4] {
-		for m in self.meshlet_render_lists {
-			pass.reference(
-				m,
-				BufferUsage {
-					usages: &[
-						BufferUsageType::IndirectBuffer,
-						BufferUsageType::ShaderStorageRead(Shader::Mesh),
-						BufferUsageType::ShaderStorageRead(Shader::Compute),
-					],
-				},
-			);
-		}
-		self.meshlet_render_lists
-	}
-
 	pub fn output(&self, pass: &mut PassBuilder, buf: Res<BufferHandle>) -> Res<BufferHandle> {
 		pass.reference(
 			buf,
@@ -136,6 +119,44 @@ impl Resources {
 			},
 		);
 		buf
+	}
+
+	pub fn input_output(&self, pass: &mut PassBuilder, buf: Res<BufferHandle>) -> Res<BufferHandle> {
+		pass.reference(
+			buf,
+			BufferUsage {
+				usages: &[
+					BufferUsageType::IndirectBuffer,
+					BufferUsageType::ShaderStorageRead(Shader::Compute),
+					BufferUsageType::ShaderStorageWrite(Shader::Compute),
+				],
+			},
+		);
+		buf
+	}
+
+	pub fn mesh(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
+		pass.reference(
+			self.meshlet_render,
+			BufferUsage {
+				usages: &[
+					BufferUsageType::IndirectBuffer,
+					BufferUsageType::ShaderStorageRead(Shader::Mesh),
+					BufferUsageType::ShaderStorageRead(Shader::Compute),
+				],
+			},
+		);
+		self.meshlet_render
+	}
+
+	pub fn mesh_zero(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
+		pass.reference(
+			self.meshlet_render,
+			BufferUsage {
+				usages: &[BufferUsageType::TransferWrite],
+			},
+		);
+		self.meshlet_render
 	}
 
 	pub fn visbuffer(&self, pass: &mut PassBuilder) -> Res<ImageView> {
@@ -244,53 +265,26 @@ impl Setup {
 				subresource: Subresource::default(),
 			},
 		);
+
+		let count = 1024 * 1024u32;
+		let desc = BufferDesc {
+			size: (count as u64 * 2 + 9) * std::mem::size_of::<u32>() as u64,
+			loc: BufferLoc::Upload,
+			persist: None,
+		};
+		let usage = BufferUsage {
+			usages: &[BufferUsageType::TransferWrite],
+		};
 		let late_instances = pass.resource(
 			BufferDesc {
 				size: ((info.scene.instance_count() as usize + 4) * std::mem::size_of::<u32>()) as _,
-				loc: BufferLoc::GpuOnly,
-				persist: None,
+				..desc
 			},
-			BufferUsage {
-				usages: &[BufferUsageType::TransferWrite],
-			},
+			usage,
 		);
-		let size = ((4 * 1024 * 1024 + 2) * 2 * std::mem::size_of::<u32>()) as _;
-		let bvh_queues = [(); 3].map(|_| {
-			pass.resource(
-				BufferDesc {
-					size,
-					loc: BufferLoc::GpuOnly,
-					persist: None,
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::TransferWrite],
-				},
-			)
-		});
-		let meshlet_queues = [(); 2].map(|_| {
-			pass.resource(
-				BufferDesc {
-					size,
-					loc: BufferLoc::GpuOnly,
-					persist: None,
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::TransferWrite],
-				},
-			)
-		});
-		let meshlet_render_lists = [(); 4].map(|_| {
-			pass.resource(
-				BufferDesc {
-					size,
-					loc: BufferLoc::GpuOnly,
-					persist: None,
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::TransferWrite],
-				},
-			)
-		});
+		let bvh_queues = [(); 2].map(|_| pass.resource(desc, usage));
+		let meshlet_queue = pass.resource(desc, usage);
+		let meshlet_render = pass.resource(desc, usage);
 		let desc = ImageDesc {
 			size: vk::Extent3D {
 				width: res.x,
@@ -395,13 +389,14 @@ impl Setup {
 				);
 			}
 
-			for b in bvh_queues.into_iter().chain(meshlet_queues).chain(Some(late_instances)) {
-				dev.cmd_update_buffer(buf, pass.get(b).buffer, 0, bytes_of(&[0u32, 0, 1, 1]));
+			for b in bvh_queues
+				.into_iter()
+				.chain(Some(meshlet_queue))
+				.chain(Some(meshlet_render))
+			{
+				dev.cmd_update_buffer(buf, pass.get(b).buffer, 0, bytes_of(&[count, 0, 0, 1, 1, 0, 0, 1, 1]));
 			}
-
-			for b in meshlet_render_lists {
-				dev.cmd_update_buffer(buf, pass.get(b).buffer, 0, bytes_of(&[0u32, 1, 1]));
-			}
+			dev.cmd_update_buffer(buf, pass.get(late_instances).buffer, 0, bytes_of(&[0, 0, 1, 1]));
 		});
 
 		Resources {
@@ -409,10 +404,9 @@ impl Setup {
 			hzb,
 			hzb_sampler,
 			late_instances,
-			len: size as _,
 			bvh_queues,
-			meshlet_queues,
-			meshlet_render_lists,
+			meshlet_queue,
+			meshlet_render,
 			visbuffer,
 			debug,
 		}

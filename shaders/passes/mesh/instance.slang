@@ -40,12 +40,13 @@ u32 instance_id(u32 id) {
 
 void write(bool visible, u32 id) {
 	if (visible) {
-		Constants.next.push( { id, 0 });
+		Constants.next.push_front( { id, 0 });
 	} else if (EARLY) {
 		let pos = wave_atomic_inc(Constants.late_instances->count);
 		Constants.late_instances->instances[pos] = id;
+		let req = (pos + 1 + 63) >> 6;
 		if ((pos & 63) == 0)
-			atomic_add(Constants.late_instances->dispatch.x, 1);
+			wave_atomic_max(Constants.late_instances->dispatch.x, req);
 	}
 }
 

@@ -4,7 +4,7 @@ import graph;
 import passes.visbuffer;
 
 struct PushConstants {
-	u8 _offset[48];
+	u8 _offset[24];
 	VisBufferTex output;
 }
 

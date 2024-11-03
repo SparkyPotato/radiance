@@ -97,10 +97,7 @@ public struct VisBufferPixel {
 }
 
 public struct VisBufferReader {
-	MeshletQueue early_hw;
-	MeshletQueue early_sw;
-	MeshletQueue late_hw;
-	MeshletQueue late_sw;
+	MeshletQueue queue;
 	VisBufferTex read;
 	u32 _pad;
 
@@ -119,7 +116,7 @@ public struct VisBufferReader {
 		VisBufferPixel ret;
 		ret.depth = visbuf.depth;
 		ret.raw = VisBufferData(visbuf.data);
-		ret.meshlet = this.get_meshlet(ret.raw.meshlet_id);
+		ret.meshlet = this.queue.get(ret.raw.meshlet_id);
 		return ret;
 	}
 
@@ -133,23 +130,6 @@ public struct VisBufferReader {
 
 	public u32 hwsw(f32x2 uv) {
 		return this.read.hwsw(uv);
-	}
-
-	NodePointer get_meshlet(u32 id) {
-		let early_hw = this.early_hw.len();
-		let early_sw = this.early_sw.len();
-		let late_hw = this.late_hw.len();
-		let late_sw = this.late_sw.len();
-		if (id < early_hw)
-			return this.early_hw.get(id);
-		id -= early_hw;
-		if (id < early_sw)
-			return this.early_sw.get(id);
-		id -= early_sw;
-		if (id < late_hw)
-			return this.late_hw.get(id);
-		id -= late_hw;
-		return this.late_sw.get(id);
 	}
 }
 

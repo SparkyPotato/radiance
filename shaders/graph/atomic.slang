@@ -85,6 +85,16 @@ public T atomic_sub<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	return {};
 }
 
+public u32 wave_atomic_dec(__ref u32 dest, constexpr Scope sc = DEFAULT_SCOPE,
+						   constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	let rel = WavePrefixCountBits(true);
+	let total = WaveActiveCountBits(true);
+	u32 base;
+	if (WaveIsFirstLane())
+		base = atomic_sub(dest, total, sc, loc, se);
+	return WaveReadLaneFirst(base) - rel;
+}
+
 public T atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
 												 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 	u32 sem = loc | se;
@@ -106,6 +116,15 @@ public T atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 		spirv_asm { "<invalid atomic_max>" };
 	}
 	return {};
+}
+
+public T wave_atomic_max<T: __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+													 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	let max = WaveActiveMax(value);
+	T ret;
+	if (WaveIsFirstLane())
+		ret = atomic_max(dest, max, sc, loc, se);
+	return WaveReadLaneFirst(ret);
 }
 
 public void barrier(constexpr Scope sc, constexpr Loc loc, constexpr Sem se) {

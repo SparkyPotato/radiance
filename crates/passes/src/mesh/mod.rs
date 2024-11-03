@@ -1,5 +1,5 @@
 use ash::{ext, vk};
-use bytemuck::NoUninit;
+use bytemuck::{cast_slice, NoUninit};
 use radiance_asset::{
 	rref::RRef,
 	scene::{GpuInstance, Scene},
@@ -57,22 +57,18 @@ pub struct RenderInfo {
 #[derive(Copy, Clone)]
 pub struct VisBufferReader {
 	pub visbuffer: Res<ImageView>,
-	pub early_hw: Res<BufferHandle>,
-	pub early_sw: Res<BufferHandle>,
-	pub late_hw: Res<BufferHandle>,
-	pub late_sw: Res<BufferHandle>,
+	pub queue: Res<BufferHandle>,
 	pub debug: Option<DebugRes>,
 }
 
 impl VisBufferReader {
 	pub fn add(&self, pass: &mut PassBuilder, shader: Shader, debug: bool) {
-		let usage = BufferUsage {
-			usages: &[BufferUsageType::ShaderStorageRead(shader)],
-		};
-		pass.reference(self.early_hw, usage);
-		pass.reference(self.early_sw, usage);
-		pass.reference(self.late_hw, usage);
-		pass.reference(self.late_sw, usage);
+		pass.reference(
+			self.queue,
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageRead(shader)],
+			},
+		);
 
 		let usage = ImageUsage {
 			format: vk::Format::UNDEFINED,
@@ -91,10 +87,7 @@ impl VisBufferReader {
 
 	pub fn get(self, pass: &mut PassContext) -> GpuVisBufferReader {
 		GpuVisBufferReader {
-			early_hw: pass.get(self.early_hw).ptr(),
-			early_sw: pass.get(self.early_sw).ptr(),
-			late_hw: pass.get(self.late_hw).ptr(),
-			late_sw: pass.get(self.late_sw).ptr(),
+			queue: pass.get(self.queue).ptr(),
 			visbuffer: pass.get(self.visbuffer).storage_id.unwrap(),
 			_pad: 0,
 		}
@@ -102,10 +95,7 @@ impl VisBufferReader {
 
 	pub fn get_debug(self, pass: &mut PassContext) -> GpuVisBufferReaderDebug {
 		GpuVisBufferReaderDebug {
-			early_hw: pass.get(self.early_hw).ptr(),
-			early_sw: pass.get(self.early_sw).ptr(),
-			late_hw: pass.get(self.late_hw).ptr(),
-			late_sw: pass.get(self.late_sw).ptr(),
+			queue: pass.get(self.queue).ptr(),
 			visbuffer: pass.get(self.visbuffer).storage_id.unwrap(),
 			debug: self.debug.map(|x| x.get(pass)),
 			_pad: 0,
@@ -116,10 +106,7 @@ impl VisBufferReader {
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuVisBufferReaderDebug {
-	early_hw: GpuPtr<u8>,
-	early_sw: GpuPtr<u8>,
-	late_hw: GpuPtr<u8>,
-	late_sw: GpuPtr<u8>,
+	queue: GpuPtr<u8>,
 	visbuffer: StorageImageId,
 	debug: Option<DebugResId>,
 	_pad: u32,
@@ -128,10 +115,7 @@ pub struct GpuVisBufferReaderDebug {
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuVisBufferReader {
-	early_hw: GpuPtr<u8>,
-	early_sw: GpuPtr<u8>,
-	late_hw: GpuPtr<u8>,
-	late_sw: GpuPtr<u8>,
+	queue: GpuPtr<u8>,
 	visbuffer: StorageImageId,
 	_pad: u32,
 }
@@ -201,10 +185,7 @@ impl CameraData {
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
 	camera: GpuPtr<CameraData>,
-	early_hw: GpuPtr<u8>,
-	early_sw: GpuPtr<u8>,
-	late_hw: GpuPtr<u8>,
-	late_sw: GpuPtr<u8>,
+	queue: GpuPtr<u8>,
 	output: StorageImageId,
 	debug: Option<DebugResId>,
 	_pad: u32,
@@ -214,7 +195,7 @@ struct PushConstants {
 struct PassIO {
 	early: bool,
 	instances: GpuPtr<GpuInstance>,
-	meshlets: [Res<BufferHandle>; 4],
+	queue: Res<BufferHandle>,
 	camera: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
 	debug: Option<DebugRes>,
@@ -308,18 +289,36 @@ impl VisBuffer {
 
 		let mut pass = frame.pass("rasterize");
 		let camera = res.camera_mesh(&mut pass);
-		let meshlets = res.mesh(&mut pass);
+		let queue = res.mesh(&mut pass);
 		let visbuffer = res.visbuffer(&mut pass);
 		let debug = res.debug(&mut pass);
 		let mut io = PassIO {
 			early: true,
 			instances: info.scene.instances(),
-			meshlets,
+			queue,
 			camera,
 			visbuffer,
 			debug,
 		};
 		pass.build(move |ctx| this.execute(ctx, io));
+
+		let mut pass = frame.pass("zero render queue");
+		let zero = res.mesh_zero(&mut pass);
+		pass.build(move |mut ctx| unsafe {
+			let zero = ctx.get(zero);
+			ctx.device.device().cmd_update_buffer(
+				ctx.buf,
+				zero.buffer,
+				std::mem::size_of::<u32>() as u64 * 2,
+				cast_slice(&[0u32]),
+			);
+			ctx.device.device().cmd_update_buffer(
+				ctx.buf,
+				zero.buffer,
+				std::mem::size_of::<u32>() as u64 * 6,
+				cast_slice(&[0u32]),
+			);
+		});
 		frame.end_region();
 
 		this.hzb_gen.run(frame, visbuffer, res.hzb);
@@ -347,27 +346,20 @@ impl VisBuffer {
 			camera,
 			reader: VisBufferReader {
 				visbuffer,
-				early_hw: io.meshlets[0],
-				early_sw: io.meshlets[1],
-				late_hw: io.meshlets[2],
-				late_sw: io.meshlets[3],
+				queue,
 				debug,
 			},
 		}
 	}
 
 	fn execute(&self, mut pass: PassContext, io: PassIO) {
-		let read_hw = pass.get(if io.early { io.meshlets[0] } else { io.meshlets[2] });
-		let read_sw = pass.get(if io.early { io.meshlets[1] } else { io.meshlets[3] });
 		let visbuffer = pass.get(io.visbuffer);
+		let queue = pass.get(io.queue);
 
 		let push = PushConstants {
 			instances: io.instances,
 			camera: pass.get(io.camera).ptr(),
-			early_hw: pass.get(io.meshlets[0]).ptr(),
-			early_sw: pass.get(io.meshlets[1]).ptr(),
-			late_hw: pass.get(io.meshlets[2]).ptr(),
-			late_sw: pass.get(io.meshlets[3]).ptr(),
+			queue: pass.get(io.queue).ptr(),
 			output: visbuffer.storage_id.unwrap(),
 			debug: io.debug.map(|d| d.get(&mut pass)),
 			_pad: 0,
@@ -396,8 +388,8 @@ impl VisBuffer {
 			|_, buf| unsafe {
 				self.mesh.cmd_draw_mesh_tasks_indirect(
 					buf,
-					read_hw.buffer,
-					0,
+					queue.buffer,
+					std::mem::size_of::<u32>() as u64 * 2,
 					1,
 					std::mem::size_of::<u32>() as u32 * 3,
 				);
@@ -417,7 +409,7 @@ impl VisBuffer {
 				&self.no_debug.late_sw
 			}
 		}
-		.dispatch_indirect(&push, &pass, read_sw.buffer, 0);
+		.dispatch_indirect(&push, &pass, queue.buffer, std::mem::size_of::<u32>() * 6);
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {

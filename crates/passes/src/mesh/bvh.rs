@@ -27,13 +27,11 @@ struct PushConstants {
 	camera: GpuPtr<CameraData>,
 	hzb: ImageId,
 	hzb_sampler: SamplerId,
-	read: GpuPtr<u8>,
-	next: GpuPtr<u8>,
-	meshlet: GpuPtr<u8>,
+	queue: GpuPtr<u8>,
 	late: GpuPtr<u8>,
-	late_meshlet: GpuPtr<u8>,
+	meshlet: GpuPtr<u8>,
 	res: Vec2<u32>,
-	len: u32,
+	ping: u32,
 	_pad: u32,
 }
 
@@ -56,60 +54,46 @@ impl BvhCull {
 	}
 
 	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, resources: &Resources) {
-		let mut read = if self.early {
-			resources.bvh_queues[0]
-		} else {
-			resources.bvh_queues[2]
-		};
-		let mut next = resources.bvh_queues[1];
+		let queue = resources.bvh_queues[!self.early as usize];
+		let late = resources.bvh_queues[1];
+		let mut ping = true;
+
 		for _ in 0..info.scene.max_depth() {
 			let mut pass = frame.pass("bvh cull");
 
 			let camera = resources.camera(&mut pass);
 			let hzb = resources.hzb(&mut pass);
 			if self.early {
-				resources.output(&mut pass, resources.bvh_queues[2]);
+				resources.output(&mut pass, late);
 			}
-			resources.input(&mut pass, read);
-			resources.output(&mut pass, next);
-			let q = if self.early {
-				resources.output(&mut pass, resources.meshlet_queues[1]);
-				resources.meshlet_queues[0]
-			} else {
-				resources.meshlet_queues[1]
-			};
-			let meshlet = resources.output(&mut pass, q);
+			resources.input_output(&mut pass, queue);
+			let meshlet = resources.output(&mut pass, resources.meshlet_queue);
 
 			let instances = info.scene.instances();
 			let hzb_sampler = resources.hzb_sampler;
-			let late = resources.bvh_queues[2];
-			let late_meshlet = resources.meshlet_queues[1];
 			let res = info.size;
-			let len = resources.len;
 			pass.build(move |mut pass| {
-				let read = pass.get(read);
+				let queue = pass.get(queue);
 				self.pass.dispatch_indirect(
 					&PushConstants {
 						instances,
 						camera: pass.get(camera).ptr(),
 						hzb: pass.get(hzb).id.unwrap(),
 						hzb_sampler,
-						read: read.ptr(),
-						next: pass.get(next).ptr(),
+						queue: queue.ptr(),
 						meshlet: pass.get(meshlet).ptr(),
 						late: pass.get(late).ptr(),
-						late_meshlet: pass.get(late_meshlet).ptr(),
 						res,
-						len,
+						ping: ping as _,
 						_pad: 0,
 					},
 					&pass,
-					read.buffer,
-					std::mem::size_of::<u32>(),
+					queue.buffer,
+					std::mem::size_of::<u32>() * if ping { 2 } else { 6 },
 				);
 			});
 
-			(read, next) = (next, read);
+			ping = !ping;
 		}
 	}
 

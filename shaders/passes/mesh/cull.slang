@@ -8,102 +8,147 @@ public struct NodePointer {
 	public u32 node_offset;
 }
 
+struct Dispatch {
+	u32 count;
+	u32x3 dispatch;
+}
+
 struct BvhQueueData {
 	u32 len;
-	u32x3 dispatch;
+	Dispatch front;
+	Dispatch back;
 	NodePointer pointers[];
 }
 
 public struct BvhQueue {
 	BvhQueueData* data;
 
-	public u32 len() {
-		return this.data->len;
+	public u32 front_count() {
+		return this.data->front.count;
 	}
 
-	public NodePointer get(u32 id) {
+	public u32 back_count() {
+		return this.data->back.count;
+	}
+
+	public NodePointer get_front(u32 id) {
 		return this.data->pointers[id];
 	}
 
-	bool in_bounds(u32 len, u32 i) {
-		return sizeof(u32x4) + (i + 1) * sizeof(NodePointer) < len;
+	public NodePointer get_back(u32 id) {
+		return this.data->pointers[this.data->len - id - 1];
 	}
 
-	u32 clamp_end(u32 len, u32 end) {
-		return min((len - sizeof(u32x4)) / sizeof(NodePointer), end);
+	public void push_front(NodePointer pointer) {
+		let pos = wave_atomic_inc(this.data->front.count);
+		let req = (pos + 1 + 7) >> 3;
+		if ((pos & 7) == 0)
+			wave_atomic_max(this.data->front.dispatch.x, req);
+		this.data->pointers[pos] = pointer;
 	}
 
-	u32 reserve(u32 len, u32 bits, u32 count) {
-		let base = atomic_add(this.data->len, count);
-		let req = (this.clamp_end(len, base + count) + (1 << bits) - 1) >> bits;
-		atomic_max(this.data->dispatch.x, req);
-		return base;
+	public void push_back(NodePointer pointer) {
+		let pos = wave_atomic_inc(this.data->back.count);
+		let req = (pos + 1 + 7) >> 3;
+		if ((pos & 7) == 0)
+			wave_atomic_max(this.data->back.dispatch.x, req);
+		this.data->pointers[this.data->len - pos - 1] = pointer;
+	}
+	
+	public void done_front() {
+		done(&this.data->front);
 	}
 
-	public void push(NodePointer pointer) {
-		this.push(-1, pointer);
+	public void done_back() {
+		done(&this.data->back);
 	}
 
-	public void push(u32 len, NodePointer pointer) {
-		this.push_inner(len, 3, pointer);
+	static void done(Dispatch* dispatch) {
+		let prev = atomic_sub(dispatch->dispatch.x, 1);
+		if (prev == 1)
+			dispatch->count = 0;
+	}
+}
+
+public struct CandidateMeshletQueue {
+	BvhQueueData* data;
+
+	public u32 count() {
+		return EARLY ? this.data->front.count : this.data->back.count;
 	}
 
-	public void push_meshlet(u32 len, NodePointer pointer) {
-		this.push_inner(len, 6, pointer);
+	public NodePointer get(u32 id) {
+		return EARLY ? this.data->pointers[id] : this.data->pointers[this.data->len - id - 1];
 	}
 
-	void push_inner(u32 len, u32 bits, NodePointer pointer) {
-		let rel = WavePrefixCountBits(true);
-		let total = WaveActiveCountBits(true);
-		u32 pos;
-		if (WaveIsFirstLane())
-			pos = this.reserve(len, bits, total);
-		pos = WaveReadLaneFirst(pos) + rel;
-		if (this.clamp_end(len, pos + 1) != pos)
-			this.data->pointers[pos] = pointer;
-	}
-
-	public void push_meshlets(u32 len, NodePointer pointer, u8 count) {
-		let rel = WavePrefixSum(u32(count));
-		let total = WaveActiveSum(u32(count));
-		u32 base;
-		if (WaveIsFirstLane())
-			base = this.reserve(len, 6, total);
-		base = WaveReadLaneFirst(base) + rel;
-		let end = this.clamp_end(len, base + count);
+	public void push_early(NodePointer pointer, u32 count) {
+		let base = wave_atomic_add(this.data->front.count, count);
+		let req = (base + count + 63) >> 6;
+		wave_atomic_max(this.data->front.dispatch.x, req);
+		let end = base + count;
 		for (int i = base; i < end; i++) {
 			this.data->pointers[i] = pointer;
 			pointer.node_offset += sizeof(Meshlet);
 		}
 	}
 
-	public void done() {
-		let prev = atomic_sub(this.data->dispatch.x, 1);
-		if (prev == 1)
-			this.data->len = 0;
-	}
+	public void push_late(NodePointer pointer, u32 count) {
+		let base = wave_atomic_add(this.data->back.count, count);
+		let req = (base + count + 63) >> 6;
+		wave_atomic_max(this.data->back.dispatch.x, req);
+		let start = this.data->len - base - count;
+		let end = this.data->len - base;
+		for (int i = start; i < end; i++) {
+			this.data->pointers[i] = pointer;
+			pointer.node_offset += sizeof(Meshlet);
+		}
+	}	
 }
 
 struct MeshletQueueData {
-	u32x3 dispatch;
+	u32 len;
+	u32 early_hw;
+	u32x3 hw;
+	u32 early_sw;
+	u32x3 sw;
 	NodePointer pointers[];
 }
 
 public struct MeshletQueue {
 	MeshletQueueData* data;
 
-	public u32 len() {
-		return this.data->dispatch.x;
-	}
-
 	public NodePointer get(u32 id) {
 		return this.data->pointers[id];
 	}
 
-	public void push(u32 len, NodePointer pointer) {
-		let pos = wave_atomic_inc(this.data->dispatch.x);
-		if ((pos + 1) * sizeof(NodePointer) + sizeof(u32x3) < len)
-			this.data.pointers[pos] = pointer;
+	public u32 hw_id(u32 id) {
+		return (EARLY ? 0 : this.data->early_hw) + id;
+	}
+
+	public u32 sw_id(u32 id) {
+		return this.data->len - (EARLY ? 0 : this.data->early_sw) - id - 1;
+	}
+
+	public NodePointer get_hw(u32 id) {
+		return this.data->pointers[this.hw_id(id)];
+	}
+
+	public NodePointer get_sw(u32 id) {
+		return this.data->pointers[this.sw_id(id)];
+	}
+
+	public void push_hw(NodePointer pointer) {
+		if (EARLY)
+			wave_atomic_inc(this.data->early_hw);
+		let pos = wave_atomic_inc(this.data->hw.x);
+		this.data->pointers[this.hw_id(pos)] = pointer;
+	}
+
+	public void push_sw(NodePointer pointer) {
+		if (EARLY)
+			wave_atomic_inc(this.data->early_sw);
+		let pos = wave_atomic_inc(this.data->sw.x);
+		this.data->pointers[this.sw_id(pos)] = pointer;
 	}
 }
 
