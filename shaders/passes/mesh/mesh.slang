@@ -19,6 +19,7 @@ struct PushConstants {
 	Instance* instances;
 	Camera* camera;
 	MeshletQueue queue;
+	CullStats* stats;
 	VisBufferTex output;
 }
 
@@ -33,12 +34,17 @@ struct Init {
 
 	__init(u32 gid, u32 gtid, constexpr bool hw) {
 		NodePointer p;
+		let report_stats = gid == 0 && gtid == 0;
 		if (hw) {
 			p = Constants.queue.get_hw(gid);
 			this.mid = Constants.queue.hw_id(gid);
+			if (report_stats)
+				get_stats(Constants.stats)->hw_meshlets = Constants.queue.hw_count();
 		} else {
 			p = Constants.queue.get_sw(gid);
 			this.mid = Constants.queue.sw_id(gid);
+			if (report_stats)
+				get_stats(Constants.stats)->sw_meshlets = Constants.queue.sw_count();
 		}
 		let instance = Constants.instances[p.instance];
 		this.mesh = instance.mesh;

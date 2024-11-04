@@ -13,7 +13,7 @@ use radiance_graph::{
 };
 use vek::Vec2;
 
-use crate::mesh::{setup::Resources, CameraData, RenderInfo};
+use crate::mesh::{setup::Resources, CameraData, CullStats, RenderInfo};
 
 pub struct InstanceCull {
 	early: bool,
@@ -29,6 +29,7 @@ struct PushConstants {
 	hzb_sampler: SamplerId,
 	next: GpuPtr<u8>,
 	late_instances: GpuPtr<u32>,
+	stats: GpuPtr<CullStats>,
 	instance_count: u32,
 	res: Vec2<u32>,
 	_pad: u32,
@@ -63,6 +64,7 @@ impl InstanceCull {
 		} else {
 			resources.input(&mut pass, resources.late_instances)
 		};
+		let stats = resources.stats(&mut pass);
 
 		let instances = info.scene.instances();
 		let hzb_sampler = resources.hzb_sampler;
@@ -77,6 +79,7 @@ impl InstanceCull {
 				hzb_sampler,
 				next: pass.get(next).ptr(),
 				late_instances: latei.ptr(),
+				stats: pass.get(stats).ptr(),
 				instance_count,
 				res,
 				_pad: 0,

@@ -1,7 +1,7 @@
 use std::io::Write;
 
 use ash::vk;
-use bytemuck::{bytes_of, NoUninit, PodInOption, ZeroableInOption};
+use bytemuck::{bytes_of, checked::from_bytes, NoUninit, PodInOption, ZeroableInOption};
 use radiance_asset::rref::RWeak;
 use radiance_graph::{
 	device::descriptor::{SamplerId, StorageImageId},
@@ -22,7 +22,7 @@ use radiance_graph::{
 	sync::Shader,
 };
 
-use crate::mesh::{Camera, CameraData, RenderInfo};
+use crate::mesh::{Camera, CameraData, CullStats, RenderInfo};
 
 #[derive(Copy, Clone)]
 pub struct DebugRes {
@@ -57,6 +57,7 @@ pub struct Resources {
 	pub bvh_queues: [Res<BufferHandle>; 2],
 	pub meshlet_queue: Res<BufferHandle>,
 	pub meshlet_render: Res<BufferHandle>,
+	pub stats: Res<BufferHandle>,
 	pub visbuffer: Res<ImageView>,
 	pub debug: Option<DebugRes>,
 }
@@ -159,6 +160,29 @@ impl Resources {
 		self.meshlet_render
 	}
 
+	pub fn stats(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
+		pass.reference(
+			self.stats,
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Compute)],
+			},
+		);
+		self.stats
+	}
+
+	pub fn stats_mesh(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
+		pass.reference(
+			self.stats,
+			BufferUsage {
+				usages: &[
+					BufferUsageType::ShaderStorageWrite(Shader::Mesh),
+					BufferUsageType::ShaderStorageWrite(Shader::Compute),
+				],
+			},
+		);
+		self.stats
+	}
+
 	pub fn visbuffer(&self, pass: &mut PassBuilder) -> Res<ImageView> {
 		pass.reference(
 			self.visbuffer,
@@ -204,14 +228,22 @@ struct Persistent {
 
 pub struct Setup {
 	inner: Option<Persistent>,
+	pub stats: CullStats,
 }
 
 fn prev_pot(x: u32) -> u32 { 1 << x.ilog2() }
 
 impl Setup {
-	pub fn new() -> Self { Self { inner: None } }
+	pub fn new() -> Self {
+		Self {
+			inner: None,
+			stats: CullStats::default(),
+		}
+	}
 
-	pub fn run(&mut self, frame: &mut Frame, info: &RenderInfo, hzb_sampler: SamplerId) -> Resources {
+	pub fn run<'pass>(
+		&'pass mut self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, hzb_sampler: SamplerId,
+	) -> Resources {
 		let (mut needs_clear, prev) = match &mut self.inner {
 			Some(Persistent { scene, camera }) => {
 				let prev = *camera;
@@ -285,6 +317,15 @@ impl Setup {
 		let bvh_queues = [(); 2].map(|_| pass.resource(desc, usage));
 		let meshlet_queue = pass.resource(desc, usage);
 		let meshlet_render = pass.resource(desc, usage);
+		let stats = pass.resource(
+			BufferDesc {
+				size: std::mem::size_of::<CullStats>() as u64,
+				loc: BufferLoc::Readback,
+				persist: Some("cull stats readback"),
+			},
+			BufferUsage { usages: &[] },
+		);
+
 		let desc = ImageDesc {
 			size: vk::Extent3D {
 				width: res.x,
@@ -397,6 +438,10 @@ impl Setup {
 				dev.cmd_update_buffer(buf, pass.get(b).buffer, 0, bytes_of(&[count, 0, 0, 1, 1, 0, 0, 1, 1]));
 			}
 			dev.cmd_update_buffer(buf, pass.get(late_instances).buffer, 0, bytes_of(&[0, 0, 1, 1]));
+
+			if !pass.is_uninit(stats) {
+				self.stats = *from_bytes(pass.get(stats).data.as_ref());
+			}
 		});
 
 		Resources {
@@ -407,6 +452,7 @@ impl Setup {
 			bvh_queues,
 			meshlet_queue,
 			meshlet_render,
+			stats,
 			visbuffer,
 			debug,
 		}

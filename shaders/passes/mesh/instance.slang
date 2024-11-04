@@ -17,6 +17,7 @@ struct PushConstants {
 	Sampler hzb_sampler;
 	BvhQueue next;
 	LateInstances* late_instances;
+	CullStats* stats;
 	u32 instance_count;
 	u32x2 res;
 }
@@ -53,7 +54,10 @@ void write(bool visible, u32 id) {
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void main(u32 tid: SV_DispatchThreadID) {
-	if (tid >= instance_count())
+	let count = instance_count();
+	if (tid == 0)
+		get_stats(Constants.stats)->instances = count;
+	if (tid >= count)
 		return;
 
 	let id = instance_id(tid);

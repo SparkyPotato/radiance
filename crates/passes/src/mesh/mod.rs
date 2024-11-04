@@ -1,5 +1,5 @@
 use ash::{ext, vk};
-use bytemuck::{cast_slice, NoUninit};
+use bytemuck::{cast_slice, NoUninit, Pod, Zeroable};
 use radiance_asset::{
 	rref::RRef,
 	scene::{GpuInstance, Scene},
@@ -122,25 +122,10 @@ pub struct GpuVisBufferReader {
 
 #[derive(Copy, Clone)]
 pub struct RenderOutput {
+	pub stats: CullStats,
 	pub instances: GpuPtr<GpuInstance>,
 	pub camera: Res<BufferHandle>,
 	pub reader: VisBufferReader,
-}
-
-struct Passes {
-	early_hw: RenderPass<PushConstants>,
-	early_sw: ComputePass<PushConstants>,
-	late_hw: RenderPass<PushConstants>,
-	late_sw: ComputePass<PushConstants>,
-}
-
-impl Passes {
-	unsafe fn destroy(self) {
-		self.early_hw.destroy();
-		self.early_sw.destroy();
-		self.late_hw.destroy();
-		self.late_sw.destroy();
-	}
 }
 
 pub struct VisBuffer {
@@ -181,11 +166,28 @@ impl CameraData {
 }
 
 #[repr(C)]
+#[derive(Copy, Clone, Default, Pod, Zeroable)]
+pub struct PassStats {
+	pub instances: u32,
+	pub candidate_meshlets: u32,
+	pub hw_meshlets: u32,
+	pub sw_meshlets: u32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Default, Pod, Zeroable)]
+pub struct CullStats {
+	pub early: PassStats,
+	pub late: PassStats,
+}
+
+#[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
 	camera: GpuPtr<CameraData>,
 	queue: GpuPtr<u8>,
+	stats: GpuPtr<CullStats>,
 	output: StorageImageId,
 	debug: Option<DebugResId>,
 	_pad: u32,
@@ -197,8 +199,65 @@ struct PassIO {
 	instances: GpuPtr<GpuInstance>,
 	queue: Res<BufferHandle>,
 	camera: Res<BufferHandle>,
+	stats: Res<BufferHandle>,
 	visbuffer: Res<ImageView>,
 	debug: Option<DebugRes>,
+}
+
+struct Passes {
+	early_hw: RenderPass<PushConstants>,
+	early_sw: ComputePass<PushConstants>,
+	late_hw: RenderPass<PushConstants>,
+	late_sw: ComputePass<PushConstants>,
+}
+
+impl Passes {
+	fn execute(&self, mesh: &ext::mesh_shader::Device, mut pass: PassContext, io: PassIO) {
+		let visbuffer = pass.get(io.visbuffer);
+		let queue = pass.get(io.queue);
+
+		let push = PushConstants {
+			instances: io.instances,
+			camera: pass.get(io.camera).ptr(),
+			queue: pass.get(io.queue).ptr(),
+			stats: pass.get(io.stats).ptr(),
+			output: visbuffer.storage_id.unwrap(),
+			debug: io.debug.map(|d| d.get(&mut pass)),
+			_pad: 0,
+		};
+
+		if io.early { &self.early_hw } else { &self.late_hw }.run_empty(
+			&pass,
+			&push,
+			vk::Extent2D {
+				width: visbuffer.size.width,
+				height: visbuffer.size.height,
+			},
+			|_, buf| unsafe {
+				mesh.cmd_draw_mesh_tasks_indirect(
+					buf,
+					queue.buffer,
+					std::mem::size_of::<u32>() as u64 * 2,
+					1,
+					std::mem::size_of::<u32>() as u32 * 3,
+				);
+			},
+		);
+
+		if io.early { &self.early_sw } else { &self.late_sw }.dispatch_indirect(
+			&push,
+			&pass,
+			queue.buffer,
+			std::mem::size_of::<u32>() * 6,
+		);
+	}
+
+	unsafe fn destroy(self) {
+		self.early_hw.destroy();
+		self.early_sw.destroy();
+		self.late_hw.destroy();
+		self.late_sw.destroy();
+	}
 }
 
 impl VisBuffer {
@@ -277,19 +336,20 @@ impl VisBuffer {
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> RenderOutput {
 		frame.start_region("visbuffer");
 
+		let rstats = self.setup.stats;
 		let res = self.setup.run(frame, &info, self.hzb_gen.sampler());
-		let this: &Self = self;
 
 		frame.start_region("early pass");
 		frame.start_region("cull");
-		this.early_instance_cull.run(frame, &info, &res);
-		this.early_bvh_cull.run(frame, &info, &res);
-		this.early_meshlet_cull.run(frame, &info, &res);
+		self.early_instance_cull.run(frame, &info, &res);
+		self.early_bvh_cull.run(frame, &info, &res);
+		self.early_meshlet_cull.run(frame, &info, &res);
 		frame.end_region();
 
 		let mut pass = frame.pass("rasterize");
 		let camera = res.camera_mesh(&mut pass);
 		let queue = res.mesh(&mut pass);
+		let stats = res.stats_mesh(&mut pass);
 		let visbuffer = res.visbuffer(&mut pass);
 		let debug = res.debug(&mut pass);
 		let mut io = PassIO {
@@ -297,10 +357,17 @@ impl VisBuffer {
 			instances: info.scene.instances(),
 			queue,
 			camera,
+			stats,
 			visbuffer,
 			debug,
 		};
-		pass.build(move |ctx| this.execute(ctx, io));
+		let p = if io.debug.is_some() {
+			&self.debug
+		} else {
+			&self.no_debug
+		};
+		let mesh = &self.mesh;
+		pass.build(move |ctx| p.execute(mesh, ctx, io));
 
 		let mut pass = frame.pass("zero render queue");
 		let zero = res.mesh_zero(&mut pass);
@@ -321,12 +388,12 @@ impl VisBuffer {
 		});
 		frame.end_region();
 
-		this.hzb_gen.run(frame, visbuffer, res.hzb);
+		self.hzb_gen.run(frame, visbuffer, res.hzb);
 		frame.start_region("late pass");
 		frame.start_region("cull");
-		this.late_instance_cull.run(frame, &info, &res);
-		this.late_bvh_cull.run(frame, &info, &res);
-		this.late_meshlet_cull.run(frame, &info, &res);
+		self.late_instance_cull.run(frame, &info, &res);
+		self.late_bvh_cull.run(frame, &info, &res);
+		self.late_meshlet_cull.run(frame, &info, &res);
 		frame.end_region();
 
 		let mut pass = frame.pass("rasterize");
@@ -335,13 +402,14 @@ impl VisBuffer {
 		res.visbuffer(&mut pass);
 		res.debug(&mut pass);
 		io.early = false;
-		pass.build(move |ctx| this.execute(ctx, io));
+		pass.build(move |ctx| p.execute(mesh, ctx, io));
 		frame.end_region();
 
-		this.hzb_gen.run(frame, visbuffer, res.hzb);
+		self.hzb_gen.run(frame, visbuffer, res.hzb);
 
 		frame.end_region();
 		RenderOutput {
+			stats: rstats,
 			instances: info.scene.instances(),
 			camera,
 			reader: VisBufferReader {
@@ -350,66 +418,6 @@ impl VisBuffer {
 				debug,
 			},
 		}
-	}
-
-	fn execute(&self, mut pass: PassContext, io: PassIO) {
-		let visbuffer = pass.get(io.visbuffer);
-		let queue = pass.get(io.queue);
-
-		let push = PushConstants {
-			instances: io.instances,
-			camera: pass.get(io.camera).ptr(),
-			queue: pass.get(io.queue).ptr(),
-			output: visbuffer.storage_id.unwrap(),
-			debug: io.debug.map(|d| d.get(&mut pass)),
-			_pad: 0,
-		};
-
-		if io.debug.is_some() {
-			if io.early {
-				&self.debug.early_hw
-			} else {
-				&self.debug.late_hw
-			}
-		} else {
-			if io.early {
-				&self.no_debug.early_hw
-			} else {
-				&self.no_debug.late_hw
-			}
-		}
-		.run_empty(
-			&pass,
-			&push,
-			vk::Extent2D {
-				width: visbuffer.size.width,
-				height: visbuffer.size.height,
-			},
-			|_, buf| unsafe {
-				self.mesh.cmd_draw_mesh_tasks_indirect(
-					buf,
-					queue.buffer,
-					std::mem::size_of::<u32>() as u64 * 2,
-					1,
-					std::mem::size_of::<u32>() as u32 * 3,
-				);
-			},
-		);
-
-		if io.debug.is_some() {
-			if io.early {
-				&self.debug.early_sw
-			} else {
-				&self.debug.late_sw
-			}
-		} else {
-			if io.early {
-				&self.no_debug.early_sw
-			} else {
-				&self.no_debug.late_sw
-			}
-		}
-		.dispatch_indirect(&push, &pass, queue.buffer, std::mem::size_of::<u32>() * 6);
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {

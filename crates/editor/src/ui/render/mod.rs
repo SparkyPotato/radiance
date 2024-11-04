@@ -6,7 +6,7 @@ use radiance_egui::to_texture_id;
 use radiance_graph::{device::Device, graph::Frame, Result};
 use radiance_passes::{
 	debug::mesh::DebugMesh,
-	mesh::{RenderInfo, VisBuffer},
+	mesh::{RenderInfo, RenderOutput, VisBuffer},
 };
 use vek::Vec2;
 use winit::event::WindowEvent;
@@ -62,31 +62,35 @@ impl Renderer {
 	pub fn render<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, window: &Window, debug: &Debug,
 		system: Option<Arc<AssetSystem>>, notifs: &mut NotifStack, pool: &TaskPool,
-	) {
-		CentralPanel::default().show(ctx, |ui| {
-			if let Some(x) = self.render_inner(frame, ctx, ui, window, debug, system, notifs, pool) {
-				if x {
+	) -> Option<RenderOutput> {
+		CentralPanel::default()
+			.show(ctx, |ui| {
+				if let Some(x) = self.render_inner(frame, ctx, ui, window, debug, system, notifs, pool) {
+					if x.is_none() {
+						ui.centered_and_justified(|ui| {
+							ui.label(RichText::new("no scene loaded").size(20.0));
+						});
+					}
+					x
+				} else {
 					ui.centered_and_justified(|ui| {
-						ui.label(RichText::new("no scene loaded").size(20.0));
+						ui.label(RichText::new("error rendering scene").size(20.0));
 					});
+					None
 				}
-			} else {
-				ui.centered_and_justified(|ui| {
-					ui.label(RichText::new("error rendering scene").size(20.0));
-				});
-			}
-		});
+			})
+			.inner
 	}
 
 	fn render_inner<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context, ui: &mut Ui, window: &Window, debug: &Debug,
 		system: Option<Arc<AssetSystem>>, notifs: &mut NotifStack, pool: &TaskPool,
-	) -> Option<bool> {
+	) -> Option<Option<RenderOutput>> {
 		let Some(system) = system else {
-			return Some(true);
+			return Some(None);
 		};
 		let scene = match self.scene {
-			Scene::None => return Some(true),
+			Scene::None => return Some(None),
 			Scene::Unloaded(sc) => {
 				let dev = frame.device().clone();
 				let (s, r) = oneshot::channel();
@@ -107,19 +111,19 @@ impl Renderer {
 					),
 				);
 				self.scene = Scene::Loading(r);
-				return Some(true);
+				return Some(None);
 			},
 			Scene::Loading(ref mut r) => match r.try_recv() {
 				Ok(Some(s)) => {
 					let s = s.clone();
 					self.scene = Scene::Loaded(s.clone());
-					return Some(true);
+					return Some(None);
 				},
 				Ok(None) => {
 					self.scene = Scene::None;
-					return Some(true);
+					return Some(None);
 				},
-				Err(_) => return Some(true),
+				Err(_) => return Some(None),
 			},
 			Scene::Loaded(ref s) => s,
 		};
@@ -162,7 +166,7 @@ impl Renderer {
 			clicked.then(|| resp.interact_pointer_pos().unwrap()),
 		);
 
-		Some(false)
+		Some(Some(visbuffer))
 	}
 
 	pub fn undo(&mut self, notifs: &mut NotifStack) {

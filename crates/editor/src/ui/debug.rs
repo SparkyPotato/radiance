@@ -1,9 +1,12 @@
-use egui::{ComboBox, Context, DragValue, Window};
+use egui::{ComboBox, Context, DragValue, Ui, Window};
 use radiance_graph::{
 	alloc::AllocatorVisualizer,
 	device::{Device, HotreloadStatus},
 };
-use radiance_passes::debug::mesh::DebugVis;
+use radiance_passes::{
+	debug::mesh::DebugVis,
+	mesh::{CullStats, PassStats},
+};
 
 pub struct Debug {
 	pub enabled: bool,
@@ -41,7 +44,7 @@ impl Debug {
 		}
 	}
 
-	pub fn render(&mut self, device: &Device, ctx: &Context) {
+	pub fn render(&mut self, device: &Device, ctx: &Context, stats: CullStats) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut sel = self.debug_vis.to_u32() as usize;
 			ComboBox::from_label("debug vis")
@@ -83,7 +86,12 @@ impl Debug {
 					HotreloadStatus::Recompiling => ui.spinner(),
 					HotreloadStatus::Errored => ui.label("errored"),
 				}
-			})
+			});
+
+			ui.label("early");
+			Self::pass_stats(ui, stats.early);
+			ui.label("late");
+			Self::pass_stats(ui, stats.late);
 		});
 
 		let alloc = device.allocator();
@@ -93,6 +101,13 @@ impl Debug {
 			.open(&mut self.alloc_block)
 			.show(ctx, |ui| self.alloc.render_memory_block_ui(ui, &alloc));
 		self.alloc.render_memory_block_visualization_windows(ctx, &alloc);
+	}
+
+	fn pass_stats(ui: &mut Ui, pass: PassStats) {
+		ui.label(format!("instances: {}", pass.instances));
+		ui.label(format!("candidate meshlets: {}", pass.candidate_meshlets));
+		ui.label(format!("hw meshlets: {}", pass.hw_meshlets));
+		ui.label(format!("sw meshlets: {}", pass.sw_meshlets));
 	}
 
 	pub fn set_arena_size(&mut self, size: usize) { self.arena_size = size; }

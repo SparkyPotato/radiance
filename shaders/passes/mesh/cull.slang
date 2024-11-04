@@ -8,6 +8,22 @@ public struct NodePointer {
 	public u32 node_offset;
 }
 
+public struct PassStats {
+	public u32 instances;
+	public u32 candidate_meshlets;
+	public u32 hw_meshlets;
+	public u32 sw_meshlets;
+}
+
+public struct CullStats {
+	public PassStats early;
+	public PassStats late;
+}
+
+public PassStats* get_stats(CullStats* stats) {
+	return EARLY ? &stats->early : &stats->late;
+}
+
 struct Dispatch {
 	u32 count;
 	u32x3 dispatch;
@@ -119,6 +135,14 @@ public struct MeshletQueue {
 
 	public NodePointer get(u32 id) {
 		return this.data->pointers[id];
+	}
+
+	public u32 hw_count() {
+		return this.data->hw.x;
+	}
+
+	public u32 sw_count() {
+		return this.data->sw.x;
 	}
 
 	public u32 hw_id(u32 id) {
@@ -329,7 +353,7 @@ public struct Cull {
 		let dist = this.error_distance(lod_bounds);
 		let scale = this.error_scale();
 		let min_dist = scale * this.min_scale * error;
-		let edge_scale = (scale / 64.f) * this.scale * edge;
+		let edge_scale = (scale / 32.f) * this.scale * edge;
 		return bool2(dist > min_dist, dist < edge_scale);
 	}
 

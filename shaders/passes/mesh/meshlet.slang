@@ -11,6 +11,7 @@ struct PushConstants {
 	Sampler hzb_sampler;
 	CandidateMeshletQueue queue;
 	MeshletQueue render;
+	CullStats* stats;
 	u32x2 res;
 }
 
@@ -33,7 +34,10 @@ void write(bool visible, bool hw, NodePointer p) {
 [shader("compute")]
 [numthreads(64, 1, 1)]
 void main(u32 id: SV_DispatchThreadID) {
-	if (id >= Constants.queue.count())
+	let count = Constants.queue.count();
+	if (id == 0)
+		get_stats(Constants.stats)->candidate_meshlets = count;
+	if (id >= count)
 		return;
 
 	let p = Constants.queue.get(id);

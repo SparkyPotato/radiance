@@ -93,9 +93,6 @@ impl UiState {
 				.save(self.assets.system.clone(), &mut self.notifs, &self.pool);
 		}
 
-		self.debug.set_arena_size(arena_size);
-		self.debug.render(frame.device(), ctx);
-
 		self.assets.render(
 			frame,
 			ctx,
@@ -104,7 +101,7 @@ impl UiState {
 			&self.fonts,
 			&self.pool,
 		);
-		self.renderer.render(
+		let visbuffer = self.renderer.render(
 			frame,
 			ctx,
 			window,
@@ -113,6 +110,11 @@ impl UiState {
 			&mut self.notifs,
 			&self.pool,
 		);
+
+		self.debug.set_arena_size(arena_size);
+		self.debug
+			.render(frame.device(), ctx, visbuffer.map(|x| x.stats).unwrap_or_default());
+
 		self.notifs.render(ctx, &self.fonts);
 	}
 
