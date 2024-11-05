@@ -11,9 +11,11 @@ use std::{
 
 use bytemuck::{checked::from_bytes, Pod, Zeroable};
 use crossbeam_channel::{Receiver, Sender};
-use dashmap::{mapref::entry::Entry, DashMap};
+use dashmap::DashMap;
+use parking_lot::RwLock;
 use radiance_graph::{device::Device, graph::Frame};
 use rustc_hash::{FxHashMap, FxHasher};
+use tracing::trace_span;
 pub use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -105,7 +107,7 @@ type FxDashMap<K, V> = DashMap<K, V, BuildHasherDefault<FxHasher>>;
 pub struct AssetSystem {
 	deleter: Sender<DelRes>,
 	delete_recv: Receiver<DelRes>,
-	loaded: FxDashMap<Uuid, RWeak>,
+	loaded: FxDashMap<Uuid, Arc<RwLock<Option<RWeak>>>>,
 	path_lookup: FxDashMap<Uuid, PathBuf>,
 	runtimes: FxHashMap<Uuid, Arc<dyn AssetRuntime>>,
 	root: Dir,
@@ -154,21 +156,45 @@ impl AssetSystem {
 	pub fn view(&self, cursor: PathBuf) -> AssetSystemView { AssetSystemView { sys: self, cursor } }
 
 	pub fn initialize<T: Asset>(&self, device: &Device, uuid: Uuid) -> Result<RRef<T>, LoadError> {
-		match self.loaded.entry(uuid) {
-			Entry::Occupied(mut o) => match o.get().clone().upgrade() {
-				Some(x) => Ok(x),
+		let s = trace_span!("initialize asset", asset = %uuid);
+		let _e = s.enter();
+
+		let handle = self
+			.loaded
+			.entry(uuid)
+			.or_insert_with(|| Arc::new(RwLock::new(None)))
+			.clone();
+
+		let s = handle.read();
+		Ok(match *s {
+			Some(ref x) => match x.clone().upgrade() {
+				Some(x) => x,
 				None => {
-					let r = self.load_from_disk::<T>(device, uuid)?;
-					o.insert(r.downgrade());
-					Ok(r)
+					drop(s);
+					let mut out = handle.write();
+					match *out {
+						Some(ref x) => x.clone().upgrade().unwrap(),
+						None => {
+							let r = self.load_from_disk::<T>(device, uuid)?;
+							*out = Some(r.downgrade());
+							r
+						},
+					}
 				},
 			},
-			Entry::Vacant(v) => {
-				let r = self.load_from_disk::<T>(device, uuid)?;
-				v.insert(r.downgrade());
-				Ok(r)
+			None => {
+				drop(s);
+				let mut out = handle.write();
+				match *out {
+					Some(ref x) => x.clone().upgrade().unwrap(),
+					None => {
+						let r = self.load_from_disk::<T>(device, uuid)?;
+						*out = Some(r.downgrade());
+						r
+					},
+				}
 			},
-		}
+		})
 	}
 
 	pub fn save<T: Asset>(&self, asset: &RRef<T>) -> Result<(), std::io::Error> {
@@ -184,6 +210,9 @@ impl AssetSystem {
 	}
 
 	fn load_from_disk<T: Asset>(&self, device: &Device, uuid: Uuid) -> Result<RRef<T>, LoadError> {
+		let s = trace_span!("load asset", asset = %uuid);
+		let _e = s.enter();
+
 		let path = self.path_lookup.get(&uuid).unwrap();
 		let mut file = File::open(&*path)?;
 		let header = AssetHeader::from_file(&mut file)?;
@@ -218,7 +247,10 @@ impl AssetSystem {
 
 	pub unsafe fn destroy(self, device: &Device) {
 		for (_, a) in self.loaded {
-			assert!(a.is_dead(), "Cannot destroy `AssetSystem` with currently loaded assets")
+			assert!(
+				Arc::into_inner(a).unwrap().into_inner().unwrap().is_dead(),
+				"Cannot destroy `AssetSystem` with currently loaded assets"
+			)
 		}
 
 		for x in self.delete_recv.try_iter() {

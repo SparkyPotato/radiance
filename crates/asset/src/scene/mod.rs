@@ -12,6 +12,7 @@ use radiance_graph::{
 	graph::{Frame, Resource},
 	resource::{Buffer, BufferDesc, GpuPtr, Resource as _},
 };
+use rayon::prelude::*;
 use static_assertions::const_assert_eq;
 use tracing::{span, Level};
 use uuid::{uuid, Uuid};
@@ -193,8 +194,8 @@ impl Asset for Scene {
 		let s = span!(Level::TRACE, "decode scene");
 		let _e = s.enter();
 
-		let s: DataScene = ctx.data.deserialize()?;
-		let size = ((std::mem::size_of::<GpuInstance>() + std::mem::size_of::<u32>()) * s.nodes.len()) as u64;
+		let sc: DataScene = ctx.data.deserialize()?;
+		let size = ((std::mem::size_of::<GpuInstance>() + std::mem::size_of::<u32>()) * sc.nodes.len()) as u64;
 		let instance_buffer = Buffer::create(
 			ctx.device,
 			BufferDesc {
@@ -206,15 +207,23 @@ impl Asset for Scene {
 		)
 		.map_err(LoadError::Vulkan)?;
 
-		let mut writer = SliceWriter::new(unsafe { instance_buffer.data().as_mut() });
-
-		let mut max_depth = 0;
-		let nodes: Vec<_> = s
+		let s = span!(Level::TRACE, "load meshes", count = sc.nodes.len());
+		let e = s.enter();
+		let meshes: Vec<(_, RRef<Mesh>)> = sc
 			.nodes
+			.into_par_iter()
+			.map(|n| ctx.sys.initialize(ctx.device, n.mesh).map(|m| (n, m)))
+			.collect::<Result<_, _>>()?;
+		drop(e);
+
+		let s = span!(Level::TRACE, "fill instances");
+		let e = s.enter();
+		let mut writer = SliceWriter::new(unsafe { instance_buffer.data().as_mut() });
+		let mut max_depth = 0;
+		let nodes: Vec<_> = meshes
 			.into_iter()
 			.enumerate()
-			.map(|(i, n)| {
-				let mesh: RRef<Mesh> = ctx.sys.initialize(ctx.device, n.mesh)?;
+			.map(|(i, (n, mesh))| {
 				max_depth = max_depth.max(mesh.bvh_depth);
 				writer
 					.write(GpuInstance {
@@ -224,19 +233,20 @@ impl Asset for Scene {
 					})
 					.unwrap();
 
-				Ok(Node {
+				Node {
 					name: n.name,
 					transform: n.transform,
 					mesh,
 					instance: i as u32,
-				})
+				}
 			})
-			.collect::<Result<_, LoadError>>()?;
+			.collect();
+		drop(e);
 
 		Ok(ctx.make(Scene {
 			runtime: ctx.runtime.clone(),
 			instance_buffer,
-			cameras: s.cameras,
+			cameras: sc.cameras,
 			nodes: RwLock::new(nodes),
 			max_depth,
 			dirty_transforms: RwLock::new(Vec::new()),
