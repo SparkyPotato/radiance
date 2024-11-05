@@ -12,6 +12,7 @@ struct PushConstants {
 	CandidateMeshletQueue queue;
 	MeshletQueue render;
 	CullStats* stats;
+	u64 frame;
 	u32x2 res;
 }
 
@@ -43,7 +44,8 @@ void main(u32 id: SV_DispatchThreadID) {
 	let p = Constants.queue.get(id);
 	let instance = Constants.instances[p.instance];
 	let meshlet = instance.meshlet(p.node_offset);
-	let c = Cull(Constants.camera, instance.transform, Constants.res, Constants.hzb, Constants.hzb_sampler);
+	let c = Cull(Constants.camera, instance, Constants.frame, Constants.res, 
+			     Constants.hzb, Constants.hzb_sampler);
 	let render = c.should_render(meshlet.lod_bounds, meshlet.error, meshlet.max_edge_length);
 	if (c.in_frustum(meshlet.aabb) && render.x)
 		write(c.unoccluded(meshlet.aabb), render.y, { p.instance, p.node_offset });

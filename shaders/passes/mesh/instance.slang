@@ -18,6 +18,7 @@ struct PushConstants {
 	BvhQueue next;
 	LateInstances* late_instances;
 	CullStats* stats;
+	u64 frame;
 	u32 instance_count;
 	u32x2 res;
 }
@@ -62,7 +63,8 @@ void main(u32 tid: SV_DispatchThreadID) {
 
 	let id = instance_id(tid);
 	let instance = Constants.instances[id];
-	let c = Cull(Constants.camera, instance.transform, Constants.res, Constants.hzb, Constants.hzb_sampler);
+	let c = Cull(Constants.camera, instance, Constants.frame, Constants.res, 
+			     Constants.hzb, Constants.hzb_sampler);
 	if (c.in_frustum(instance.aabb))
 		write(c.unoccluded(instance.aabb), id);
 }

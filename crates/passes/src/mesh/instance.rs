@@ -13,7 +13,7 @@ use radiance_graph::{
 };
 use vek::Vec2;
 
-use crate::mesh::{setup::Resources, CameraData, CullStats, RenderInfo};
+use crate::mesh::{setup::Resources, CameraData, CullStats};
 
 pub struct InstanceCull {
 	early: bool,
@@ -30,6 +30,7 @@ struct PushConstants {
 	next: GpuPtr<u8>,
 	late_instances: GpuPtr<u32>,
 	stats: GpuPtr<CullStats>,
+	frame: u64,
 	instance_count: u32,
 	res: Vec2<u32>,
 	_pad: u32,
@@ -53,9 +54,10 @@ impl InstanceCull {
 		})
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, resources: &Resources) {
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, resources: &Resources) {
 		let mut pass = frame.pass("instance cull");
 
+		let instances = resources.instances(&mut pass);
 		let camera = resources.camera(&mut pass);
 		let hzb = resources.hzb(&mut pass);
 		let next = resources.output(&mut pass, resources.bvh_queues[!self.early as usize]);
@@ -66,20 +68,21 @@ impl InstanceCull {
 		};
 		let stats = resources.stats(&mut pass);
 
-		let instances = info.scene.instances();
+		let instance_count = resources.scene.instance_count;
 		let hzb_sampler = resources.hzb_sampler;
-		let instance_count = info.scene.instance_count();
-		let res = info.size;
+		let frame = resources.scene.frame;
+		let res = resources.res;
 		pass.build(move |mut pass| {
 			let latei = pass.get(late_instances);
 			let push = PushConstants {
-				instances,
+				instances: pass.get(instances).ptr(),
 				camera: pass.get(camera).ptr(),
 				hzb: pass.get(hzb).id.unwrap(),
 				hzb_sampler,
 				next: pass.get(next).ptr(),
 				late_instances: latei.ptr(),
 				stats: pass.get(stats).ptr(),
+				frame,
 				instance_count,
 				res,
 				_pad: 0,

@@ -4,7 +4,7 @@ use egui::{DragValue, Label, Rect, Sense, SidePanel, Ui};
 use egui_extras::{Column, TableBuilder};
 use radiance_asset::{
 	rref::{RRef, RWeak},
-	scene::{Scene, Transform},
+	scene::{Scene, SceneReader, Transform},
 	AssetSystem,
 };
 use radiance_graph::graph::Frame;
@@ -75,7 +75,7 @@ impl Editor {
 						.min_scrolled_height(h)
 						.max_scroll_height(h)
 						.body(|body| {
-							body.rows(18.0, scene.instance_count() as _, |mut row| {
+							body.rows(18.0, scene.node_count() as _, |mut row| {
 								let i = row.index() as u32;
 								row.set_selected(picker.get_sel() == Some(i));
 								if row
@@ -193,7 +193,7 @@ impl Editor {
 	pub fn draw_gizmo<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, ui: &mut Ui, rect: Rect, scene: &'pass RRef<Scene>,
 		cam: &CameraController, picker: &Picker,
-	) {
+	) -> SceneReader {
 		if let Some(sel) = picker.get_sel() {
 			let mut node = scene.edit_node(sel);
 			let t = to_gizmo_transform(node.transform);
@@ -220,7 +220,8 @@ impl Editor {
 				node.transform = from_gizmo_transform(t[0]);
 			}
 		}
-		scene.update_dirty(frame);
+
+		scene.tick(frame)
 	}
 
 	pub fn is_dirty(&mut self, scene: &RRef<Scene>) -> bool {

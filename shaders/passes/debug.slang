@@ -158,7 +158,7 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 			let instance = Constants.instances[p.meshlet.instance];
 			let meshlet = instance.meshlet(p.meshlet.node_offset);
 			let res = Constants.read.size();
-			let cull = Cull(Constants.camera, instance.transform, res, {}, {});
+			let cull = Cull(Constants.camera, instance, 0, res, {}, {});
 			let error = cull.error_distance(meshlet.lod_bounds);
 
 			let count = f32x2(25.f, 40.f);

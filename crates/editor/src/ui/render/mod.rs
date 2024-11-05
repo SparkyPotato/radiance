@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use egui::{CentralPanel, Context, Image, PointerButton, RichText, Sense, Ui};
+use egui::{CentralPanel, Context, Id, Image, LayerId, Order, PointerButton, RichText, Sense, Ui};
 use radiance_asset::{rref::RRef, scene, AssetSystem, Uuid};
 use radiance_egui::to_texture_id;
 use radiance_graph::{device::Device, graph::Frame, Result};
@@ -134,6 +134,13 @@ impl Renderer {
 		let size = rect.size();
 		let resp = ui.allocate_rect(rect, Sense::click());
 
+		let reader = ui
+			.with_layer_id(LayerId::new(Order::Foreground, Id::new("gizmo")), |ui| {
+				self.editor
+					.draw_gizmo(frame, ui, resp.rect, scene, &self.camera, &mut self.picker)
+			})
+			.inner;
+
 		if ctx.input(|x| resp.contains_pointer() && x.pointer.button_down(PointerButton::Secondary)) {
 			self.camera.set_mode(window, Mode::Camera);
 		} else {
@@ -145,7 +152,8 @@ impl Renderer {
 		let visbuffer = self.visbuffer.run(
 			frame,
 			RenderInfo {
-				scene: scene.clone(),
+				scene: reader,
+				scene_ref: scene.downgrade(),
 				camera: self.camera.get(),
 				size: s,
 				debug_info: debug.debug_vis().requires_debug_info(),
@@ -157,8 +165,6 @@ impl Renderer {
 			.debug
 			.run(frame, debug.debug_vis(), visbuffer, self.picker.get_sel().into_iter());
 		ui.put(rect, Image::new((to_texture_id(img), size)));
-		self.editor
-			.draw_gizmo(frame, ui, resp.rect, scene, &self.camera, &mut self.picker);
 
 		self.picker.run(
 			frame,

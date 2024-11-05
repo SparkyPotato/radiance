@@ -80,8 +80,10 @@ public struct Transform {
 
 public struct Instance {
 	public Transform transform;
-	public u8* mesh;
+	public Transform last_updated_transform;
 	public Aabb aabb;
+	public u64 update_frame;
+	public u8* mesh;
 
 	public BvhNode node(u32 offset) {
 		return *(BvhNode*)(this.mesh + offset);
@@ -89,6 +91,14 @@ public struct Instance {
 
 	public Meshlet meshlet(u32 offset) {
 		return *(Meshlet*)(this.mesh + offset);
+	}
+
+	public Transform prev_transform(u64 frame) {
+		if (this.update_frame == frame) {
+			return this.last_updated_transform;
+		} else {
+			return this.transform;
+		}
 	}
 }
 

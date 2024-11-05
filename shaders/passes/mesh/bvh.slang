@@ -12,6 +12,7 @@ struct PushConstants {
 	BvhQueue queue;
 	BvhQueue late;
 	CandidateMeshletQueue meshlet;
+	u64 frame;
 	u32x2 res;
 	bool ping;
 };
@@ -63,7 +64,8 @@ void main(u32 id: SV_DispatchThreadID, u32 gtid: SV_GroupIndex) {
 	var p = Constants.ping ? Constants.queue.get_front(node) : Constants.queue.get_back(node);
 	let instance = Constants.instances[p.instance];
 	let n = instance.node(p.node_offset);
-	let c = Cull(Constants.camera, instance.transform, Constants.res, Constants.hzb, Constants.hzb_sampler);
+	let c = Cull(Constants.camera, instance, Constants.frame, Constants.res, 
+			     Constants.hzb, Constants.hzb_sampler);
 
 	let aabb = n.aabbs[subnode];
 	let lod_bounds = n.lod_bounds[subnode];

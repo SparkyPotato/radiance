@@ -2,7 +2,7 @@ use std::io::Write;
 
 use ash::vk;
 use bytemuck::{bytes_of, checked::from_bytes, NoUninit, PodInOption, ZeroableInOption};
-use radiance_asset::rref::RWeak;
+use radiance_asset::{rref::RWeak, scene::SceneReader};
 use radiance_graph::{
 	device::descriptor::{SamplerId, StorageImageId},
 	graph::{
@@ -21,6 +21,7 @@ use radiance_graph::{
 	resource::{BufferHandle, ImageView, Subresource},
 	sync::Shader,
 };
+use vek::Vec2;
 
 use crate::mesh::{Camera, CameraData, CullStats, RenderInfo};
 
@@ -50,6 +51,7 @@ unsafe impl PodInOption for DebugResId {}
 unsafe impl ZeroableInOption for DebugResId {}
 
 pub struct Resources {
+	pub scene: SceneReader,
 	pub camera: Res<BufferHandle>,
 	pub hzb: Res<ImageView>,
 	pub hzb_sampler: SamplerId,
@@ -60,9 +62,30 @@ pub struct Resources {
 	pub stats: Res<BufferHandle>,
 	pub visbuffer: Res<ImageView>,
 	pub debug: Option<DebugRes>,
+	pub res: Vec2<u32>,
 }
 
 impl Resources {
+	pub fn instances(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
+		pass.reference(
+			self.scene.instances,
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageRead(Shader::Compute)],
+			},
+		);
+		self.scene.instances
+	}
+
+	pub fn instances_mesh(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
+		pass.reference(
+			self.scene.instances,
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageRead(Shader::Mesh)],
+			},
+		);
+		self.scene.instances
+	}
+
 	pub fn camera(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
 		pass.reference(
 			self.camera,
@@ -248,9 +271,8 @@ impl Setup {
 			Some(Persistent { scene, camera }) => {
 				let prev = *camera;
 				*camera = info.camera;
-				let sc = info.scene.downgrade();
-				if *scene != sc {
-					*scene = sc;
+				if *scene != info.scene_ref {
+					*scene = info.scene_ref.clone();
 					(true, prev)
 				} else {
 					(false, prev)
@@ -258,7 +280,7 @@ impl Setup {
 			},
 			None => {
 				self.inner = Some(Persistent {
-					scene: info.scene.downgrade(),
+					scene: info.scene_ref.clone(),
 					camera: info.camera,
 				});
 				(true, info.camera)
@@ -309,7 +331,7 @@ impl Setup {
 		};
 		let late_instances = pass.resource(
 			BufferDesc {
-				size: ((info.scene.instance_count() as usize + 4) * std::mem::size_of::<u32>()) as _,
+				size: ((info.scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _,
 				..desc
 			},
 			usage,
@@ -445,6 +467,7 @@ impl Setup {
 		});
 
 		Resources {
+			scene: info.scene,
 			camera,
 			hzb,
 			hzb_sampler,
@@ -455,6 +478,7 @@ impl Setup {
 			stats,
 			visbuffer,
 			debug,
+			res: info.size,
 		}
 	}
 }

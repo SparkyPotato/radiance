@@ -12,7 +12,6 @@ struct VertexOutput {
 struct PrimitiveOutput {
 	[vk::location(0)]
 	u32 data : VisBuffer;
-	bool culled : SV_CullPrimitive;
 }
 
 struct PushConstants {
@@ -65,8 +64,6 @@ f32 edge_fn(f32x2 a, f32x2 b, f32x2 c) {
 	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
-groupshared f32x2 HWPos[128];
-
 [shader("mesh")]
 [outputtopology("triangle")]
 [numthreads(128, 1, 1)]
@@ -78,19 +75,13 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 	SetMeshOutputCounts(vert_count, tri_count);
 
 	if (gtid < vert_count) {
-		let v = init.transform(gtid);
-		vertices[gtid].position = v.clip;
-		HWPos[gtid] = v.uv.xy;
+		vertices[gtid].position = init.transform(gtid).clip;
 	}
-	workgroup_sync_barrier();
 
 	if (gtid < tri_count) {
-		let i = init.tri(gtid);
-		triangles[gtid] = i;
+		triangles[gtid] = init.tri(gtid);
 		VisBufferData data = { init.mid, gtid };
-		// TODO: not strictly correct
-		let backface = edge_fn(HWPos[i.x], HWPos[i.y], HWPos[i.z]) < 0.f;
-		visbuffer[gtid] = { data.encode(), backface };
+		visbuffer[gtid] = { data.encode() };
 	}
 }
 

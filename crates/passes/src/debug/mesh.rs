@@ -102,9 +102,11 @@ impl DebugMesh {
 		highlights: impl ExactSizeIterator<Item = u32> + 'pass,
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("debug mesh");
+
 		let usage = BufferUsage {
 			usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
 		};
+		pass.reference(output.scene.instances, usage);
 		pass.reference(output.camera, usage);
 		output.reader.add(&mut pass, Shader::Fragment, true);
 
@@ -160,12 +162,13 @@ impl DebugMesh {
 				DebugVis::Overdraw(s) => s,
 				_ => 0.0,
 			};
+			let instances = pass.get(output.scene.instances).ptr();
 			let camera = pass.get(output.camera).ptr();
 			let read = output.reader.get_debug(&mut pass);
 			self.pass.run(
 				&pass,
 				&PushConstants {
-					instances: output.instances,
+					instances,
 					camera,
 					read,
 					highlighted: highlight.map(|x| x.ptr()).unwrap_or(GpuPtr::null()),

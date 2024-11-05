@@ -13,7 +13,7 @@ use radiance_graph::{
 };
 use vek::Vec2;
 
-use crate::mesh::{setup::Resources, CameraData, RenderInfo};
+use crate::mesh::{setup::Resources, CameraData};
 
 pub struct BvhCull {
 	early: bool,
@@ -30,6 +30,7 @@ struct PushConstants {
 	queue: GpuPtr<u8>,
 	late: GpuPtr<u8>,
 	meshlet: GpuPtr<u8>,
+	frame: u64,
 	res: Vec2<u32>,
 	ping: u32,
 	_pad: u32,
@@ -53,14 +54,15 @@ impl BvhCull {
 		})
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, resources: &Resources) {
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, resources: &Resources) {
 		let queue = resources.bvh_queues[!self.early as usize];
 		let late = resources.bvh_queues[1];
 		let mut ping = true;
 
-		for _ in 0..info.scene.max_depth() {
+		for _ in 0..resources.scene.max_depth {
 			let mut pass = frame.pass("bvh cull");
 
+			let instances = resources.instances(&mut pass);
 			let camera = resources.camera(&mut pass);
 			let hzb = resources.hzb(&mut pass);
 			if self.early {
@@ -69,20 +71,21 @@ impl BvhCull {
 			resources.input_output(&mut pass, queue);
 			let meshlet = resources.output(&mut pass, resources.meshlet_queue);
 
-			let instances = info.scene.instances();
 			let hzb_sampler = resources.hzb_sampler;
-			let res = info.size;
+			let frame = resources.scene.frame;
+			let res = resources.res;
 			pass.build(move |mut pass| {
 				let queue = pass.get(queue);
 				self.pass.dispatch_indirect(
 					&PushConstants {
-						instances,
+						instances: pass.get(instances).ptr(),
 						camera: pass.get(camera).ptr(),
 						hzb: pass.get(hzb).id.unwrap(),
 						hzb_sampler,
 						queue: queue.ptr(),
 						meshlet: pass.get(meshlet).ptr(),
 						late: pass.get(late).ptr(),
+						frame,
 						res,
 						ping: ping as _,
 						_pad: 0,

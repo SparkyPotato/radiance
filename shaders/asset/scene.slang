@@ -11,6 +11,7 @@ struct TransformUpdate {
 struct PushConstants {
 	Instance* instances;
 	TransformUpdate* updates;
+	u64 frame;
 	u32 count;
 }
 
@@ -19,10 +20,13 @@ PushConstants Constants;
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void main(u32 id: SV_DispatchThreadID) {
+void tick(u32 id: SV_DispatchThreadID) {
 	if (id >= Constants.count)
 		return;
 
 	let update = Constants.updates[id];
-	Constants.instances[update.instance].transform = update.transform;
+	let instance = &Constants.instances[update.instance];
+	instance->update_frame = Constants.frame;
+	instance->last_updated_transform = instance->transform;
+	instance->transform = update.transform;
 }

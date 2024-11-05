@@ -1,16 +1,19 @@
 use std::{
 	ops::{Deref, DerefMut},
-	sync::Arc,
+	sync::{
+		atomic::{AtomicU64, Ordering},
+		Arc,
+	},
 };
 
 use ash::vk;
 use bincode::{Decode, Encode};
 use bytemuck::NoUninit;
 use crossbeam_channel::Sender;
-use parking_lot::{MappedRwLockReadGuard, MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use parking_lot::{MappedRwLockWriteGuard, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use radiance_graph::{
-	graph::{Frame, Resource},
-	resource::{Buffer, BufferDesc, GpuPtr, Resource as _},
+	graph::{Frame, Res, Resource},
+	resource::{Buffer, BufferDesc, BufferHandle, GpuPtr, Resource as _},
 };
 use rayon::prelude::*;
 use static_assertions::const_assert_eq;
@@ -83,18 +86,20 @@ pub struct Scene {
 	nodes: RwLock<Vec<Node>>,
 	max_depth: u32,
 	dirty_transforms: RwLock<Vec<TransformUpdate>>,
+	frame: AtomicU64,
 }
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuInstance {
 	pub transform: Transform,
-	/// Mesh buffer containing meshlets + meshlet data.
-	pub mesh: GpuPtr<u8>,
+	pub prev_transform: Transform,
 	pub aabb: GpuAabb,
+	pub update_frame: u64,
+	pub mesh: GpuPtr<u8>,
 }
 
-const_assert_eq!(std::mem::size_of::<GpuInstance>(), 72);
+const_assert_eq!(std::mem::size_of::<GpuInstance>(), 120);
 const_assert_eq!(std::mem::align_of::<GpuInstance>(), 8);
 
 #[repr(C)]
@@ -108,14 +113,39 @@ pub struct VkAccelerationStructureInstanceKHR {
 
 unsafe impl NoUninit for VkAccelerationStructureInstanceKHR {}
 
+#[derive(Copy, Clone)]
+pub struct SceneReader {
+	pub instances: Res<BufferHandle>,
+	pub instance_count: u32,
+	pub max_depth: u32,
+	pub frame: u64,
+}
+
 impl Scene {
-	pub fn instances(&self) -> GpuPtr<GpuInstance> { self.instance_buffer.ptr() }
+	pub fn tick<'pass>(&'pass self, frame: &mut Frame<'pass, '_>) -> SceneReader {
+		let instances = self.instance_buffer.handle();
+		let instance_count = self.nodes.read().len() as u32;
+		let max_depth = self.max_depth;
+		let frame_index = self.frame.fetch_add(1, Ordering::Relaxed);
+		let instances = self.runtime.tick(
+			frame,
+			instances,
+			frame_index,
+			UpdateIterator {
+				updates: &self.dirty_transforms,
+			},
+		);
+		SceneReader {
+			instances,
+			instance_count,
+			max_depth,
+			frame: frame_index,
+		}
+	}
 
-	pub fn instance_count(&self) -> u32 { self.nodes.read().len() as _ }
+	pub fn node_count(&self) -> u32 { self.nodes.read().len() as u32 }
 
-	pub fn max_depth(&self) -> u32 { self.max_depth }
-
-	pub fn node(&self, i: u32) -> MappedRwLockReadGuard<'_, Node> {
+	pub fn node(&self, i: u32) -> impl Deref<Target = Node> + '_ {
 		RwLockReadGuard::map(self.nodes.read(), |x| &x[i as usize])
 	}
 
@@ -127,16 +157,6 @@ impl Scene {
 			orig: node.transform,
 			node,
 		}
-	}
-
-	pub fn update_dirty<'pass>(&'pass self, frame: &mut Frame<'pass, '_>) {
-		self.runtime.update(
-			frame,
-			self.instances(),
-			UpdateIterator {
-				updates: &self.dirty_transforms,
-			},
-		)
 	}
 }
 
@@ -228,8 +248,10 @@ impl Asset for Scene {
 				writer
 					.write(GpuInstance {
 						transform: n.transform,
-						mesh: mesh.buffer.ptr(),
+						prev_transform: n.transform,
 						aabb: map_aabb(mesh.aabb),
+						update_frame: 0,
+						mesh: mesh.buffer.ptr(),
 					})
 					.unwrap();
 
@@ -250,6 +272,7 @@ impl Asset for Scene {
 			nodes: RwLock::new(nodes),
 			max_depth,
 			dirty_transforms: RwLock::new(Vec::new()),
+			frame: AtomicU64::new(0),
 		}))
 	}
 

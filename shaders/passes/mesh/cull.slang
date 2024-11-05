@@ -182,13 +182,6 @@ f32x4 normalize_plane(f32x4 p) {
 
 public extern static const bool EARLY = false;
 
-Camera occ_camera(Camera* cam) {
-	if (EARLY)
-		return cam[1];
-	else
-		return cam[0];
-}
-
 vector<T, N> min8<T : __BuiltinFloatingPointType, let N : int>(vector<T, N> p0, vector<T, N> p1, vector<T, N> p2,
 															   vector<T, N> p3, vector<T, N> p4, vector<T, N> p5,
 															   vector<T, N> p6, vector<T, N> p7) {
@@ -242,11 +235,25 @@ public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
 	return ret;
 }
 
+Camera occ_camera(Camera* cam) {
+	if (EARLY)
+		return cam[1];
+	else
+		return cam[0];
+}
+
+Transform occ_transform(Instance instance, u64 frame) {
+	if (EARLY)
+		return instance.prev_transform(frame);
+	else
+		return instance.transform;
+}
+
 public struct Cull {
 	f32 scale;
 	f32 min_scale;
-	f32x4x4 mv;
-	f32x4x4 mvp;
+	f32x4x4 curr_mv;
+	f32x4x4 prev_mvp;
 	f32x2 screen;
 	f32 h;
 	f32 near;
@@ -255,18 +262,24 @@ public struct Cull {
 	f32x4 planes[5];
 	u32x3 flips[5];
 
-	public __init(Camera* camera, Transform transform, u32x2 res, Tex<f32, D2> hzb, Sampler hzb_sampler) {
+	public __init(Camera* camera, Instance instance, u64 frame, u32x2 res, Tex<f32, D2> hzb, Sampler hzb_sampler) {
 		Cull ret;
+
+		let transform = instance.transform;
 		let trans_mat = transform.mat();
 		ret.scale = max3(transform.scale.x, transform.scale.y, transform.scale.z);
 		ret.min_scale = min3(transform.scale.x, transform.scale.y, transform.scale.z);
-		ret.mv = mul(camera[0].view, trans_mat);
-		ret.mvp = mul(occ_camera(camera).view_proj, trans_mat);
+
+		ret.curr_mv = mul(camera[0].view, trans_mat);
+		ret.prev_mvp = mul(occ_camera(camera).view_proj, occ_transform(instance, frame).mat());
+
 		ret.screen = f32x2(res);
 		ret.h = camera[0].h;
 		ret.near = camera[0].near;
+
 		ret.hzb = hzb;
 		ret.hzb_sampler = hzb_sampler;
+
 		let mvp = mul(camera[0].view_proj, trans_mat);
 		ret.planes[0] = normalize_plane(mvp[3] + mvp[0]);
 		ret.planes[1] = normalize_plane(mvp[3] - mvp[0]);
@@ -277,6 +290,7 @@ public struct Cull {
 		for (int i = 0; i < ret.planes.getCount(); i++) {
 			ret.flips[i] = asuint(ret.planes[i].xyz) & 0x80000000;
 		}
+
 		return ret;
 	}
 
@@ -300,7 +314,7 @@ public struct Cull {
 	// We get the projected bounds on the axis that is the longest upon projection (need to be conservative!),
 	// which is the one from (0, 0) to the sphere's center.
 	public f32 error_distance(f32x4 bounds) {
-		let center = mul(this.mv, f32x4(bounds.xyz, 1.f)).xyz;
+		let center = mul(this.curr_mv, f32x4(bounds.xyz, 1.f)).xyz;
 		let radius = bounds.w * this.scale;
 
 		if (center.z + radius <= this.near)
@@ -358,7 +372,7 @@ public struct Cull {
 	}
 
 	public bool unoccluded(Aabb aabb) {
-		if (let saabb = project_aabb(this.mvp, this.near, aabb)) {
+		if (let saabb = project_aabb(this.prev_mvp, this.near, aabb)) {
 			let hzb_size = 1 << firstbithigh(u32x2(this.screen) - 1);
 			let scale = this.screen * 0.5f;
 

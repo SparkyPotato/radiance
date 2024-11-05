@@ -6,6 +6,14 @@ __DynamicResource Textures[];
 public struct Tex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
 	u32 index;
 
+	public static Tex<T, Shape, U> from_index(u32 index) {
+		return { index };
+	}
+
+	public u32 inner_index() {
+		return this.index;
+	}
+
 	__TextureImpl<T, Shape, 0, 0, 0, 0, 0, 0, 0> get() {
 		return Textures[U.wrap_index(this.index)].as<__TextureImpl<T, Shape, 0, 0, 0, 0, 0, 0, 0>>();
 	}
@@ -16,6 +24,11 @@ public struct Tex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
 
 	public T sample_mip<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, f32 mip) {
 		return this.get().SampleLevel(sampler.get(), uv, mip);
+	}
+
+	public T sample_grad<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, 
+									     f32 ddx, f32 ddy) {
+		return this.get().SampleGrad(sampler.get(), uv, ddx, ddy);
 	}
 }
 

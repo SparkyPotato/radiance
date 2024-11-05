@@ -13,7 +13,7 @@ use radiance_graph::{
 };
 use vek::Vec2;
 
-use crate::mesh::{setup::Resources, CameraData, CullStats, RenderInfo};
+use crate::mesh::{setup::Resources, CameraData, CullStats};
 
 pub struct MeshletCull {
 	early: bool,
@@ -30,6 +30,7 @@ struct PushConstants {
 	queue: GpuPtr<u8>,
 	render: GpuPtr<u8>,
 	stats: GpuPtr<CullStats>,
+	frame: u64,
 	res: Vec2<u32>,
 }
 
@@ -51,9 +52,10 @@ impl MeshletCull {
 		})
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, resources: &Resources) {
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, resources: &Resources) {
 		let mut pass = frame.pass("meshlet cull");
 
+		let instances = resources.instances(&mut pass);
 		let camera = resources.camera(&mut pass);
 		let hzb = resources.hzb(&mut pass);
 		let queue = if self.early {
@@ -64,20 +66,21 @@ impl MeshletCull {
 		let render = resources.output(&mut pass, resources.meshlet_render);
 		let stats = resources.stats(&mut pass);
 
-		let instances = info.scene.instances();
 		let hzb_sampler = resources.hzb_sampler;
-		let res = info.size;
+		let frame = resources.scene.frame;
+		let res = resources.res;
 		pass.build(move |mut pass| {
 			let queue = pass.get(queue);
 			self.pass.dispatch_indirect(
 				&PushConstants {
-					instances,
+					instances: pass.get(instances).ptr(),
 					camera: pass.get(camera).ptr(),
 					hzb: pass.get(hzb).id.unwrap(),
 					hzb_sampler,
 					queue: queue.ptr(),
 					render: pass.get(render).ptr(),
 					stats: pass.get(stats).ptr(),
+					frame,
 					res,
 				},
 				&pass,

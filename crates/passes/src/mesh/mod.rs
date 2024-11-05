@@ -1,8 +1,8 @@
 use ash::{ext, vk};
 use bytemuck::{cast_slice, NoUninit, Pod, Zeroable};
 use radiance_asset::{
-	rref::RRef,
-	scene::{GpuInstance, Scene},
+	rref::RWeak,
+	scene::{GpuInstance, SceneReader},
 };
 use radiance_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, ShaderInfo},
@@ -48,7 +48,8 @@ impl Camera {
 
 #[derive(Clone)]
 pub struct RenderInfo {
-	pub scene: RRef<Scene>,
+	pub scene: SceneReader,
+	pub scene_ref: RWeak,
 	pub camera: Camera,
 	pub size: Vec2<u32>,
 	pub debug_info: bool,
@@ -123,7 +124,7 @@ pub struct GpuVisBufferReader {
 #[derive(Copy, Clone)]
 pub struct RenderOutput {
 	pub stats: CullStats,
-	pub instances: GpuPtr<GpuInstance>,
+	pub scene: SceneReader,
 	pub camera: Res<BufferHandle>,
 	pub reader: VisBufferReader,
 }
@@ -196,7 +197,7 @@ struct PushConstants {
 #[derive(Copy, Clone)]
 struct PassIO {
 	early: bool,
-	instances: GpuPtr<GpuInstance>,
+	instances: Res<BufferHandle>,
 	queue: Res<BufferHandle>,
 	camera: Res<BufferHandle>,
 	stats: Res<BufferHandle>,
@@ -217,7 +218,7 @@ impl Passes {
 		let queue = pass.get(io.queue);
 
 		let push = PushConstants {
-			instances: io.instances,
+			instances: pass.get(io.instances).ptr(),
 			camera: pass.get(io.camera).ptr(),
 			queue: pass.get(io.queue).ptr(),
 			stats: pass.get(io.stats).ptr(),
@@ -341,12 +342,13 @@ impl VisBuffer {
 
 		frame.start_region("early pass");
 		frame.start_region("cull");
-		self.early_instance_cull.run(frame, &info, &res);
-		self.early_bvh_cull.run(frame, &info, &res);
-		self.early_meshlet_cull.run(frame, &info, &res);
+		self.early_instance_cull.run(frame, &res);
+		self.early_bvh_cull.run(frame, &res);
+		self.early_meshlet_cull.run(frame, &res);
 		frame.end_region();
 
 		let mut pass = frame.pass("rasterize");
+		let instances = res.instances_mesh(&mut pass);
 		let camera = res.camera_mesh(&mut pass);
 		let queue = res.mesh(&mut pass);
 		let stats = res.stats_mesh(&mut pass);
@@ -354,7 +356,7 @@ impl VisBuffer {
 		let debug = res.debug(&mut pass);
 		let mut io = PassIO {
 			early: true,
-			instances: info.scene.instances(),
+			instances,
 			queue,
 			camera,
 			stats,
@@ -391,9 +393,9 @@ impl VisBuffer {
 		self.hzb_gen.run(frame, visbuffer, res.hzb);
 		frame.start_region("late pass");
 		frame.start_region("cull");
-		self.late_instance_cull.run(frame, &info, &res);
-		self.late_bvh_cull.run(frame, &info, &res);
-		self.late_meshlet_cull.run(frame, &info, &res);
+		self.late_instance_cull.run(frame, &res);
+		self.late_bvh_cull.run(frame, &res);
+		self.late_meshlet_cull.run(frame, &res);
 		frame.end_region();
 
 		let mut pass = frame.pass("rasterize");
@@ -410,7 +412,7 @@ impl VisBuffer {
 		frame.end_region();
 		RenderOutput {
 			stats: rstats,
-			instances: info.scene.instances(),
+			scene: res.scene,
 			camera,
 			reader: VisBufferReader {
 				visbuffer,
