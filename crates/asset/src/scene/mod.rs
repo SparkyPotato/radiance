@@ -127,14 +127,7 @@ impl Scene {
 		let instance_count = self.nodes.read().len() as u32;
 		let max_depth = self.max_depth;
 		let frame_index = self.frame.fetch_add(1, Ordering::Relaxed);
-		let instances = self.runtime.tick(
-			frame,
-			instances,
-			frame_index,
-			UpdateIterator {
-				updates: &self.dirty_transforms,
-			},
-		);
+		let instances = self.runtime.tick(frame, instances, frame_index, &self.dirty_transforms);
 		SceneReader {
 			instances,
 			instance_count,
@@ -187,20 +180,6 @@ impl Drop for NodeEditor<'_> {
 			});
 		}
 	}
-}
-
-struct UpdateIterator<'a> {
-	updates: &'a RwLock<Vec<TransformUpdate>>,
-}
-
-impl Iterator for UpdateIterator<'_> {
-	type Item = TransformUpdate;
-
-	fn next(&mut self) -> Option<Self::Item> { self.updates.write().pop() }
-}
-
-impl ExactSizeIterator for UpdateIterator<'_> {
-	fn len(&self) -> usize { self.updates.read().len() }
 }
 
 impl Asset for Scene {
