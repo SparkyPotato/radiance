@@ -13,7 +13,7 @@ struct LateInstances {
 struct PushConstants {
 	Instance* instances;
 	Camera* camera;
-	Tex<f32, D2> hzb;
+	Tex2D<f32> hzb;
 	Sampler hzb_sampler;
 	BvhQueue next;
 	LateInstances* late_instances;

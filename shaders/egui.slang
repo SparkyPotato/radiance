@@ -17,7 +17,7 @@ struct VertexOutput {
 struct PushConstants {
 	f32x2 screen_size;
 	VertexInput* vertices;
-	Tex<f32x4, D2> image;
+	Tex2D<f32x4> image;
 	Sampler sampler;
 }
 

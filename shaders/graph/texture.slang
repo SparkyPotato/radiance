@@ -36,6 +36,10 @@ public typealias D1 = __Shape1D;
 public typealias D2 = __Shape2D;
 public typealias D3 = __Shape3D;
 
+__generic<T> public typealias Tex1D = Tex<T, D1>;
+__generic<T> public typealias Tex2D = Tex<T, D2>;
+__generic<T> public typealias Tex3D = Tex<T, D3>;
+
 __generic<T, U : Uniformity> public extension Tex<T, D1, U> {
 	public T load(u32 pixel, u32 mip = 0) {
 		return this.get().Load(i32x2(pixel, mip));
@@ -129,6 +133,10 @@ public struct STex<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coh
 		return ::atomic_max(this.get()[pixel], value, sc, loc, se);
 	}
 }
+
+__generic<T : __BuiltinArithmeticType> public typealias STex1D = STex<T, D1>;
+__generic<T : __BuiltinArithmeticType> public typealias STex2D = STex<T, D2>;
+__generic<T : __BuiltinArithmeticType> public typealias STex3D = STex<T, D3>;
 
 __generic<T : __BuiltinArithmeticType, C : Coherency, U : Uniformity> public extension STex<T, D1, C, U> {
 	public u32 size() {

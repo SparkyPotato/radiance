@@ -357,8 +357,8 @@ impl VisBuffer {
 		let mut io = PassIO {
 			early: true,
 			instances,
-			queue,
 			camera,
+			queue,
 			stats,
 			visbuffer,
 			debug,
@@ -401,6 +401,7 @@ impl VisBuffer {
 		let mut pass = frame.pass("rasterize");
 		res.camera_mesh(&mut pass);
 		res.mesh(&mut pass);
+		res.stats_mesh(&mut pass);
 		res.visbuffer(&mut pass);
 		res.debug(&mut pass);
 		io.early = false;

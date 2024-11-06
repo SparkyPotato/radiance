@@ -40,7 +40,7 @@ public struct VisBuffer {
 }
 
 public struct VisBufferTex {
-	STex<u64, D2> tex;
+	STex2D<u64> tex;
 	Debug dbg;
 
 	public void write(u32x2 pos, f32 depth, u32 data, u32 mode) {

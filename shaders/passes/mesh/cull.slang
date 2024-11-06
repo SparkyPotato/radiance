@@ -235,14 +235,32 @@ public Optional<ScreenAabb> project_aabb(f32x4x4 mvp, f32 near, Aabb aabb) {
 	return ret;
 }
 
-Camera occ_camera(Camera* cam) {
+public bool occ_cull_aabb(ScreenAabb aabb, f32x2 screen, Tex2D<f32> hzb, Sampler hzb_sampler) {
+	let hzb_size = 1 << firstbithigh(u32x2(screen) - 1);
+
+	let min_texel = u32x2(max(aabb.min.xy, 0.f));
+	let max_texel = u32x2(min(aabb.max.xy, screen - 1.f));
+	let size = max_texel - min_texel + 1;
+	let max_size = max(size.x, size.y);
+
+	var mip = firstbithigh(max_size - 1) - 1;
+	let smin = min_texel >> mip;
+	let smax = max_texel >> mip;
+	if (any(smax - smin > 1)) mip += 1;
+			
+	let uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5f) / hzb_size;
+	let curr_depth = hzb.sample_mip(hzb_sampler, uv, mip);
+	return aabb.max.z <= curr_depth;
+}
+
+public Camera occ_camera(Camera* cam) {
 	if (EARLY)
 		return cam[1];
 	else
 		return cam[0];
 }
 
-Transform occ_transform(Instance instance, u64 frame) {
+public Transform occ_transform(Instance instance, u64 frame) {
 	if (EARLY)
 		return instance.prev_transform(frame);
 	else
@@ -257,12 +275,12 @@ public struct Cull {
 	f32x2 screen;
 	f32 h;
 	f32 near;
-	Tex<f32, D2> hzb;
+	Tex2D<f32> hzb;
 	Sampler hzb_sampler;
 	f32x4 planes[5];
 	u32x3 flips[5];
 
-	public __init(Camera* camera, Instance instance, u64 frame, u32x2 res, Tex<f32, D2> hzb, Sampler hzb_sampler) {
+	public __init(Camera* camera, Instance instance, u64 frame, u32x2 res, Tex2D<f32> hzb, Sampler hzb_sampler) {
 		Cull ret;
 
 		let transform = instance.transform;
@@ -373,22 +391,12 @@ public struct Cull {
 
 	public bool unoccluded(Aabb aabb) {
 		if (let saabb = project_aabb(this.prev_mvp, this.near, aabb)) {
-			let hzb_size = 1 << firstbithigh(u32x2(this.screen) - 1);
+			var uaabb = saabb;
 			let scale = this.screen * 0.5f;
-
-			let min_texel = u32x2(max(saabb.min.xy * scale, 0.f));
-			let max_texel = u32x2(min(saabb.max.xy * scale, hzb_size - 1.f));
-			let size = max_texel - min_texel + 1;
-			let max_size = max(size.x, size.y);
-
-			var mip = firstbithigh(max_size - 1) - 1;
-			let smin = min_texel >> mip;
-			let smax = max_texel >> mip;
-			if (any(smax - smin > 1)) mip += 1;
-			
-			let uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5f) / hzb_size;
-			let curr_depth = this.hzb.sample_mip(this.hzb_sampler, uv, mip);
-			return saabb.max.z > curr_depth;
+			let hzb_size = 1 << firstbithigh(u32x2(this.screen) - 1);
+			uaabb.min.xy = uaabb.min.xy * scale;
+			uaabb.max.xy = uaabb.max.xy * scale;
+			return !occ_cull_aabb(uaabb, this.screen, this.hzb, this.hzb_sampler);
 		}
 		return true;
 	}

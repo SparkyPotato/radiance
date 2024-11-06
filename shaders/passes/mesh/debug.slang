@@ -5,8 +5,8 @@ import passes.visbuffer;
 import passes.visbuffer_extra;
 
 public struct DebugImpl : VisbufferDebug {
-	STex<u32, D2> overdraw_tex;
-	STex<u64, D2> hwsw_tex;
+	STex2D<u32> overdraw_tex;
+	STex2D<u64> hwsw_tex;
 
 	public void write(u32x2 pos, f32 depth, u32 mode) {
 		VisBuffer mask = { depth, mode };

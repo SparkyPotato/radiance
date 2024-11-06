@@ -1,15 +1,7 @@
 module pixel;
 
 import graph;
-import passes.visbuffer;
-
-struct PushConstants {
-	u8 _offset[32];
-	VisBufferTex output;
-}
-
-[vk::push_constant]
-PushConstants Constants;
+import mesh;
 
 [shader("pixel")]
 void main(u32 data: VisBuffer, f32x4 pos: SV_Position) {

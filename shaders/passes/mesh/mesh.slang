@@ -12,18 +12,19 @@ struct VertexOutput {
 struct PrimitiveOutput {
 	[vk::location(0)]
 	u32 data : VisBuffer;
+	bool culled : SV_CullPrimitive;
 }
 
-struct PushConstants {
+public struct PushConstants {
 	Instance* instances;
 	Camera* camera;
 	MeshletQueue queue;
 	CullStats* stats;
-	VisBufferTex output;
+	public VisBufferTex output;
 }
 
 [vk::push_constant]
-PushConstants Constants;
+public PushConstants Constants;
 
 struct Init {
 	u32 mid;
@@ -64,6 +65,8 @@ f32 edge_fn(f32x2 a, f32x2 b, f32x2 c) {
 	return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
 }
 
+groupshared f32x4 Pos[128];
+
 [shader("mesh")]
 [outputtopology("triangle")]
 [numthreads(128, 1, 1)]
@@ -74,24 +77,37 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 	let tri_count = init.meshlet.tri_count;
 	SetMeshOutputCounts(vert_count, tri_count);
 
+	let dim = f32x2(Constants.output.size());
 	if (gtid < vert_count) {
-		vertices[gtid].position = init.transform(gtid).clip;
+		let v = init.transform(gtid);
+		vertices[gtid].position = v.clip;
+		Pos[gtid] = f32x4(v.uv.xy * dim, v.uv.z, 1.f);
 	}
+	workgroup_sync_barrier();
 
 	if (gtid < tri_count) {
-		triangles[gtid] = init.tri(gtid);
+		let tri = init.tri(gtid);
+		triangles[gtid] = tri;
 		VisBufferData data = { init.mid, gtid };
-		visbuffer[gtid] = { data.encode() };
+		visbuffer[gtid].data = data.encode();
+
+		let a = Pos[tri.x].xyz;
+		let b = Pos[tri.y].xyz;
+		let c = Pos[tri.z].xyz;
+		
+		var culled = false;
+		culled = culled || edge_fn(a.xy, b.xy, c.xy) <= 0.f;
+		let bmin = min3(a, b, c);
+		let bmax = max3(a, b, c);
+		let prec = 1.f / 256.f;
+		culled = culled || (round(bmin.x - prec) == round(bmax.x) 
+			            || round(bmin.y) == round(bmax.y + prec));
+		let in_front_of_z = a.z > 0.f && b.z > 0.f && c.z > 0.f;
+		culled = culled && in_front_of_z;
+
+		visbuffer[gtid].culled = culled;
 	}
 }
-
-f32x3 uv_vert(Init init, u32 gtid) {
-	let v = init.transform(gtid).uv;
-	let dim = f32x2(Constants.output.size());
-	return f32x3(v.xy * dim, v.z);
-}
-
-groupshared f32x4 SWPos[128];
 
 // https://fgiesen.wordpress.com/2013/02/08/triangle-rasterization-in-practice/
 // https://fgiesen.wordpress.com/2013/02/10/optimizing-the-basic-rasterizer/
@@ -101,10 +117,11 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let init = Init(gid, gtid, false);
 	let vert_count = init.meshlet.vertex_count;
 	let tri_count = init.meshlet.tri_count;
-	let dim = Constants.output.size();
+	let dim = f32x2(Constants.output.size());
 
 	if (gtid < vert_count) {
-		SWPos[gtid].xyz = uv_vert(init, gtid);
+		let v = init.transform(gtid).uv;
+		Pos[gtid] = f32x4(v.xy * dim, v.z, 1.f);
 	}
 	workgroup_sync_barrier();
 
@@ -112,9 +129,9 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 		return;
 
 	let t = init.tri(gtid);
-	let v0 = SWPos[t.x].xyz;
-	let v1 = SWPos[t.y].xyz;
-	let v2 = SWPos[t.z].xyz;
+	let v0 = Pos[t.x].xyz;
+	let v1 = Pos[t.y].xyz;
+	let v2 = Pos[t.z].xyz;
 	VisBufferData data = { init.mid, gtid };
 	let write = data.encode();
 
@@ -133,6 +150,7 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let par_area = edge_fn(v0.xy, v1.xy, v2.xy);
 	if (par_area < 0.f)
 		return;
+
 	let v_z = f32x3(v0.z, v1.z, v2.z) / par_area;
 	let z_x = dot(v_z, w_x);
 	let z_y = dot(v_z, w_y);
