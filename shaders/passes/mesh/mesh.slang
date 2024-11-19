@@ -162,49 +162,41 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 					  edge_fn(v0.xy, v1.xy, start) /* - saturate(w_x.z + saturate(1.f + w_y.z)) */);
 	var z_row = dot(v_z, w_row);
 	if (WaveActiveAnyTrue(maxv.x - minv.x > 4)) {
-		scanline(minv, maxv, w_x, w_y, w_row, z_x, z_y, z_row, write);
+		let e012 = -w_x;
+		let oe = e012 < 0.f;
+		let ie012 = select(e012 != 0.f, 1.f / e012, 1e8);
+		let	width = maxv.x - minv.x;
+		for (int y = minv.y; y <= maxv.y; y++) {
+			let cross_x = w_row * ie012;
+			let min_x2 = select(oe, cross_x, 0.f);
+			let max_x2 = select(oe, width, cross_x);
+			var x0 = u32(ceil(max3(min_x2.x, min_x2.y, min_x2.z)));
+			var x1 = u32(min3(max_x2.x, max_x2.y, max_x2.z));
+			var w = w_row + w_x * f32(x0);
+			var z = z_row + z_x * f32(x0);
+			x0 += minv.x;
+			x1 += minv.x;
+			for (int x = x0; x <= x1; x++) {
+				if (min3(w.x, w.y, w.z) >= 0.f)
+					Constants.output.write(u32x2(x, y), z, write, 1);
+				w += w_x;
+				z += z_x;
+			}
+			w_row += w_y;
+			z_row += z_y;
+		}
 	} else {
-		bounding(minv, maxv, w_x, w_y, w_row, z_x, z_y, z_row, write);
-	}
-}
-
-void scanline(i32x2 minv, i32x2 maxv, f32x3 w_x, f32x3 w_y, f32x3 w_row, f32 z_x, f32 z_y, f32 z_row, u32 write) {
-	let e012 = -w_x;
-	let oe = e012 < 0.f;
-	let ie012 = select(e012 != 0.f, 1.f / e012, 1e8);
-	let width = maxv.x - minv.x;
-	for (int y = minv.y; y <= maxv.y; y++) {
-		let cross_x = w_row * ie012;
-		let min_x2 = select(oe, cross_x, 0.f);
-		let max_x2 = select(oe, width, cross_x);
-		var x0 = u32(ceil(max3(min_x2.x, min_x2.y, min_x2.z)));
-		var x1 = u32(min3(max_x2.x, max_x2.y, max_x2.z));
-		var w = w_row + w_x * f32(x0);
-		var z = z_row + z_x * f32(x0);
-		x0 += minv.x;
-		x1 += minv.x;
-		for (int x = x0; x <= x1; x++) {
-			if (min3(w.x, w.y, w.z) >= 0.f)
-				Constants.output.write(u32x2(x, y), z, write, 1);
-			w += w_x;
-			z += z_x;
+		for (int y = minv.y; y <= maxv.y; y++) {
+			var w = w_row;
+			var z = z_row;
+			for (int x = minv.x; x <= maxv.x; x++) {
+				if (min3(w.x, w.y, w.z) >= 0.f)
+					Constants.output.write(u32x2(x, y), z, write, 2);
+				w += w_x;
+				z += z_x;
+			}
+			w_row += w_y;
+			z_row += z_y;
 		}
-		w_row += w_y;
-		z_row += z_y;
-	}
-}
-
-void bounding(i32x2 minv, i32x2 maxv, f32x3 w_x, f32x3 w_y, f32x3 w_row, f32 z_x, f32 z_y, f32 z_row, u32 write) {
-	for (int y = minv.y; y <= maxv.y; y++) {
-		var w = w_row;
-		var z = z_row;
-		for (int x = minv.x; x <= maxv.x; x++) {
-			if (min3(w.x, w.y, w.z) >= 0.f)
-				Constants.output.write(u32x2(x, y), z, write, 2);
-			w += w_x;
-			z += z_x;
-		}
-		w_row += w_y;
-		z_row += z_y;
 	}
 }

@@ -70,7 +70,7 @@ public struct BvhQueue {
 			wave_atomic_max(this.data->back.dispatch.x, req);
 		this.data->pointers[this.data->len - pos - 1] = pointer;
 	}
-	
+
 	public void done_front() {
 		done(&this.data->front);
 	}
@@ -118,7 +118,7 @@ public struct CandidateMeshletQueue {
 			this.data->pointers[i] = pointer;
 			pointer.node_offset += sizeof(Meshlet);
 		}
-	}	
+	}
 }
 
 struct MeshletQueueData {
@@ -246,8 +246,9 @@ public bool occ_cull_aabb(ScreenAabb aabb, f32x2 screen, Tex2D<f32> hzb, Sampler
 	var mip = firstbithigh(max_size - 1) - 1;
 	let smin = min_texel >> mip;
 	let smax = max_texel >> mip;
-	if (any(smax - smin > 1)) mip += 1;
-			
+	if (any(smax - smin > 1))
+		mip += 1;
+
 	let uv = ((f32x2(min_texel) + f32x2(max_texel)) * 0.5f) / hzb_size;
 	let curr_depth = hzb.sample_mip(hzb_sampler, uv, mip);
 	return aabb.max.z <= curr_depth;
@@ -271,14 +272,13 @@ public struct Cull {
 	f32 scale;
 	f32 min_scale;
 	f32x4x4 curr_mv;
+	f32x4x4 curr_mvp;
 	f32x4x4 prev_mvp;
 	f32x2 screen;
 	f32 h;
 	f32 near;
 	Tex2D<f32> hzb;
 	Sampler hzb_sampler;
-	f32x4 planes[5];
-	u32x3 flips[5];
 
 	public __init(Camera* camera, Instance instance, u64 frame, u32x2 res, Tex2D<f32> hzb, Sampler hzb_sampler) {
 		Cull ret;
@@ -289,6 +289,7 @@ public struct Cull {
 		ret.min_scale = min3(transform.scale.x, transform.scale.y, transform.scale.z);
 
 		ret.curr_mv = mul(camera[0].view, trans_mat);
+		ret.curr_mvp = mul(camera[0].view_proj, trans_mat);
 		ret.prev_mvp = mul(occ_camera(camera).view_proj, occ_transform(instance, frame).mat());
 
 		ret.screen = f32x2(res);
@@ -298,31 +299,20 @@ public struct Cull {
 		ret.hzb = hzb;
 		ret.hzb_sampler = hzb_sampler;
 
-		let mvp = mul(camera[0].view_proj, trans_mat);
-		ret.planes[0] = normalize_plane(mvp[3] + mvp[0]);
-		ret.planes[1] = normalize_plane(mvp[3] - mvp[0]);
-		ret.planes[2] = normalize_plane(mvp[3] + mvp[1]);
-		ret.planes[3] = normalize_plane(mvp[3] - mvp[1]);
-		ret.planes[4] = normalize_plane(mvp[2]);
-		[unroll]
-		for (int i = 0; i < ret.planes.getCount(); i++) {
-			ret.flips[i] = asuint(ret.planes[i].xyz) & 0x80000000;
-		}
-
 		return ret;
-	}
-
-	bool outside_plane(Aabb aabb, i32 i) {
-		let plane = this.planes[i];
-		let sign_flipped = asfloat(asuint(aabb.half_extent) ^ this.flips[i]);
-		return dot(aabb.center + sign_flipped, plane.xyz) <= -plane.w;
 	}
 
 	// https://fgiesen.wordpress.com/2012/08/31/frustum-planes-from-the-projection-matrix/
 	// https://fgiesen.wordpress.com/2010/10/17/view-frustum-culling/
 	public bool in_frustum(Aabb aabb) {
-		for (int i = 0; i < this.planes.getCount(); i++) {
-			if (this.outside_plane(aabb, i)) 
+		f32x4 planes[] = { normalize_plane(this.curr_mvp[3] + this.curr_mvp[0]),
+						   normalize_plane(this.curr_mvp[3] - this.curr_mvp[0]),
+						   normalize_plane(this.curr_mvp[3] + this.curr_mvp[1]),
+						   normalize_plane(this.curr_mvp[3] - this.curr_mvp[1]), normalize_plane(this.curr_mvp[2]) };
+		for (int i = 0; i < planes.getCount(); i++) {
+			let flip = asuint(planes[i].xyz) & 0x80000000;
+			let sign_flipped = asfloat(asuint(aabb.half_extent) ^ flip);
+			if (dot(aabb.center + sign_flipped, planes[i].xyz) <= -planes[i].w)
 				return false;
 		}
 		return true;
@@ -366,10 +356,10 @@ public struct Cull {
 			wt_z = t.y / length(t);
 		}
 
-		// Project the sphere to and equivalently sized sphere along the z axis,
+		// Project the sphere to an equivalently sized sphere along the z axis,
 		// so error_scale can be used to monotonically compare.
 		return wt_z * max(center.z - radius, this.near);
-	}	
+	}
 
 	public f32 error_scale() {
 		// Don't divide by 2 because the error is already divided by 2 during build.
@@ -393,7 +383,6 @@ public struct Cull {
 		if (let saabb = project_aabb(this.prev_mvp, this.near, aabb)) {
 			var uaabb = saabb;
 			let scale = this.screen * 0.5f;
-			let hzb_size = 1 << firstbithigh(u32x2(this.screen) - 1);
 			uaabb.min.xy = uaabb.min.xy * scale;
 			uaabb.max.xy = uaabb.max.xy * scale;
 			return !occ_cull_aabb(uaabb, this.screen, this.hzb, this.hzb_sampler);
