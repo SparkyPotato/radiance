@@ -16,44 +16,37 @@ debug = true
 
 [workspace.dependencies]
 ash = "0.38.0"
+bevy_ecs = { version = "0.15.0", features = ["bevy_reflect", "serialize"] }
+bevy_reflect = "0.15.0"
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 bytemuck = { version = "1.15.0", features = ["derive"] }
-clap = { version = "4.5.16", features = ["derive"] }
-cargo_toml = { version = "0.19.2" }
-crossbeam-channel = "0.5.12"
-dashmap = "5.5.3"
-egui = { version = "0.27.2" }
-egui_extras = "0.27.2"
-egui_grid = "0.5.1"
-egui-winit = "0.27.2"
-gltf = { version = "1.4.0" }
+crossbeam-channel = "0.5.13"
+egui = { version = "0.29.1" }
+egui-winit = { version = "0.29.1" }
+gltf = { version = "1.4.1" }
 gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", features = ["vulkan", "visualizer"] }
 hashbrown = { version = "0.14.3", features = ["nightly"] }
 metis = "0.2.1"
 meshopt = { git = "https://github.com/SparkyPotato/meshopt-rs" }
 notify-debouncer-full = "0.3.1"
-oneshot = "0.1.8"
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
-quote = "1.0.35"
-rand = "0.8.5"
-range-alloc = "0.1.3"
+proc-macro2 = "1.0.92"
 raw-window-handle = "0.6.0"
 rayon = "1.9.0"
-rfd = "0.12.1"
+rfd = "0.15.1"
 rspirv = "0.12.0"
 rustc-hash = "1.1.0"
-serde = { version = "1.0.197", features = ["derive"] }
-serde_json = { version = "1.0.114" }
+serde = "1.0.215"
 slang = { git = "https://github.com/SparkyPotato/slang-rs" }
 static_assertions = "1.1.0"
+syn = "2.0.89"
+quote = "1.0.37"
 thread_local = "1.1.8"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracy = { package = "tracy_full", version = "1.10.0", features = ["tracing", "enable"] }
-transform-gizmo-egui = "0.2.0"
-uuid = { version = "1.7.0", features = ["v4", "fast-rng", "serde"] }
-vek = { version = "0.17.1", features = ["bytemuck", "serde"] }
+uuid = { version = "1.11.0", features = ["bytemuck", "serde", "v4"] }
+vek = { path = "crates/vek", features = ["bytemuck", "serde"] }
 walkdir = "2.5.0"
-winit = "0.29.15"
-zstd = "0.13.0"
-
+winit = "0.30.5"
+zstd = "0.13.2"

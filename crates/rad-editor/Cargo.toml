@@ -1,0 +1,25 @@
+[package]
+name = "rad-editor"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+rad-core = { path = "../rad-core" }
+rad-graph = { path = "../rad-graph" }
+rad-renderer = { path = "../rad-renderer" }
+rad-rhi = { path = "../rad-rhi" }
+rad-ui = { path = "../rad-ui" }
+rad-window = { path = "../rad-window" }
+rad-world = { path = "../rad-world" }
+
+bytemuck = { workspace = true }
+gltf = { workspace = true }
+parking_lot = { workspace = true }
+rayon = { workspace = true }
+rfd = { workspace = true }
+rustc-hash = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracy = { workspace = true }
+walkdir = { workspace = true }
+zstd = { workspace = true }

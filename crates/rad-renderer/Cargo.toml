@@ -1,0 +1,23 @@
+[package]
+name = "rad-renderer"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+rad-core = { path = "../rad-core" }
+rad-graph = { path = "../rad-graph" }
+rad-world = { path = "../rad-world" }
+
+ash = { workspace = true }
+bincode = { workspace = true }
+bytemuck = { workspace = true }
+crossbeam-channel = { workspace = true }
+meshopt = { workspace = true }
+metis = { workspace = true }
+parking_lot = { workspace = true }
+rayon = { workspace = true }
+rustc-hash = { workspace = true }
+static_assertions = { workspace = true }
+thread_local = { workspace = true }
+tracing = { workspace = true }
+vek = { workspace = true }

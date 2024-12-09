@@ -1,0 +1,21 @@
+[package]
+name = "rad-graph"
+version = "0.0.0"
+edition = "2021"
+
+[features]
+default = ["bytemuck"]
+bytemuck = ["dep:bytemuck"]
+
+[dependencies]
+ash = { workspace = true }
+bytemuck = { workspace = true, optional = true }
+gpu-allocator = { workspace = true }
+hashbrown = { workspace = true }
+notify-debouncer-full = { workspace = true }
+raw-window-handle = { workspace = true }
+rspirv = { workspace = true }
+rustc-hash = { workspace = true }
+slang = { workspace = true, features = ["static"] }
+tracing = { workspace = true }
+

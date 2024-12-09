@@ -3,14 +3,22 @@ module scene_update;
 import graph;
 import asset;
 
-struct TransformUpdate {
+enum UpdateType {
+	Add,
+	Move,
+	ChangeMesh,
+	ChangeTransform,
+}
+
+struct SceneUpdate {
 	u32 instance;
-	Transform transform;
+	UpdateType ty;
+	NewInstance data;
 }
 
 struct PushConstants {
 	Instance* instances;
-	TransformUpdate* updates;
+	SceneUpdate* updates;
 	u64 frame;
 	u32 count;
 }
@@ -20,13 +28,30 @@ PushConstants Constants;
 
 [shader("compute")]
 [numthreads(64, 1, 1)]
-void tick(u32 id: SV_DispatchThreadID) {
+void update(u32 id: SV_DispatchThreadID) {
 	if (id >= Constants.count)
 		return;
 
 	let update = Constants.updates[id];
 	let instance = &Constants.instances[update.instance];
-	instance->update_frame = Constants.frame;
-	instance->last_updated_transform = instance->transform;
-	instance->transform = update.transform;
+	switch (update.ty) {
+		case UpdateType.Add: {
+			*instance = Instance(update.data);
+			break;
+		}
+		case UpdateType.Move: {
+			*instance = Constants.instances[asuint(update.data.transform.translation.x)];
+			break;
+		}
+		case UpdateType.ChangeMesh: {
+			instance->mesh = update.data.mesh;
+			break;
+		}
+		case UpdateType.ChangeTransform: {
+			instance->update_frame = Constants.frame;
+			instance->last_updated_transform = instance->transform;
+			instance->transform = update.data.transform;
+			break;
+		}
+	}
 }

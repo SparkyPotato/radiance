@@ -1,0 +1,8 @@
+[package]
+name = "rad-rhi"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rad-core = { path = "../rad-core" }
+rad-graph = { path = "../rad-graph" }

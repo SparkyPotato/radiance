@@ -85,6 +85,14 @@ public struct Instance {
 	public u64 update_frame;
 	public u8* mesh;
 
+	public __init(NewInstance instance) {
+		this.transform = instance.transform;
+		this.last_updated_transform = instance.transform;
+		this.aabb = instance.aabb;
+		this.mesh = instance.mesh;
+		this.update_frame = 0;
+	}
+
 	public BvhNode node(u32 offset) {
 		return *(BvhNode*)(this.mesh + offset);
 	}
@@ -100,6 +108,12 @@ public struct Instance {
 			return this.transform;
 		}
 	}
+}
+
+public struct NewInstance {
+	public Transform transform;
+	public Aabb aabb;
+	public u8* mesh;
 }
 
 public struct Meshlet {

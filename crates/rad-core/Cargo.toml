@@ -1,0 +1,11 @@
+[package]
+name = "rad-core"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+bevy_reflect = { workspace = true }
+bytemuck = { workspace = true }
+rustc-hash = { workspace = true }
+serde = { workspace = true }
+uuid = { workspace = true }
