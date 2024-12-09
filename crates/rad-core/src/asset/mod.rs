@@ -6,11 +6,12 @@ use std::{
 };
 
 use bytemuck::{Pod, Zeroable};
+use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 pub use uuid::Uuid;
 
-use crate::asset::aref::ARef;
+use crate::asset::aref::{ARef, AWeak};
 
 pub mod aref;
 
@@ -34,10 +35,15 @@ struct AssetDesc {
 	load: fn(AssetId, Box<dyn AssetView>) -> Result<ARef<dyn Asset>, io::Error>,
 }
 
-// TODO: Cache loaded assets
+enum CacheStatus {
+	Loading,
+	Loaded(AWeak<dyn Asset>),
+}
+
 pub struct AssetRegistry {
 	assets: FxHashMap<Uuid, AssetDesc>,
 	sources: FxHashMap<TypeId, Box<dyn AssetSource>>,
+	cache: RwLock<FxHashMap<AssetId, CacheStatus>>,
 }
 
 fn load_asset<T: Asset>(id: AssetId, data: Box<dyn AssetView>) -> Result<ARef<dyn Asset>, io::Error> {
@@ -50,6 +56,7 @@ impl AssetRegistry {
 		Self {
 			assets: FxHashMap::default(),
 			sources: FxHashMap::default(),
+			cache: RwLock::new(FxHashMap::default()),
 		}
 	}
 
@@ -64,11 +71,35 @@ impl AssetRegistry {
 	}
 
 	pub fn load_asset_dyn(&self, id: AssetId) -> Result<ARef<dyn Asset>, io::Error> {
+		loop {
+			let cache = self.cache.read();
+			match cache.get(&id) {
+				Some(CacheStatus::Loading) => {
+					// TODO: this busy waits i think
+					drop(cache);
+					std::thread::yield_now();
+				},
+				Some(CacheStatus::Loaded(weak)) => {
+					if let Some(asset) = weak.upgrade() {
+						return Ok(asset);
+					} else {
+						break;
+					}
+				},
+				None => break,
+			}
+		}
+
+		self.cache.write().insert(id, CacheStatus::Loading);
 		for source in self.sources.values() {
 			match source.load(id) {
 				Ok((uuid, data)) => {
 					if let Some(desc) = self.assets.get(&uuid) {
-						return (desc.load)(id, data);
+						let asset = (desc.load)(id, data)?;
+						self.cache
+							.write()
+							.insert(id, CacheStatus::Loaded(ARef::downgrade(&asset)));
+						return Ok(asset);
 					} else {
 						return Err(io::Error::new(
 							io::ErrorKind::NotFound,

@@ -65,6 +65,12 @@ impl ARef<dyn Asset> {
 			}
 		}
 	}
+
+	pub fn downgrade(this: &Self) -> AWeak<dyn Asset> {
+		AWeak {
+			ptr: Arc::downgrade(&this.ptr),
+		}
+	}
 }
 
 impl<T: Asset> TypePath for ARef<T> {
@@ -100,6 +106,8 @@ impl<T: Asset + Unsize<U> + ?Sized, U: Asset + ?Sized> CoerceUnsized<AWeak<U>> f
 
 impl<T: Asset + ?Sized> AWeak<T> {
 	pub fn ptr_eq(&self, other: &AWeak<T>) -> bool { self.ptr.ptr_eq(&other.ptr) }
+
+	pub fn upgrade(&self) -> Option<ARef<T>> { self.ptr.upgrade().map(|ptr| ARef { ptr }) }
 }
 
 impl<T: Asset> TypePath for AWeak<T> {
