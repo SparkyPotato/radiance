@@ -29,7 +29,7 @@ use crate::{
 	serde::{map_dec_err, map_enc_err},
 };
 
-mod serde;
+pub mod serde;
 pub mod system;
 pub mod tick;
 pub mod transform;
@@ -145,14 +145,7 @@ impl Asset for World {
 
 		let mut inner = bevy_ecs::world::World::new();
 		for _ in 0..count {
-			let id = bincode::decode_from_reader(&mut from, c).map_err(map_dec_err)?;
-			#[allow(deprecated)]
-			let mut en = inner.get_or_spawn(bevy_ecs::entity::Entity::from_raw(id)).unwrap();
-			let count: u32 = bincode::decode_from_reader(&mut from, c).map_err(map_dec_err)?;
-
-			for _ in 0..count {
-				serde::deserialize_component(&mut from, &mut en)?;
-			}
+			serde::deserialize_entity(&mut from, &mut inner)?;
 		}
 
 		Ok(Self { inner })
@@ -167,14 +160,7 @@ impl Asset for World {
 		bincode::encode_into_std_write(count, &mut into, c).map_err(map_enc_err)?;
 
 		for en in self.inner.iter_entities() {
-			bincode::encode_into_std_write(en.id().index(), &mut into, c).map_err(map_enc_err)?;
-			let count = en.archetype().component_count() as u32;
-			bincode::encode_into_std_write(count, &mut into, c).map_err(map_enc_err)?;
-
-			for comp in en.archetype().components() {
-				let info = self.inner.components().get_info(comp).unwrap();
-				serde::serialize_component(&mut into, en, info)?;
-			}
+			serde::serialize_entity(&mut into, &self.inner, en)?;
 		}
 
 		Ok(())

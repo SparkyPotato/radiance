@@ -5,7 +5,7 @@ use rad_renderer::{
 	components::camera::{CameraComponent, PrimaryViewComponent},
 	WorldRenderer,
 };
-use rad_world::{tick::Tick, transform::Transform, Entity, World};
+use rad_world::{serde::DoNotSerialize, tick::Tick, Entity, World};
 
 pub struct WorldContext {
 	edit: World,
@@ -31,15 +31,7 @@ impl WorldContext {
 		Ok(())
 	}
 
-	pub fn edit_tick(&mut self) {
-		self.edit
-			.entity_mut(self.editor)
-			.component_mut::<Transform>()
-			.unwrap()
-			.position
-			.y += 0.01;
-		self.edit_tick.tick(&mut self.edit);
-	}
+	pub fn edit_tick(&mut self) { self.edit_tick.tick(&mut self.edit); }
 
 	pub fn renderer(&mut self) -> &mut WorldRenderer { self.edit.get_resource_mut().unwrap() }
 
@@ -52,6 +44,7 @@ impl WorldContext {
 			.edit
 			.spawn_empty()
 			.insert(PrimaryViewComponent(CameraComponent::default()))
+			.insert(DoNotSerialize)
 			.id();
 	}
 }

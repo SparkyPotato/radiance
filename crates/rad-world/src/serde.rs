@@ -3,8 +3,7 @@ use std::io;
 use bevy_ecs::{
 	component::ComponentInfo,
 	entity::Entity,
-	reflect::ReflectComponent,
-	world::{EntityRef, EntityWorldMut},
+	world::{EntityRef, EntityWorldMut, World},
 };
 use bevy_reflect::{
 	DynamicArray,
@@ -41,9 +40,31 @@ use serde::{
 	Deserializer,
 };
 
-use crate::{ty_reg, uuid_to_ty, ReflectRadComponent};
+use crate::{rad_world, ty_reg, uuid_to_ty, RadComponent};
 
-pub fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &ComponentInfo) -> Result<(), io::Error> {
+#[derive(Copy, Clone, RadComponent)]
+#[uuid("51197bdd-435f-4e2f-9ecc-d919d3a46d32")]
+pub struct DoNotSerialize;
+
+pub fn serialize_entity(mut into: &mut dyn io::Write, world: &World, en: EntityRef) -> Result<(), io::Error> {
+	if en.contains::<DoNotSerialize>() {
+		return Ok(());
+	}
+
+	let c = bincode::config::standard();
+	bincode::encode_into_std_write(en.id().index(), &mut into, c).map_err(map_enc_err)?;
+	let count = en.archetype().component_count() as u32;
+	bincode::encode_into_std_write(count, &mut into, c).map_err(map_enc_err)?;
+
+	for comp in en.archetype().components() {
+		let info = world.components().get_info(comp).unwrap();
+		serialize_component(&mut into, en, info)?;
+	}
+
+	Ok(())
+}
+
+fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &ComponentInfo) -> Result<(), io::Error> {
 	let c = bincode::config::standard();
 
 	let Some(ty) = info.type_id() else { return Ok(()) };
@@ -81,7 +102,21 @@ pub fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &C
 	Ok(())
 }
 
-pub fn deserialize_component(from: &mut impl Reader, en: &mut EntityWorldMut) -> Result<(), io::Error> {
+pub fn deserialize_entity(from: &mut impl Reader, world: &mut World) -> Result<(), io::Error> {
+	let c = bincode::config::standard();
+	let id = bincode::decode_from_reader(&mut *from, c).map_err(map_dec_err)?;
+	#[allow(deprecated)]
+	let mut en = world.get_or_spawn(bevy_ecs::entity::Entity::from_raw(id)).unwrap();
+	let count: u32 = bincode::decode_from_reader(&mut *from, c).map_err(map_dec_err)?;
+
+	for _ in 0..count {
+		deserialize_component(&mut *from, &mut en)?;
+	}
+
+	Ok(())
+}
+
+fn deserialize_component(from: &mut impl Reader, en: &mut EntityWorldMut) -> Result<(), io::Error> {
 	let c = bincode::config::standard();
 	let comp: CompenentDecoder = bincode::decode_from_reader(from, c).map_err(map_dec_err)?;
 	comp.refl.insert(en, comp.obj.as_partial_reflect(), ty_reg());
