@@ -21,10 +21,11 @@ use rad_graph::{
 	sync::Shader,
 };
 use rad_world::system::WorldId;
-use vek::Vec2;
+use vek::{Mat4, Vec2};
 
 use crate::{
-	mesh::{Camera, CameraData, CullStats, RenderInfo},
+	components::camera::CameraComponent,
+	mesh::{CameraData, CullStats, RenderInfo},
 	scene::SceneReader,
 };
 
@@ -249,7 +250,8 @@ impl Resources {
 
 struct Persistent {
 	id: WorldId,
-	camera: Camera,
+	camera: CameraComponent,
+	view: Mat4<f32>,
 }
 
 pub struct Setup {
@@ -271,11 +273,11 @@ impl Setup {
 		&'pass mut self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, hzb_sampler: SamplerId,
 	) -> Resources {
 		let (mut needs_clear, prev) = match &mut self.inner {
-			Some(Persistent { id, camera }) => {
-				let prev = *camera;
-				*camera = info.camera;
-				if info.scene.id != *id {
-					*id = info.scene.id;
+			Some(Persistent { id, camera, view }) => {
+				let prev = *view;
+				*view = info.data.view;
+				if info.data.id != *id || info.data.camera != *camera {
+					*id = info.data.id;
 					(true, prev)
 				} else {
 					(false, prev)
@@ -283,14 +285,16 @@ impl Setup {
 			},
 			None => {
 				self.inner = Some(Persistent {
-					id: info.scene.id,
-					camera: info.camera,
+					id: info.data.id,
+					camera: info.data.camera,
+					view: info.data.view,
 				});
-				(true, info.camera)
+				(true, info.data.view)
 			},
 		};
 		let res = info.size;
-		let cam = info.camera;
+		let cam = info.data.camera;
+		let view = info.data.view;
 
 		let mut pass = frame.pass("setup cull buffers");
 		let camera = pass.resource(
@@ -341,7 +345,7 @@ impl Setup {
 		};
 		let late_instances = pass.resource(
 			BufferDesc {
-				size: ((info.scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _,
+				size: ((info.data.scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _,
 				..desc
 			},
 			usage,
@@ -402,8 +406,8 @@ impl Setup {
 			let buf = pass.buf;
 			let mut writer = pass.get(camera).data.as_mut();
 			let aspect = res.x as f32 / res.y as f32;
-			let cd = CameraData::new(aspect, cam);
-			let prev_cd = CameraData::new(aspect, prev);
+			let cd = CameraData::new(aspect, cam, view);
+			let prev_cd = CameraData::new(aspect, cam, prev);
 			writer.write(bytes_of(&cd)).unwrap();
 			writer.write(bytes_of(&prev_cd)).unwrap();
 
@@ -477,7 +481,7 @@ impl Setup {
 		});
 
 		Resources {
-			scene: info.scene,
+			scene: info.data.scene,
 			camera,
 			hzb,
 			hzb_sampler,

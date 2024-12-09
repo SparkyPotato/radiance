@@ -11,7 +11,7 @@ use rad_graph::{
 	util::compute::ComputePass,
 	Result,
 };
-use rad_world::{system::WorldId, transform::Transform, Entity};
+use rad_world::{transform::Transform, Entity};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use vek::{Aabb, Quaternion, Vec3};
@@ -89,7 +89,7 @@ impl SceneUpdater {
 	}
 
 	pub fn update<'pass>(
-		&'pass self, frame: &mut Frame<'pass, '_>, scene: &'pass mut Scene, id: WorldId, frame_index: u64,
+		&'pass self, frame: &mut Frame<'pass, '_>, scene: &'pass mut Scene, frame_index: u64,
 	) -> SceneReader {
 		let Scene {
 			instances,
@@ -221,7 +221,6 @@ impl SceneUpdater {
 			instance_count: *len,
 			max_depth: depth_refs.first_key_value().map(|(InvertOrd(d), _)| *d).unwrap_or(0),
 			frame: frame_index,
-			id,
 		}
 	}
 }
@@ -232,7 +231,6 @@ pub struct SceneReader {
 	pub instance_count: u32,
 	pub max_depth: u32,
 	pub frame: u64,
-	pub id: WorldId,
 }
 
 struct InvertOrd<T>(T);

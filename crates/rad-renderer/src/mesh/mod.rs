@@ -12,8 +12,10 @@ use vek::{Mat4, Vec2};
 
 pub use crate::mesh::setup::{DebugRes, DebugResId};
 use crate::{
+	components::camera::CameraComponent,
 	mesh::{bvh::BvhCull, hzb::HzbGen, instance::InstanceCull, meshlet::MeshletCull, setup::Setup},
 	scene::{GpuInstance, SceneReader},
+	PrimaryViewData,
 };
 
 mod bvh;
@@ -22,43 +24,9 @@ mod instance;
 mod meshlet;
 mod setup;
 
-#[derive(Copy, Clone, PartialEq)]
-pub struct Camera {
-	/// Vertical FOV in radians.
-	pub fov: f32,
-	pub near: f32,
-	/// View matrix (inverse of camera transform).
-	pub view: Mat4<f32>,
-}
-
-impl Default for Camera {
-	fn default() -> Self {
-		Self {
-			fov: std::f32::consts::PI / 2.0,
-			near: 0.01,
-			view: Mat4::identity(),
-		}
-	}
-}
-
-impl Camera {
-	pub fn projection(&self, aspect: f32) -> Mat4<f32> {
-		let h = (self.fov / 2.0).tan().recip();
-		let w = h / aspect;
-		let near = self.near;
-		Mat4::new(
-			w, 0.0, 0.0, 0.0, //
-			0.0, h, 0.0, 0.0, //
-			0.0, 0.0, 0.0, near, //
-			0.0, 0.0, 1.0, 0.0, //
-		)
-	}
-}
-
 #[derive(Clone)]
 pub struct RenderInfo {
-	pub scene: SceneReader,
-	pub camera: Camera,
+	pub data: PrimaryViewData,
 	pub size: Vec2<u32>,
 	pub debug_info: bool,
 }
@@ -161,9 +129,8 @@ pub struct CameraData {
 }
 
 impl CameraData {
-	fn new(aspect: f32, camera: Camera) -> Self {
+	fn new(aspect: f32, camera: CameraComponent, view: Mat4<f32>) -> Self {
 		let proj = camera.projection(aspect);
-		let view = camera.view;
 		let view_proj = proj * view;
 		Self {
 			view,

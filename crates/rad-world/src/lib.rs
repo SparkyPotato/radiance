@@ -85,6 +85,12 @@ impl EntityWrite<'_> {
 		self.inner.insert(comp);
 		self
 	}
+
+	pub fn component_mut<T: RadComponent + Component>(&mut self) -> Option<&mut T> {
+		self.inner.get_mut::<T>().map(|x| x.into_inner())
+	}
+
+	pub fn id(&self) -> Entity { self.inner.id() }
 }
 
 pub struct World {
@@ -110,6 +116,12 @@ impl World {
 
 	pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
 		self.inner.get_resource_mut().map(|x: Mut<'_, R>| x.into_inner())
+	}
+
+	pub fn entity_mut(&mut self, e: Entity) -> EntityWrite<'_> {
+		EntityWrite {
+			inner: self.inner.entity_mut(e),
+		}
 	}
 }
 
