@@ -36,7 +36,13 @@ impl Engine {
 
 	pub fn asset_dyn(&self, id: AssetId) -> Result<ARef<dyn Asset>, io::Error> { self.assets.load_asset_dyn(id) }
 
+	pub fn asset_owned_dyn(&self, id: AssetId) -> Result<Box<dyn Asset>, io::Error> {
+		self.assets.load_asset_owned_dyn(id)
+	}
+
 	pub fn asset<T: Asset>(&self, id: AssetId) -> Result<ARef<T>, io::Error> { self.assets.load_asset(id) }
+
+	pub fn asset_owned<T: Asset>(&self, id: AssetId) -> Result<Box<T>, io::Error> { self.assets.load_asset_owned(id) }
 
 	pub fn asset_source<T: AssetSource>(&self) -> Option<&T> { self.assets.get_source() }
 }

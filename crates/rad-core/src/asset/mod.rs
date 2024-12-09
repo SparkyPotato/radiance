@@ -33,6 +33,7 @@ impl AssetId {
 
 struct AssetDesc {
 	load: fn(AssetId, Box<dyn AssetView>) -> Result<ARef<dyn Asset>, io::Error>,
+	load_owned: fn(Box<dyn AssetView>) -> Result<Box<dyn Asset>, io::Error>,
 }
 
 enum CacheStatus {
@@ -51,6 +52,11 @@ fn load_asset<T: Asset>(id: AssetId, data: Box<dyn AssetView>) -> Result<ARef<dy
 	Ok(ARef::new(id, obj))
 }
 
+fn load_asset_owned<T: Asset>(data: Box<dyn AssetView>) -> Result<Box<dyn Asset>, io::Error> {
+	let obj = T::load(data)?;
+	Ok(Box::new(obj) as Box<dyn Asset>)
+}
+
 impl AssetRegistry {
 	pub fn new() -> Self {
 		Self {
@@ -60,7 +66,15 @@ impl AssetRegistry {
 		}
 	}
 
-	pub fn register<T: Asset>(&mut self) { self.assets.insert(T::uuid(), AssetDesc { load: load_asset::<T> }); }
+	pub fn register<T: Asset>(&mut self) {
+		self.assets.insert(
+			T::uuid(),
+			AssetDesc {
+				load: load_asset::<T>,
+				load_owned: load_asset_owned::<T>,
+			},
+		);
+	}
 
 	pub fn source<T: AssetSource>(&mut self, source: T) { self.sources.insert(TypeId::of::<T>(), Box::new(source)); }
 
@@ -115,10 +129,38 @@ impl AssetRegistry {
 		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
 	}
 
+	pub fn load_asset_owned_dyn(&self, id: AssetId) -> Result<Box<dyn Asset>, io::Error> {
+		for source in self.sources.values() {
+			match source.load(id) {
+				Ok((uuid, data)) => {
+					if let Some(desc) = self.assets.get(&uuid) {
+						return Ok((desc.load_owned)(data)?);
+					} else {
+						return Err(io::Error::new(
+							io::ErrorKind::NotFound,
+							"unknown asset type (not registered?)",
+						));
+					}
+				},
+				Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+				Err(e) => return Err(e),
+			}
+		}
+
+		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
+	}
+
 	pub fn load_asset<T: Asset>(&self, id: AssetId) -> Result<ARef<T>, io::Error> {
 		self.load_asset_dyn(id).and_then(|asset| {
 			asset
 				.downcast::<T>()
+				.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "asset type mismatch"))
+		})
+	}
+
+	pub fn load_asset_owned<T: Asset>(&self, id: AssetId) -> Result<Box<T>, io::Error> {
+		self.load_asset_owned_dyn(id).and_then(|asset| {
+			Box::<dyn Any + Send + Sync>::downcast::<T>(asset as _)
 				.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "asset type mismatch"))
 		})
 	}

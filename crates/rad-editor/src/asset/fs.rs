@@ -9,7 +9,7 @@ use bytemuck::{Pod, Zeroable};
 use parking_lot::RwLock;
 use rad_core::asset::{AssetId, AssetSource, AssetView};
 use rad_world::Uuid;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use walkdir::WalkDir;
 
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -22,6 +22,7 @@ struct AssetHeader {
 pub struct FsAssetSystem {
 	root: RwLock<Option<PathBuf>>,
 	assets: RwLock<FxHashMap<AssetId, PathBuf>>,
+	by_type: RwLock<FxHashMap<Uuid, FxHashSet<AssetId>>>,
 }
 
 impl FsAssetSystem {
@@ -29,6 +30,7 @@ impl FsAssetSystem {
 		let this = Arc::new(Self {
 			root: RwLock::new(std::env::args().nth(1).map(PathBuf::from)),
 			assets: RwLock::new(FxHashMap::default()),
+			by_type: RwLock::new(FxHashMap::default()),
 		});
 		let a = this.clone();
 		// TODO: yuck
@@ -54,15 +56,20 @@ impl FsAssetSystem {
 		FsAssetView::create(&path, id, ty).map(|x| Box::new(x) as Box<_>)
 	}
 
+	pub fn assets_of_type(&self, ty: Uuid) -> FxHashSet<AssetId> {
+		self.by_type.read().get(&ty).cloned().unwrap_or_default()
+	}
+
 	fn rescan(&self) {
 		let r = self.root.read();
 		let Some(root) = r.as_ref() else {
 			return;
 		};
-
-		let mut assets = FxHashMap::default();
 		let w = WalkDir::new(root);
 		drop(r);
+
+		let mut assets = FxHashMap::default();
+		let mut by_type: FxHashMap<Uuid, FxHashSet<AssetId>> = FxHashMap::default();
 		for entry in w
 			.into_iter()
 			.filter_map(|x| x.ok())
@@ -71,10 +78,12 @@ impl FsAssetSystem {
 			if let Ok(mut view) = FsAssetView::open_ro(entry.path()) {
 				if let Ok(header) = view.header() {
 					assets.insert(header.id, entry.path().to_path_buf());
+					by_type.entry(header.ty).or_default().insert(header.id);
 				}
 			}
 		}
 		*self.assets.write() = assets;
+		*self.by_type.write() = by_type;
 	}
 }
 

@@ -10,6 +10,7 @@ pub use bevy_ecs::{
 	entity::Entity,
 	reflect::ReflectComponent,
 };
+use bevy_ecs::{system::Resource, world::Mut};
 pub use bevy_reflect;
 use bevy_reflect::{reflect_trait, GetTypeRegistration};
 pub use rad_core::{asset::Uuid, uuid};
@@ -101,6 +102,14 @@ impl World {
 		let mut inner = self.inner.spawn_empty();
 		inner.insert(transform::Transform::identity());
 		EntityWrite { inner }
+	}
+
+	pub fn add_resource<R: Resource>(&mut self, value: R) { self.inner.insert_resource(value); }
+
+	pub fn get_resource<R: Resource>(&self) -> Option<&R> { self.inner.get_resource() }
+
+	pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
+		self.inner.get_resource_mut().map(|x: Mut<'_, R>| x.into_inner())
 	}
 }
 

@@ -102,6 +102,8 @@ impl<T: App> rad_window::App for UiApp<T> {
 
 		frame.run()?;
 
+		tracy::frame!();
+
 		Ok(())
 	}
 

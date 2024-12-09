@@ -27,8 +27,9 @@ impl Tick {
 		Self { inner }
 	}
 
-	pub fn add_systems<M>(&mut self, stage: TickStage, systems: impl IntoSystemConfigs<M>) {
+	pub fn add_systems<M>(mut self, stage: TickStage, systems: impl IntoSystemConfigs<M>) -> Self {
 		self.inner.add_systems(systems.in_set(stage));
+		self
 	}
 
 	pub fn tick(&mut self, world: &mut World) {

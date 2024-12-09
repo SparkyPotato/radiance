@@ -3,5 +3,5 @@ pub use bevy_ecs::{
 	query::*,
 	removal_detection::RemovedComponents,
 	system::{Query, Res, ResMut, Resource},
-	world::Ref,
+	world::{Ref, WorldId},
 };

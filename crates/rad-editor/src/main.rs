@@ -2,12 +2,7 @@ use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{graph::Frame, Result};
 use rad_renderer::RendererModule;
 use rad_rhi::RhiModule;
-use rad_ui::{
-	egui::{CentralPanel, Context},
-	App,
-	UiApp,
-	UiModule,
-};
+use rad_ui::{egui::Context, App, UiApp, UiModule};
 use rad_window::WindowModule;
 use rad_world::WorldModule;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
@@ -15,10 +10,14 @@ use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, 
 use crate::{
 	asset::{fs::FsAssetSystem, AssetTray},
 	menu::Menu,
+	render::Renderer,
+	world::WorldContext,
 };
 
 mod asset;
 mod menu;
+mod render;
+mod world;
 
 fn main() -> Result<()> {
 	let _ = tracing::subscriber::set_global_default(
@@ -41,10 +40,7 @@ fn main() -> Result<()> {
 		.module::<EditorModule>()
 		.build();
 
-	rad_window::run(UiApp::new(EditorApp {
-		menu: Menu::new(),
-		assets: AssetTray::new(),
-	})?)
+	rad_window::run(UiApp::new(EditorApp::new())?)
 }
 
 struct EditorModule;
@@ -56,13 +52,26 @@ impl Module for EditorModule {
 struct EditorApp {
 	menu: Menu,
 	assets: AssetTray,
+	world: WorldContext,
+	renderer: Renderer,
+}
+
+impl EditorApp {
+	fn new() -> Self {
+		Self {
+			menu: Menu::new(),
+			assets: AssetTray::new(),
+			world: WorldContext::new(),
+			renderer: Renderer::new().unwrap(),
+		}
+	}
 }
 
 impl App for EditorApp {
 	fn render<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()> {
-		self.menu.render(ctx);
+		self.menu.render(ctx, &mut self.world);
 		self.assets.render(ctx);
-		CentralPanel::default().show(ctx, |ui| ui.label("hi"));
+		self.renderer.render(frame, ctx, &mut self.world);
 
 		Ok(())
 	}

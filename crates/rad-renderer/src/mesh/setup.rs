@@ -2,7 +2,6 @@ use std::io::Write;
 
 use ash::vk;
 use bytemuck::{bytes_of, checked::from_bytes, NoUninit, PodInOption, ZeroableInOption};
-use rad_core::asset::{aref::AWeak, Asset};
 use rad_graph::{
 	device::descriptor::{SamplerId, StorageImageId},
 	graph::{
@@ -21,6 +20,7 @@ use rad_graph::{
 	resource::{BufferHandle, ImageView, Subresource},
 	sync::Shader,
 };
+use rad_world::system::WorldId;
 use vek::Vec2;
 
 use crate::{
@@ -248,7 +248,7 @@ impl Resources {
 }
 
 struct Persistent {
-	scene: AWeak<dyn Asset>,
+	id: WorldId,
 	camera: Camera,
 }
 
@@ -271,11 +271,11 @@ impl Setup {
 		&'pass mut self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, hzb_sampler: SamplerId,
 	) -> Resources {
 		let (mut needs_clear, prev) = match &mut self.inner {
-			Some(Persistent { scene, camera }) => {
+			Some(Persistent { id, camera }) => {
 				let prev = *camera;
 				*camera = info.camera;
-				if !info.scene_ref.ptr_eq(scene) {
-					*scene = info.scene_ref.clone();
+				if info.scene.id != *id {
+					*id = info.scene.id;
 					(true, prev)
 				} else {
 					(false, prev)
@@ -283,7 +283,7 @@ impl Setup {
 			},
 			None => {
 				self.inner = Some(Persistent {
-					scene: info.scene_ref.clone(),
+					id: info.scene.id,
 					camera: info.camera,
 				});
 				(true, info.camera)

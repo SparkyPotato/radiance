@@ -1,8 +1,9 @@
 #![feature(let_chains)]
 
-use rad_core::{EngineBuilder, Module};
+use rad_core::{Engine, EngineBuilder, Module};
+use rad_graph::{graph::Frame, Result};
 use rad_world::{
-	system::{DetectChanges, Query, Ref, RemovedComponents, ResMut, Resource},
+	system::{DetectChanges, Query, Ref, RemovedComponents, ResMut, Resource, WorldId},
 	transform::Transform,
 	Entity,
 	WorldBuilderExt,
@@ -11,16 +12,14 @@ pub use vek;
 
 use crate::{
 	components::mesh::MeshComponent,
-	debug::mesh::DebugMesh,
-	mesh::VisBuffer,
-	scene::{Scene, SceneUpdater},
+	scene::{Scene, SceneReader, SceneUpdater},
 };
 
 pub mod assets;
 pub mod components;
 pub mod debug;
 pub mod mesh;
-mod scene;
+pub mod scene;
 mod util;
 
 pub struct RendererModule;
@@ -32,24 +31,40 @@ impl Module for RendererModule {
 
 		let u = SceneUpdater::new(engine.get_global()).unwrap();
 		engine.global(u);
-
-		let v = VisBuffer::new(engine.get_global()).unwrap();
-		engine.global(v);
-
-		let d = DebugMesh::new(engine.get_global()).unwrap();
-		engine.global(d);
 	}
 }
 
 pub struct WorldRenderer {
 	scene: Scene,
+	id: Option<WorldId>,
 }
 impl Resource for WorldRenderer {}
 
+impl WorldRenderer {
+	pub fn new() -> Result<Self> {
+		Ok(Self {
+			scene: Scene::new()?,
+			id: None,
+		})
+	}
+
+	pub fn update<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, frame_index: u64) -> SceneReader {
+		Engine::get().global::<SceneUpdater>().update(
+			frame,
+			&mut self.scene,
+			self.id
+				.expect("`sync_scene` should be ticked befor calling `WorldRenderer::update`"),
+			frame_index,
+		)
+	}
+}
+
 pub fn sync_scene(
 	mut r: ResMut<WorldRenderer>, q: Query<(Entity, Ref<Transform>, Ref<MeshComponent>)>,
-	mut m: RemovedComponents<MeshComponent>,
+	mut m: RemovedComponents<MeshComponent>, id: WorldId,
 ) {
+	r.id = Some(id);
+
 	// TODO: very inefficient
 	for (e, t, m) in q.iter() {
 		let added = m.is_added();

@@ -321,7 +321,7 @@ impl Renderer {
 							let sampler = self.samplers[&TextureOptions {
 								magnification: TextureFilter::Linear,
 								minification: TextureFilter::Linear,
-								mipmap_mode: Some(TextureFilter::Linear),
+								mipmap_mode: None,
 								wrap_mode: TextureWrapMode::ClampToEdge,
 							}]
 								.1;

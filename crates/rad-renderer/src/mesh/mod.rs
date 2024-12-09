@@ -1,6 +1,5 @@
 use ash::{ext, vk};
 use bytemuck::{cast_slice, NoUninit, Pod, Zeroable};
-use rad_core::asset::{aref::AWeak, Asset};
 use rad_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, ShaderInfo},
 	graph::{BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassBuilder, PassContext, Res},
@@ -23,13 +22,23 @@ mod instance;
 mod meshlet;
 mod setup;
 
-#[derive(Copy, Clone, Default, PartialEq)]
+#[derive(Copy, Clone, PartialEq)]
 pub struct Camera {
 	/// Vertical FOV in radians.
 	pub fov: f32,
 	pub near: f32,
 	/// View matrix (inverse of camera transform).
 	pub view: Mat4<f32>,
+}
+
+impl Default for Camera {
+	fn default() -> Self {
+		Self {
+			fov: std::f32::consts::PI / 2.0,
+			near: 0.01,
+			view: Mat4::identity(),
+		}
+	}
 }
 
 impl Camera {
@@ -49,7 +58,6 @@ impl Camera {
 #[derive(Clone)]
 pub struct RenderInfo {
 	pub scene: SceneReader,
-	pub scene_ref: AWeak<dyn Asset>,
 	pub camera: Camera,
 	pub size: Vec2<u32>,
 	pub debug_info: bool,
