@@ -331,13 +331,11 @@ impl<'graph> ResourceAliaser<'graph> {
 					if data.handle.buffer == vk::Buffer::null() {
 						let desc = crate::resource::BufferDescUnnamed {
 							size: data.desc.size,
-							usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
 							readback: matches!(data.desc.loc, BufferLoc::Readback),
 						};
 						let per_desc = |name| crate::resource::BufferDesc {
 							name,
 							size: desc.size,
-							usage: desc.usage,
 							readback: desc.readback,
 						};
 						(data.handle, data.uninit) = match (data.desc.loc, data.desc.persist) {

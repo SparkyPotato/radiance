@@ -110,9 +110,6 @@ impl SceneUpdater {
 				resource::BufferDesc {
 					name: "scene instances",
 					size: *cap as u64 * std::mem::size_of::<GpuInstance>() as u64,
-					usage: vk::BufferUsageFlags::STORAGE_BUFFER
-						| vk::BufferUsageFlags::TRANSFER_SRC
-						| vk::BufferUsageFlags::TRANSFER_DST,
 					readback: false,
 				},
 			)
@@ -284,9 +281,6 @@ impl Scene {
 				resource::BufferDesc {
 					name: "scene instances",
 					size: std::mem::size_of::<GpuInstance>() as u64 * 1024,
-					usage: vk::BufferUsageFlags::STORAGE_BUFFER
-						| vk::BufferUsageFlags::TRANSFER_SRC
-						| vk::BufferUsageFlags::TRANSFER_DST,
 					readback: false,
 				},
 			)?,

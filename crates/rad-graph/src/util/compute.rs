@@ -34,13 +34,7 @@ impl<T: NoUninit> ComputePass<T> {
 			&[pass.device.descriptors().set()],
 			&[],
 		);
-		dev.cmd_push_constants(
-			buf,
-			pass.device.layout(),
-			vk::ShaderStageFlags::COMPUTE,
-			0,
-			bytes_of(push),
-		);
+		dev.cmd_push_constants(buf, pass.device.layout(), vk::ShaderStageFlags::ALL, 0, bytes_of(push));
 	}
 
 	pub fn dispatch(&self, push: &T, pass: &PassContext, x: u32, y: u32, z: u32) {

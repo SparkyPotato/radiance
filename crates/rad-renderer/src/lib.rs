@@ -19,7 +19,7 @@ pub mod assets;
 pub mod components;
 pub mod debug;
 pub mod mesh;
-pub mod scene;
+mod scene;
 mod util;
 
 pub struct RendererModule;

@@ -41,8 +41,6 @@ impl<T: App> ApplicationHandler for AppWrapper<T> {
 		self.app.init(el, &self.window.as_ref().unwrap().inner).unwrap();
 	}
 
-	fn suspended(&mut self, _: &ActiveEventLoop) { self.window.as_mut().unwrap().destroy(); }
-
 	fn about_to_wait(&mut self, _: &ActiveEventLoop) {
 		if !self.minimized {
 			self.window.as_mut().unwrap().inner.request_redraw();
@@ -174,19 +172,6 @@ impl Window {
 		self.make(device)
 	}
 
-	fn destroy(&mut self) {
-		unsafe {
-			let device: &Device = Engine::get().global();
-			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
-			self.swapchain_ext.destroy_swapchain(self.swapchain, None);
-			device.surface_ext().destroy_surface(self.surface, None);
-			for (available, rendered) in self.semas {
-				device.device().destroy_semaphore(available, None);
-				device.device().destroy_semaphore(rendered, None);
-			}
-		}
-	}
-
 	fn cleanup_old(&mut self, device: &Device) -> Result<()> {
 		if self.old_swapchain.swapchain != vk::SwapchainKHR::null() {
 			self.old_swapchain.sync.wait(device)?;
@@ -260,6 +245,21 @@ impl Window {
 		}
 
 		Ok(())
+	}
+}
+
+impl Drop for Window {
+	fn drop(&mut self) {
+		unsafe {
+			let device: &Device = Engine::get().global();
+			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
+			self.swapchain_ext.destroy_swapchain(self.swapchain, None);
+			device.surface_ext().destroy_surface(self.surface, None);
+			for (available, rendered) in self.semas {
+				device.device().destroy_semaphore(available, None);
+				device.device().destroy_semaphore(rendered, None);
+			}
+		}
 	}
 }
 

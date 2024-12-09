@@ -2,10 +2,9 @@ use std::marker::PhantomData;
 
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
-use crate::device::GraphicsPipelineDesc;
 
 use crate::{
-	device::{Device, Pipeline},
+	device::{Device, GraphicsPipelineDesc, Pipeline},
 	graph::PassContext,
 	Result,
 };
@@ -79,13 +78,7 @@ impl<T: NoUninit> RenderPass<T> {
 				&[],
 			);
 
-			dev.cmd_push_constants(
-				buf,
-				pass.device.layout(),
-				vk::ShaderStageFlags::ALL_GRAPHICS,
-				0,
-				bytes_of(push),
-			);
+			dev.cmd_push_constants(buf, pass.device.layout(), vk::ShaderStageFlags::ALL, 0, bytes_of(push));
 
 			draw(pass.device, buf);
 

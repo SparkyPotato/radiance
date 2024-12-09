@@ -2,7 +2,7 @@
 
 use std::ops::{BitOr, BitOrAssign};
 
-use ash::vk::{self, ImageLayout};
+use ash::vk::{self, ImageLayout, ImageUsageFlags};
 
 /// Defines all potential shader stages.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -108,6 +108,8 @@ gen_usage_enums! {
 		DepthStencilAttachmentWrite,
 		/// Overrides the automatic layout, must be the last usage.
 		OverrideLayout(ImageLayout),
+		/// Adds to the automatic creation flags.
+		AddUsage(ImageUsageFlags),
 	};
 
 	pub enum CommonUsage {
@@ -160,30 +162,6 @@ impl BitOrAssign for AccessInfo {
 	fn bitor_assign(&mut self, rhs: Self) { *self = *self | rhs; }
 }
 
-impl From<BufferUsage> for vk::BufferUsageFlags {
-	fn from(usage: BufferUsage) -> Self {
-		match usage {
-			BufferUsage::IndirectBuffer => vk::BufferUsageFlags::INDIRECT_BUFFER,
-			BufferUsage::IndexBuffer => vk::BufferUsageFlags::INDEX_BUFFER,
-			BufferUsage::VertexBuffer => vk::BufferUsageFlags::VERTEX_BUFFER,
-			BufferUsage::ShaderReadUniformBuffer(_) => vk::BufferUsageFlags::UNIFORM_BUFFER,
-			BufferUsage::Nothing => vk::BufferUsageFlags::empty(),
-			BufferUsage::ShaderStorageRead(_) => vk::BufferUsageFlags::STORAGE_BUFFER,
-			BufferUsage::TransferRead => vk::BufferUsageFlags::TRANSFER_SRC,
-			BufferUsage::HostRead => vk::BufferUsageFlags::empty(),
-			BufferUsage::ShaderStorageWrite(_) => vk::BufferUsageFlags::STORAGE_BUFFER,
-			BufferUsage::TransferWrite => vk::BufferUsageFlags::TRANSFER_DST,
-			BufferUsage::HostWrite => vk::BufferUsageFlags::empty(),
-			BufferUsage::General => vk::BufferUsageFlags::empty(),
-			BufferUsage::AccelerationStructureBuildRead => {
-				vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
-			},
-			BufferUsage::AccelerationStructureBuildWrite => vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR,
-			BufferUsage::AccelerationStructureBuildScratch => vk::BufferUsageFlags::STORAGE_BUFFER,
-		}
-	}
-}
-
 impl From<ImageUsage> for vk::ImageUsageFlags {
 	fn from(usage: ImageUsage) -> Self {
 		match usage {
@@ -200,6 +178,7 @@ impl From<ImageUsage> for vk::ImageUsageFlags {
 			ImageUsage::TransferWrite => vk::ImageUsageFlags::TRANSFER_DST,
 			ImageUsage::General => vk::ImageUsageFlags::empty(),
 			ImageUsage::OverrideLayout(_) => vk::ImageUsageFlags::empty(),
+			ImageUsage::AddUsage(flags) => flags,
 		}
 	}
 }
@@ -252,6 +231,11 @@ impl From<UsageType> for AccessInfo {
 				stage_mask: vk::PipelineStageFlags2::empty(),
 				access_mask: vk::AccessFlags2::empty(),
 				image_layout,
+			},
+			UsageType::AddUsage(_) => AccessInfo {
+				stage_mask: vk::PipelineStageFlags2::empty(),
+				access_mask: vk::AccessFlags2::empty(),
+				image_layout: vk::ImageLayout::UNDEFINED,
 			},
 			UsageType::ShaderStorageRead(s) => AccessInfo {
 				stage_mask: get_pipeline_stage(s),

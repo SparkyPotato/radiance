@@ -4,7 +4,6 @@ use std::{
 	usize,
 };
 
-use ash::vk;
 use bincode::error::{DecodeError, EncodeError};
 use bytemuck::{NoUninit, Pod, Zeroable};
 use rad_core::{
@@ -141,7 +140,6 @@ impl Asset for Mesh {
 			BufferDesc {
 				name: "mesh buffer",
 				size,
-				usage: vk::BufferUsageFlags::STORAGE_BUFFER,
 				readback: false,
 			},
 		)

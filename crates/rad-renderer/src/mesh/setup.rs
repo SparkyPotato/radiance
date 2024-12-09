@@ -317,7 +317,14 @@ impl Setup {
 			},
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::OverrideLayout(vk::ImageLayout::READ_ONLY_OPTIMAL)],
+				usages: if needs_clear {
+					&[ImageUsageType::TransferWrite]
+				} else {
+					&[
+						ImageUsageType::AddUsage(vk::ImageUsageFlags::TRANSFER_DST),
+						ImageUsageType::OverrideLayout(vk::ImageLayout::READ_ONLY_OPTIMAL),
+					]
+				},
 				view_type: None,
 				subresource: Subresource::default(),
 			},

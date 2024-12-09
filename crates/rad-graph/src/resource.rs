@@ -47,14 +47,12 @@ pub trait Resource: Default + Sized {
 pub struct BufferDesc<'a> {
 	pub name: &'a str,
 	pub size: u64,
-	pub usage: vk::BufferUsageFlags,
 	pub readback: bool,
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct BufferDescUnnamed {
 	pub size: u64,
-	pub usage: vk::BufferUsageFlags,
 	pub readback: bool,
 }
 
@@ -69,7 +67,6 @@ impl ToNamed for BufferDescUnnamed {
 		Self::Named {
 			name,
 			size: self.size,
-			usage: self.usage,
 			readback: self.readback,
 		}
 	}
@@ -166,7 +163,17 @@ impl Resource for Buffer {
 		unsafe {
 			let info = vk::BufferCreateInfo::default()
 				.size(desc.size)
-				.usage(desc.usage | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
+				.usage(
+					vk::BufferUsageFlags::TRANSFER_SRC
+						| vk::BufferUsageFlags::TRANSFER_DST
+						| vk::BufferUsageFlags::STORAGE_BUFFER
+						| vk::BufferUsageFlags::INDEX_BUFFER
+						| vk::BufferUsageFlags::VERTEX_BUFFER
+						| vk::BufferUsageFlags::INDIRECT_BUFFER
+						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS, /* | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+					                                                 * | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+					                                                 * | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR, */
+				)
 				.sharing_mode(vk::SharingMode::CONCURRENT);
 
 			let Queues {
@@ -591,8 +598,6 @@ impl Resource for AS {
 				BufferDesc {
 					name: desc.name,
 					size: desc.size,
-					usage: vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
-						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
 					readback: false,
 				},
 			)?;

@@ -46,6 +46,7 @@ pub struct Descriptors {
 	pool: vk::DescriptorPool,
 	layout: vk::PipelineLayout,
 	set: vk::DescriptorSet,
+	set_layout: vk::DescriptorSetLayout,
 	inner: Mutex<Inner>,
 }
 
@@ -165,7 +166,7 @@ impl Descriptors {
 		];
 
 		unsafe {
-			let d_layout = device.create_descriptor_set_layout(
+			let set_layout = device.create_descriptor_set_layout(
 				&vk::DescriptorSetLayoutCreateInfo::default()
 					.bindings(&set_layout)
 					.flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
@@ -200,12 +201,12 @@ impl Descriptors {
 			let set = device.allocate_descriptor_sets(
 				&vk::DescriptorSetAllocateInfo::default()
 					.descriptor_pool(pool)
-					.set_layouts(&[d_layout]),
+					.set_layouts(&[set_layout]),
 			)?[0];
 
 			let layout = device.create_pipeline_layout(
 				&vk::PipelineLayoutCreateInfo::default()
-					.set_layouts(&[d_layout])
+					.set_layouts(&[set_layout])
 					.push_constant_ranges(&[vk::PushConstantRange::default()
 						.size(128)
 						.offset(0)
@@ -213,12 +214,11 @@ impl Descriptors {
 				None,
 			)?;
 
-			device.destroy_descriptor_set_layout(d_layout, None);
-
 			Ok(Descriptors {
 				pool,
 				layout,
 				set,
+				set_layout,
 				inner: Mutex::new(Inner {
 					sampled_images: FreeIndices::new(sampled_image_count),
 					storage_images: FreeIndices::new(storage_image_count),
@@ -230,6 +230,7 @@ impl Descriptors {
 
 	pub(super) unsafe fn cleanup(&mut self, device: &ash::Device) {
 		device.destroy_pipeline_layout(self.layout, None);
+		device.destroy_descriptor_set_layout(self.set_layout, None);
 		device.destroy_descriptor_pool(self.pool, None);
 	}
 }

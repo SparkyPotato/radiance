@@ -45,6 +45,8 @@ impl Engine {
 	pub fn asset_owned<T: Asset>(&self, id: AssetId) -> Result<Box<T>, io::Error> { self.assets.load_asset_owned(id) }
 
 	pub fn asset_source<T: AssetSource>(&self) -> Option<&T> { self.assets.get_source() }
+
+	pub unsafe fn destroy() { std::ptr::drop_in_place(&ENGINE as *const _ as *mut OnceLock<Engine>); }
 }
 
 pub struct EngineBuilder {
