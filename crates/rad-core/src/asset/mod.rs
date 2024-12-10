@@ -84,6 +84,27 @@ impl AssetRegistry {
 			.map(|s| (s.as_ref() as &dyn Any).downcast_ref().unwrap())
 	}
 
+	fn find_asset(&self, id: AssetId) -> Result<(&AssetDesc, Box<dyn AssetView>), io::Error> {
+		for source in self.sources.values() {
+			match source.load(id) {
+				Ok((uuid, data)) => {
+					if let Some(desc) = self.assets.get(&uuid) {
+						return Ok((desc, data));
+					} else {
+						return Err(io::Error::new(
+							io::ErrorKind::NotFound,
+							"unknown asset type (not registered?)",
+						));
+					}
+				},
+				Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+				Err(e) => return Err(e),
+			}
+		}
+
+		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
+	}
+
 	pub fn load_asset_dyn(&self, id: AssetId) -> Result<ARef<dyn Asset>, io::Error> {
 		loop {
 			let cache = self.cache.read();
@@ -103,51 +124,20 @@ impl AssetRegistry {
 				None => break,
 			}
 		}
-
 		self.cache.write().insert(id, CacheStatus::Loading);
-		for source in self.sources.values() {
-			match source.load(id) {
-				Ok((uuid, data)) => {
-					if let Some(desc) = self.assets.get(&uuid) {
-						let asset = (desc.load)(id, data)?;
-						self.cache
-							.write()
-							.insert(id, CacheStatus::Loaded(ARef::downgrade(&asset)));
-						return Ok(asset);
-					} else {
-						return Err(io::Error::new(
-							io::ErrorKind::NotFound,
-							"unknown asset type (not registered?)",
-						));
-					}
-				},
-				Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-				Err(e) => return Err(e),
-			}
-		}
 
-		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
+		let (desc, data) = self.find_asset(id)?;
+		let asset = (desc.load)(id, data)?;
+		self.cache
+			.write()
+			.insert(id, CacheStatus::Loaded(ARef::downgrade(&asset)));
+
+		Ok(asset)
 	}
 
 	pub fn load_asset_owned_dyn(&self, id: AssetId) -> Result<Box<dyn Asset>, io::Error> {
-		for source in self.sources.values() {
-			match source.load(id) {
-				Ok((uuid, data)) => {
-					if let Some(desc) = self.assets.get(&uuid) {
-						return Ok((desc.load_owned)(data)?);
-					} else {
-						return Err(io::Error::new(
-							io::ErrorKind::NotFound,
-							"unknown asset type (not registered?)",
-						));
-					}
-				},
-				Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
-				Err(e) => return Err(e),
-			}
-		}
-
-		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
+		let (desc, data) = self.find_asset(id)?;
+		(desc.load_owned)(data)
 	}
 
 	pub fn load_asset<T: Asset>(&self, id: AssetId) -> Result<ARef<T>, io::Error> {
