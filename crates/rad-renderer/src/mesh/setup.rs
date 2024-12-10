@@ -278,6 +278,7 @@ impl Setup {
 				*view = info.data.view;
 				if info.data.id != *id || info.data.camera != *camera {
 					*id = info.data.id;
+					*camera = info.data.camera;
 					(true, prev)
 				} else {
 					(false, prev)

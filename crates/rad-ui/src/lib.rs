@@ -11,7 +11,7 @@ use rad_graph::{
 	graph::{Frame, RenderGraph, SwapchainImage},
 	Result,
 };
-use rad_window::{ActiveEventLoop, WindowEvent, WinitWindow};
+use rad_window::winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window};
 use vek::Vec2;
 
 pub use crate::render::to_texture_id;
@@ -41,7 +41,9 @@ pub struct UiApp<T> {
 }
 
 pub trait App {
-	fn render<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()>;
+	fn render<'pass>(&'pass mut self, window: &Window, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()>;
+
+	fn on_window_event(&mut self, _window: &Window, _event: &WindowEvent) {}
 }
 
 impl<T: App> UiApp<T> {
@@ -60,7 +62,7 @@ impl<T: App> UiApp<T> {
 }
 
 impl<T: App> rad_window::App for UiApp<T> {
-	fn init(&mut self, el: &ActiveEventLoop, _: &WinitWindow) -> Result<()> {
+	fn init(&mut self, el: &ActiveEventLoop, _: &Window) -> Result<()> {
 		self.state = Some(State::new(
 			Engine::get().global::<Context>().clone(),
 			ViewportId::default(),
@@ -73,14 +75,14 @@ impl<T: App> rad_window::App for UiApp<T> {
 		Ok(())
 	}
 
-	fn draw(&mut self, window: &WinitWindow, image: SwapchainImage) -> Result<()> {
+	fn draw(&mut self, window: &Window, image: SwapchainImage) -> Result<()> {
 		let ctx = Engine::get().global::<Context>();
 		self.arena.reset();
 
 		let mut frame = self.graph.frame(Engine::get().global(), &self.arena);
 
 		ctx.begin_pass(self.state.as_mut().unwrap().take_egui_input(window));
-		self.inner.render(&mut frame, ctx)?;
+		self.inner.render(window, &mut frame, ctx)?;
 		let output = ctx.end_pass();
 
 		self.state
@@ -107,7 +109,8 @@ impl<T: App> rad_window::App for UiApp<T> {
 		Ok(())
 	}
 
-	fn event(&mut self, window: &WinitWindow, event: WindowEvent) -> Result<()> {
+	fn event(&mut self, window: &Window, event: WindowEvent) -> Result<()> {
+		self.inner.on_window_event(window, &event);
 		let _ = self.state.as_mut().unwrap().on_window_event(window, &event);
 		Ok(())
 	}

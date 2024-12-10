@@ -5,8 +5,14 @@ use rad_graph::{
 	graph::SwapchainImage,
 	Result,
 };
-use winit::{application::ApplicationHandler, dpi::LogicalSize, event_loop::EventLoop, window::WindowId};
-pub use winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window as WinitWindow};
+pub use winit;
+use winit::{
+	application::ApplicationHandler,
+	dpi::LogicalSize,
+	event::WindowEvent,
+	event_loop::{ActiveEventLoop, EventLoop},
+	window::{Window as WinitWindow, WindowId},
+};
 
 pub struct WindowModule;
 

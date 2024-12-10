@@ -5,7 +5,7 @@ use rad_renderer::{
 	components::camera::{CameraComponent, PrimaryViewComponent},
 	WorldRenderer,
 };
-use rad_world::{serde::DoNotSerialize, tick::Tick, Entity, World};
+use rad_world::{serde::DoNotSerialize, tick::Tick, Entity, EntityWrite, World};
 
 pub struct WorldContext {
 	edit: World,
@@ -30,6 +30,8 @@ impl WorldContext {
 
 		Ok(())
 	}
+
+	pub fn editor_mut(&mut self) -> EntityWrite<'_> { self.edit.entity_mut(self.editor) }
 
 	pub fn edit_tick(&mut self) { self.edit_tick.tick(&mut self.edit); }
 
