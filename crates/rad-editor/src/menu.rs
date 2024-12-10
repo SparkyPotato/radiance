@@ -1,18 +1,17 @@
 use std::sync::Arc;
 
-use rad_core::{asset::Asset, Engine};
+use rad_core::Engine;
 use rad_ui::egui::{menu, Context, Key, KeyboardShortcut, Modifiers, TopBottomPanel};
-use rad_world::World;
 use rfd::FileDialog;
 
-use crate::{asset::fs::FsAssetSystem, world::WorldContext};
+use crate::asset::fs::FsAssetSystem;
 
 pub struct Menu {}
 
 impl Menu {
 	pub fn new() -> Self { Self {} }
 
-	pub fn render(&mut self, ctx: &Context, world: &mut WorldContext) {
+	pub fn render(&mut self, ctx: &Context) {
 		let fs: &Arc<FsAssetSystem> = Engine::get().asset_source().unwrap();
 
 		let mut new = ctx.input_mut(|x| x.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::N)));
@@ -24,14 +23,6 @@ impl Menu {
 					new |= ui.button("new").clicked();
 					open |= ui.button("open").clicked();
 				});
-
-				ui.menu_button("scene", |ui| {
-					for w in fs.assets_of_type(World::uuid()) {
-						if ui.button(w.to_string()).clicked() {
-							let _ = world.open(w);
-						}
-					}
-				})
 			});
 		});
 

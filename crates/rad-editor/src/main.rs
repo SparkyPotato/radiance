@@ -69,8 +69,8 @@ impl EditorApp {
 
 impl App for EditorApp {
 	fn render<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()> {
-		self.menu.render(ctx, &mut self.world);
-		self.assets.render(ctx);
+		self.menu.render(ctx);
+		self.assets.render(ctx, &mut self.world);
 		self.renderer.render(frame, ctx, &mut self.world);
 
 		Ok(())

@@ -1,9 +1,9 @@
-use std::io::Write;
+use std::{collections::hash_map::Entry, io::Write};
 
 use ash::vk;
 use bytemuck::{bytes_of, cast_slice, NoUninit};
 use egui::{
-	epaint::{Primitive, Vertex},
+	epaint::{ImageDelta, Primitive, Vertex},
 	ClippedPrimitive,
 	ImageData,
 	Rect,
@@ -23,6 +23,7 @@ use rad_graph::{
 		ShaderInfo,
 	},
 	graph::{
+		self,
 		util::{ByteReader, ImageStage},
 		BufferDesc,
 		BufferLoc,
@@ -384,81 +385,8 @@ impl Renderer {
 					TextureId::Managed(x) => x,
 					TextureId::User(_) => continue,
 				};
-				let (image, ..) = self.images.entry(x).or_insert_with(|| {
-					let size = Vec2::new(data.image.width() as u32, data.image.height() as _);
-					let extent = vk::Extent3D {
-						width: size.x,
-						height: size.y,
-						depth: 1,
-					};
-					let image = Image::create(
-						frame.device(),
-						ImageDesc {
-							name: "egui image",
-							format: vk::Format::R8G8B8A8_UNORM,
-							size: extent,
-							levels: 1,
-							layers: 1,
-							samples: vk::SampleCountFlags::TYPE_1,
-							usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-							flags: vk::ImageCreateFlags::MUTABLE_FORMAT,
-						},
-					)
-					.unwrap();
 
-					let view = ImageView::create(
-						frame.device(),
-						ImageViewDesc {
-							name: "egui image",
-							image: image.handle(),
-							size: extent,
-							view_type: vk::ImageViewType::TYPE_2D,
-							format: vk::Format::R8G8B8A8_UNORM,
-							usage: ImageViewUsage::Sampled,
-							subresource: Subresource::default(),
-						},
-					)
-					.unwrap();
-
-					fn map_filter(filter: TextureFilter) -> vk::Filter {
-						match filter {
-							TextureFilter::Nearest => vk::Filter::NEAREST,
-							TextureFilter::Linear => vk::Filter::LINEAR,
-						}
-					}
-
-					fn map_repeat(repeat: TextureWrapMode) -> vk::SamplerAddressMode {
-						match repeat {
-							TextureWrapMode::ClampToEdge => vk::SamplerAddressMode::CLAMP_TO_EDGE,
-							TextureWrapMode::Repeat => vk::SamplerAddressMode::REPEAT,
-							TextureWrapMode::MirroredRepeat => vk::SamplerAddressMode::MIRRORED_REPEAT,
-						}
-					}
-
-					let (_, id) = self.samplers.entry(data.options).or_insert_with(|| unsafe {
-						let sampler = frame
-							.device()
-							.device()
-							.create_sampler(
-								&vk::SamplerCreateInfo::default()
-									.mag_filter(map_filter(data.options.magnification))
-									.min_filter(map_filter(data.options.minification))
-									.address_mode_u(map_repeat(data.options.wrap_mode))
-									.address_mode_v(map_repeat(data.options.wrap_mode))
-									.address_mode_w(map_repeat(data.options.wrap_mode))
-									.mipmap_mode(vk::SamplerMipmapMode::LINEAR),
-								None,
-							)
-							.unwrap();
-
-						let id = frame.device().descriptors().get_sampler(frame.device(), sampler);
-
-						(sampler, id)
-					});
-
-					(image, size, view, *id)
-				});
-
+				let (handle, desc) = self.get_image_for(frame, x, &data);
 				let pos = data.pos.unwrap_or([0, 0]);
 				let stage = ImageStage {
 					row_stride: 0,
@@ -482,13 +410,13 @@ impl Renderer {
 				let img = frame.stage_image_new(
 					"upload ui image",
 					ExternalImage {
-						handle: image.handle(),
+						handle,
 						layout: if data.pos.is_some() {
 							vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
 						} else {
 							vk::ImageLayout::UNDEFINED
 						},
-						desc: image.desc(),
+						desc,
 					},
 					stage,
 					ByteReader(vec),
@@ -508,6 +436,120 @@ impl Renderer {
 		}
 
 		imgs
+	}
+
+	fn get_image_for(&mut self, frame: &mut Frame, id: u64, delta: &ImageDelta) -> (vk::Image, graph::ImageDesc) {
+		let size: Vec2<usize> = Vec2::from(delta.image.size()) + Vec2::from(delta.pos.unwrap_or([0; 2]));
+		let size = size.map(|x| x as u32);
+		match self.images.entry(id) {
+			Entry::Occupied(mut x) => {
+				let curr_size = x.get().1;
+				if Vec2::max(curr_size, size) != curr_size {
+					let (image, _, view, _) = x.insert(Self::make_image(
+						&mut self.samplers,
+						frame.device(),
+						size,
+						delta.options,
+					));
+					frame.delete(image);
+					frame.delete(view);
+				}
+				let i = &x.get().0;
+				(i.handle(), i.desc())
+			},
+			Entry::Vacant(x) => {
+				let i = x.insert(Self::make_image(
+					&mut self.samplers,
+					frame.device(),
+					size,
+					delta.options,
+				));
+				(i.0.handle(), i.0.desc())
+			},
+		}
+	}
+
+	fn make_image(
+		samplers: &mut FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>, device: &Device, size: Vec2<u32>,
+		opts: TextureOptions,
+	) -> (Image, Vec2<u32>, ImageView, SamplerId) {
+		let extent = vk::Extent3D {
+			width: size.x,
+			height: size.y,
+			depth: 1,
+		};
+		let image = Image::create(
+			device,
+			ImageDesc {
+				name: "egui image",
+				format: vk::Format::R8G8B8A8_UNORM,
+				size: extent,
+				levels: 1,
+				layers: 1,
+				samples: vk::SampleCountFlags::TYPE_1,
+				usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+				flags: vk::ImageCreateFlags::MUTABLE_FORMAT,
+			},
+		)
+		.unwrap();
+
+		let view = ImageView::create(
+			device,
+			ImageViewDesc {
+				name: "egui image",
+				image: image.handle(),
+				size: extent,
+				view_type: vk::ImageViewType::TYPE_2D,
+				format: vk::Format::R8G8B8A8_UNORM,
+				usage: ImageViewUsage::Sampled,
+				subresource: Subresource::default(),
+			},
+		)
+		.unwrap();
+
+		let id = Self::get_sampler(samplers, device, opts);
+
+		(image, size, view, id)
+	}
+
+	fn get_sampler(
+		samplers: &mut FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>, device: &Device, opts: TextureOptions,
+	) -> SamplerId {
+		fn map_filter(filter: TextureFilter) -> vk::Filter {
+			match filter {
+				TextureFilter::Nearest => vk::Filter::NEAREST,
+				TextureFilter::Linear => vk::Filter::LINEAR,
+			}
+		}
+
+		fn map_repeat(repeat: TextureWrapMode) -> vk::SamplerAddressMode {
+			match repeat {
+				TextureWrapMode::ClampToEdge => vk::SamplerAddressMode::CLAMP_TO_EDGE,
+				TextureWrapMode::Repeat => vk::SamplerAddressMode::REPEAT,
+				TextureWrapMode::MirroredRepeat => vk::SamplerAddressMode::MIRRORED_REPEAT,
+			}
+		}
+
+		samplers
+			.entry(opts)
+			.or_insert_with(|| unsafe {
+				let sampler = device
+					.device()
+					.create_sampler(
+						&vk::SamplerCreateInfo::default()
+							.mag_filter(map_filter(opts.magnification))
+							.min_filter(map_filter(opts.minification))
+							.address_mode_u(map_repeat(opts.wrap_mode))
+							.address_mode_v(map_repeat(opts.wrap_mode))
+							.address_mode_w(map_repeat(opts.wrap_mode))
+							.mipmap_mode(vk::SamplerMipmapMode::LINEAR),
+						None,
+					)
+					.unwrap();
+				let id = device.descriptors().get_sampler(device, sampler);
+				(sampler, id)
+			})
+			.1
 	}
 }
 
