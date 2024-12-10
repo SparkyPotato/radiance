@@ -12,6 +12,7 @@ use bytemuck::from_bytes;
 use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
+	camera::Projection,
 	Document,
 	Gltf,
 };
@@ -21,7 +22,7 @@ use rad_core::{
 };
 use rad_renderer::{
 	assets::mesh::{GpuVertex, Mesh, MeshData},
-	components::mesh::MeshComponent,
+	components::{camera::CameraComponent, mesh::MeshComponent},
 	vek::{Mat4, Quaternion, Vec2, Vec3},
 };
 use rad_world::{transform::Transform, World};
@@ -152,46 +153,31 @@ impl GltfImporter {
 	}
 
 	fn node(&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[ARef<Mesh>], out: &mut World) {
+		// let name = node.name().unwrap_or("unnamed node").to_string();
 		let this_transform = Mat4::from_col_arrays(node.transform().matrix());
 		let transform = transform * this_transform;
+		let (p, r, s) = gltf::scene::Transform::Matrix {
+			matrix: transform.into_col_arrays(),
+		}
+		.decomposed();
+
+		let mut entity = out.spawn_empty();
+		entity.insert(Transform {
+			position: p.into(),
+			rotation: Quaternion::from_vec4(r.into()),
+			scale: s.into(),
+		});
 
 		if let Some(mesh) = node.mesh() {
-			// let name = node.name().unwrap_or("unnamed node").to_string();
-			let mesh = meshes[mesh.index()].clone();
-			let (t, r, s) = gltf::scene::Transform::Matrix {
-				matrix: transform.into_col_arrays(),
-			}
-			.decomposed();
-
-			out.spawn_empty()
-				.insert(Transform {
-					position: t.into(),
-					rotation: Quaternion::from_vec4(r.into()),
-					scale: s.into(),
-				})
-				.insert(MeshComponent::new(mesh));
+			entity.insert(MeshComponent::new(meshes[mesh.index()].clone()));
 		}
 
-		// let camera = node.camera().map(|camera| {
-		// 	let name = camera.name().unwrap_or("unnamed camera").to_string();
-		// 	let view = transform.inverted();
-		// 	let projection = match camera.projection() {
-		// 		Projection::Perspective(p) => {
-		// 			let yfov = p.yfov();
-		// 			let near = p.znear();
-		// 			let far = p.zfar();
-		// 			crate::scene::Projection::Perspective { yfov, near, far }
-		// 		},
-		// 		Projection::Orthographic(o) => {
-		// 			let height = o.ymag();
-		// 			let near = o.znear();
-		// 			let far = o.zfar();
-		// 			crate::scene::Projection::Orthographic { height, near, far }
-		// 		},
-		// 	};
-		// 	Camera { name, view, projection }
-		// });
-		// out.cameras.extend(camera);
+		if let Some(Projection::Perspective(p)) = node.camera().as_ref().map(|x| x.projection()) {
+			entity.insert(CameraComponent {
+				fov: p.yfov(),
+				near: p.znear(),
+			});
+		}
 
 		for child in node.children() {
 			self.node(child, transform, meshes, out);
