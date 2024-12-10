@@ -139,7 +139,7 @@ pub fn import(name: &str, mesh: MeshData) -> Mesh {
 	}
 
 	let (bvh, depth) = bvh.build(&meshlets.groups);
-	convert_meshlets(mesh.vertices, meshlets, bvh, depth)
+	convert_meshlets(mesh, meshlets, bvh, depth)
 }
 
 fn generate_meshlets(vertices: &[Vertex], indices: &[u32], error: Option<(Sphere<f32, f32>, f32)>) -> Meshlets {
@@ -365,7 +365,8 @@ fn find_connections(range: Range<usize>, meshlets: &Meshlets) -> Vec<Vec<(usize,
 	connections
 }
 
-fn convert_meshlets(vertices: Vec<Vertex>, meshlets: Meshlets, bvh: Vec<BvhNode>, bvh_depth: u32) -> Mesh {
+fn convert_meshlets(mesh: MeshData, meshlets: Meshlets, bvh: Vec<BvhNode>, bvh_depth: u32) -> Mesh {
+	let MeshData { vertices, indices } = mesh;
 	let mut outv = Vec::with_capacity(vertices.len());
 	let mut outi = Vec::with_capacity(meshlets.meshlets.len() * 124 * 3);
 	let meshlets = meshlets
@@ -396,6 +397,8 @@ fn convert_meshlets(vertices: Vec<Vertex>, meshlets: Meshlets, bvh: Vec<BvhNode>
 		bvh,
 		bvh_depth,
 		aabb,
+		raw_vertices: vertices,
+		raw_indices: indices,
 	}
 }
 

@@ -66,4 +66,8 @@ pub struct Mesh {
 	/// The AABB of the entire mesh.
 	#[bincode(with_serde)]
 	pub aabb: Aabb<f32>,
+	/// Input vertices for the mesh.
+	pub raw_vertices: Vec<Vertex>,
+	/// Input indices for the mesh.
+	pub raw_indices: Vec<u32>,
 }

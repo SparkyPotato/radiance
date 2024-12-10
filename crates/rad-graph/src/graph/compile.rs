@@ -259,7 +259,6 @@ impl<'graph> ResourceAliaser<'graph> {
 	}
 
 	fn try_merge_buffer(&mut self, data: BufferData<'graph>, lifetime: ResourceLifetime) {
-		// If the data to be merged is an external resource, don't try to merge it at all.
 		if Self::is_buffer_merge_candidate(&data) {
 			for &i in self.buffers.iter() {
 				let res = &mut self.resources[i as usize];

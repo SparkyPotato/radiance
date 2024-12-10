@@ -3,7 +3,10 @@
 #![feature(ptr_metadata)]
 #![feature(slice_ptr_get)]
 
-use std::fmt::{Debug, Display};
+use std::{
+	fmt::{Debug, Display},
+	io,
+};
 
 pub use ash;
 pub use gpu_allocator::{vulkan as alloc, MemoryLocation};
@@ -41,6 +44,10 @@ impl From<String> for Error {
 
 impl From<ash::vk::Result> for Error {
 	fn from(result: ash::vk::Result) -> Self { Error::Vulkan(result) }
+}
+
+impl From<Error> for io::Error {
+	fn from(err: Error) -> Self { io::Error::new(io::ErrorKind::Other, err.to_string()) }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

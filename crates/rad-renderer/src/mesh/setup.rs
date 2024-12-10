@@ -477,7 +477,8 @@ impl Setup {
 			dev.cmd_update_buffer(buf, pass.get(late_instances).buffer, 0, bytes_of(&[0, 0, 1, 1]));
 
 			if !pass.is_uninit(stats) {
-				self.stats = *from_bytes(pass.get(stats).data.as_ref());
+				let data = pass.get(stats).data.as_ref();
+				self.stats = *from_bytes(&data[..std::mem::size_of_val(&self.stats)]);
 			}
 		});
 
