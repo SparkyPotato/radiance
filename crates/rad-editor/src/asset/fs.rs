@@ -109,7 +109,7 @@ impl FsAssetSystem {
 	// 	self.by_type.read().get(&ty).cloned().unwrap_or_default()
 	// }
 
-	fn rescan(&self) {
+	pub(super) fn rescan(&self) {
 		let r = self.root.read().clone();
 		let Some(root) = r else {
 			return;

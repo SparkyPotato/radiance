@@ -103,6 +103,10 @@ impl Mesh {
 	pub fn aabb(&self) -> Aabb<f32> { self.aabb }
 
 	pub fn gpu_ptr(&self) -> GpuPtr<u8> { self.buffer.ptr() }
+
+	pub fn raw_gpu_ptr(&self) -> GpuPtr<GpuVertex> { self.raw_buffer.ptr() }
+
+	pub fn as_addr(&self) -> u64 { self.as_.addr() }
 }
 
 impl Asset for Mesh {
@@ -302,7 +306,12 @@ impl Asset for Mesh {
 			let mut size = [0u64];
 			device
 				.device()
-				.get_query_pool_results(qpool, 0, &mut size, vk::QueryResultFlags::TYPE_64)
+				.get_query_pool_results(
+					qpool,
+					0,
+					&mut size,
+					vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
+				)
 				.unwrap();
 			device.device().destroy_query_pool(qpool, None);
 

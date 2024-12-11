@@ -72,9 +72,13 @@ impl ToNamed for BufferDescUnnamed {
 	}
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
+#[derive(Hash, PartialEq, Eq, Debug, Default)]
 #[repr(transparent)]
 pub struct GpuPtr<T: NoUninit>(pub u64, PhantomData<fn() -> T>);
+impl<T: NoUninit> Copy for GpuPtr<T> {}
+impl<T: NoUninit> Clone for GpuPtr<T> {
+	fn clone(&self) -> Self { *self }
+}
 unsafe impl<T: NoUninit> Zeroable for GpuPtr<T> {}
 unsafe impl<T: NoUninit> Pod for GpuPtr<T> {}
 impl<T: NoUninit> GpuPtr<T> {
@@ -583,8 +587,17 @@ impl ToNamed for ASDescUnnamed {
 
 #[derive(Default)]
 pub struct AS {
-	pub inner: vk::AccelerationStructureKHR,
-	pub buffer: Buffer,
+	inner: vk::AccelerationStructureKHR,
+	buffer: Buffer,
+	addr: u64,
+}
+
+impl AS {
+	pub fn addr(&self) -> u64 { self.addr }
+
+	pub fn size(&self) -> u64 { self.buffer.size() }
+
+	pub fn buf_handle(&self) -> BufferHandle { self.buffer.handle() }
 }
 
 impl Resource for AS {
@@ -621,8 +634,11 @@ impl Resource for AS {
 						.object_name(&name),
 				)
 			});
+			let addr = device.as_ext().get_acceleration_structure_device_address(
+				&vk::AccelerationStructureDeviceAddressInfoKHR::default().acceleration_structure(inner),
+			);
 
-			Ok(Self { inner, buffer })
+			Ok(Self { inner, buffer, addr })
 		}
 	}
 

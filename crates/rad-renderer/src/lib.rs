@@ -36,6 +36,8 @@ impl Module for RendererModule {
 	fn init(engine: &mut EngineBuilder) {
 		engine.asset::<assets::mesh::Mesh>();
 		engine.component::<components::mesh::MeshComponent>();
+		engine.component::<components::camera::CameraComponent>();
+		engine.component::<components::camera::PrimaryViewComponent>();
 
 		let u = SceneUpdater::new(engine.get_global()).unwrap();
 		engine.global(u);

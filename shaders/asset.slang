@@ -84,12 +84,14 @@ public struct Instance {
 	public Aabb aabb;
 	public u64 update_frame;
 	public u8* mesh;
+	public Vertex* raw_mesh;
 
 	public __init(NewInstance instance) {
 		this.transform = instance.transform;
 		this.last_updated_transform = instance.transform;
 		this.aabb = instance.aabb;
 		this.mesh = instance.mesh;
+		this.raw_mesh = instance.raw_mesh;
 		this.update_frame = 0;
 	}
 
@@ -114,6 +116,8 @@ public struct NewInstance {
 	public Transform transform;
 	public Aabb aabb;
 	public u8* mesh;
+	public Vertex* raw_mesh;
+	public u64 as;
 }
 
 public struct Meshlet {

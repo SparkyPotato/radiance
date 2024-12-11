@@ -6,7 +6,7 @@ use rad_core::Engine;
 use rad_graph::{
 	device::{Device, ShaderInfo},
 	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, ExternalBuffer, Frame, Res},
-	resource::{self, Buffer, BufferHandle, GpuPtr, Resource},
+	resource::{self, ASDesc, Buffer, BufferHandle, GpuPtr, Resource, AS},
 	sync::Shader,
 	util::compute::ComputePass,
 	Result,
@@ -16,7 +16,10 @@ use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 use vek::{Aabb, Quaternion, Vec3};
 
-use crate::{assets::mesh::GpuAabb, components::mesh::MeshComponent};
+use crate::{
+	assets::mesh::{GpuAabb, GpuVertex},
+	components::mesh::MeshComponent,
+};
 
 #[derive(Copy, Clone, Default, NoUninit)]
 #[repr(C)]
@@ -34,14 +37,17 @@ pub struct GpuInstance {
 	pub aabb: GpuAabb,
 	pub update_frame: u64,
 	pub mesh: GpuPtr<u8>,
+	pub raw_mesh: GpuPtr<GpuVertex>,
 }
 
 #[derive(Copy, Clone, Default, NoUninit)]
 #[repr(C)]
 struct GpuNewInstance {
-	pub transform: GpuTransform,
-	pub aabb: GpuAabb,
-	pub mesh: GpuPtr<u8>,
+	transform: GpuTransform,
+	aabb: GpuAabb,
+	mesh: GpuPtr<u8>,
+	raw_mesh: GpuPtr<GpuVertex>,
+	as_: u64,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -65,6 +71,7 @@ struct GpuSceneUpdate {
 #[repr(C)]
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
+	as_instances: GpuPtr<u64>,
 	updates: GpuPtr<GpuSceneUpdate>,
 	frame: u64,
 	count: u32,
@@ -93,12 +100,15 @@ impl SceneUpdater {
 	) -> SceneReader {
 		let Scene {
 			instances,
+			as_instances,
+			as_,
 			len,
 			cap,
 			updates,
 			depth_refs,
 			..
 		} = scene;
+		let asi = as_instances.handle();
 
 		let res = if *len > *cap {
 			while *len > *cap {
@@ -114,11 +124,29 @@ impl SceneUpdater {
 				},
 			)
 			.unwrap();
+			let new_as = Buffer::create(
+				frame.device(),
+				resource::BufferDesc {
+					name: "AS scene instances",
+					size: *cap as u64 * std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u64,
+					readback: false,
+				},
+			)
+			.unwrap();
 			let old = std::mem::replace(instances, new);
+			let old_as = std::mem::replace(as_instances, new_as);
 
 			let mut pass = frame.pass("copy scene");
 			let src = pass.resource(
 				ExternalBuffer { handle: old.handle() },
+				BufferUsage {
+					usages: &[BufferUsageType::TransferRead],
+				},
+			);
+			let src_as = pass.resource(
+				ExternalBuffer {
+					handle: old_as.handle(),
+				},
 				BufferUsage {
 					usages: &[BufferUsageType::TransferRead],
 				},
@@ -131,9 +159,19 @@ impl SceneUpdater {
 					usages: &[BufferUsageType::TransferWrite],
 				},
 			);
+			let dst_as = pass.resource(
+				ExternalBuffer {
+					handle: as_instances.handle(),
+				},
+				BufferUsage {
+					usages: &[BufferUsageType::TransferWrite],
+				},
+			);
 			pass.build(move |mut pass| unsafe {
 				let src = pass.get(src);
+				let src_as = pass.get(src_as);
 				let dst = pass.get(dst);
+				let dst_as = pass.get(dst_as);
 				pass.device.device().cmd_copy_buffer(
 					pass.buf,
 					src.buffer,
@@ -143,10 +181,20 @@ impl SceneUpdater {
 						.dst_offset(0)
 						.size(*cap as u64 * std::mem::size_of::<GpuInstance>() as u64)],
 				);
+				pass.device.device().cmd_copy_buffer(
+					pass.buf,
+					src_as.buffer,
+					dst_as.buffer,
+					&[vk::BufferCopy::default()
+						.src_offset(0)
+						.dst_offset(0)
+						.size(*cap as u64 * std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u64)],
+				);
 			});
 			frame.delete(old);
+			frame.delete(old_as);
 
-			Some(dst)
+			Some((dst, dst_as))
 		} else {
 			None
 		};
@@ -164,16 +212,24 @@ impl SceneUpdater {
 				&[]
 			},
 		};
-		let instances = if let Some(instances) = res {
+		let (instances, as_instances) = if let Some((instances, as_instances)) = res {
 			pass.reference(instances, usages);
-			instances
+			pass.reference(as_instances, usages);
+			(instances, as_instances)
 		} else {
-			pass.resource(
+			let i = pass.resource(
 				ExternalBuffer {
 					handle: instances.handle(),
 				},
 				usages,
-			)
+			);
+			let a = pass.resource(
+				ExternalBuffer {
+					handle: as_instances.handle(),
+				},
+				usages,
+			);
+			(i, a)
 		};
 		let update_buffer = (count > 0).then(|| {
 			pass.resource(
@@ -199,6 +255,7 @@ impl SceneUpdater {
 				self.pass.dispatch(
 					&PushConstants {
 						instances: pass.get(instances).ptr(),
+						as_instances: pass.get(as_instances).ptr(),
 						updates: update_buf.ptr(),
 						frame: frame_index,
 						count,
@@ -214,6 +271,97 @@ impl SceneUpdater {
 				unsafe impl Send for Huh {}
 				unsafe impl Sync for Huh {}
 			}
+		});
+
+		let count = *len;
+		let geo = [vk::AccelerationStructureGeometryKHR::default()
+			.geometry_type(vk::GeometryTypeKHR::INSTANCES)
+			.geometry(vk::AccelerationStructureGeometryDataKHR {
+				instances: vk::AccelerationStructureGeometryInstancesDataKHR::default()
+					.array_of_pointers(false)
+					.data(vk::DeviceOrHostAddressConstKHR {
+						device_address: asi.ptr::<u8>().addr(),
+					}),
+			})];
+		let info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+			.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
+			.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+			.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+			.geometries(&geo);
+		let mut sinfo = vk::AccelerationStructureBuildSizesInfoKHR::default();
+		unsafe {
+			frame.device().as_ext().get_acceleration_structure_build_sizes(
+				vk::AccelerationStructureBuildTypeKHR::DEVICE,
+				&info,
+				&[count],
+				&mut sinfo,
+			);
+		}
+
+		let mut curr_size = as_.size();
+		if sinfo.acceleration_structure_size > curr_size {
+			if curr_size == 0 {
+				curr_size = 1024;
+			}
+			while sinfo.acceleration_structure_size > curr_size {
+				curr_size *= 2;
+			}
+			let old = std::mem::replace(
+				as_,
+				AS::create(
+					frame.device(),
+					ASDesc {
+						name: "tlas",
+						flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
+						ty: vk::AccelerationStructureTypeKHR::TOP_LEVEL,
+						size: curr_size,
+					},
+				)
+				.unwrap(),
+			);
+			frame.delete(old);
+		}
+
+		let mut pass = frame.pass("build tlas");
+		pass.reference(
+			as_instances,
+			BufferUsage {
+				usages: &[BufferUsageType::AccelerationStructureBuildRead],
+			},
+		);
+		let scratch = pass.resource(
+			BufferDesc {
+				size: sinfo.build_scratch_size,
+				loc: BufferLoc::GpuOnly,
+				persist: None,
+			},
+			BufferUsage {
+				usages: &[BufferUsageType::AccelerationStructureBuildScratch],
+			},
+		);
+		pass.resource(
+			ExternalBuffer {
+				handle: as_.buf_handle(),
+			},
+			BufferUsage {
+				usages: &[BufferUsageType::AccelerationStructureBuildWrite],
+			},
+		);
+		pass.build(move |mut pass| unsafe {
+			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+				.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
+				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+				.geometries(&geo);
+			info.dst_acceleration_structure = as_.handle();
+			info.scratch_data.device_address = pass.get(scratch).ptr::<u8>().addr();
+			pass.device.as_ext().cmd_build_acceleration_structures(
+				pass.buf,
+				&[info],
+				&[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
+					.primitive_count(count)
+					.primitive_offset(0)]],
+			);
 		});
 
 		SceneReader {
@@ -247,6 +395,8 @@ impl<T: Eq> Eq for InvertOrd<T> {}
 
 pub struct Scene {
 	instances: Buffer,
+	as_instances: Buffer,
+	as_: AS,
 	len: u32,
 	cap: u32,
 	entity_map: FxHashMap<Entity, (u32, u32)>,
@@ -282,6 +432,15 @@ impl Scene {
 					readback: false,
 				},
 			)?,
+			as_instances: Buffer::create(
+				device,
+				resource::BufferDesc {
+					name: "AS scene instances",
+					size: std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u64 * 1024,
+					readback: false,
+				},
+			)?,
+			as_: AS::default(),
 			len: 0,
 			cap: 1024,
 			entity_map: FxHashMap::default(),
@@ -298,6 +457,8 @@ impl Scene {
 				transform: map_transform(transform),
 				aabb: map_aabb(mesh.inner.aabb()),
 				mesh: mesh.inner.gpu_ptr(),
+				raw_mesh: mesh.inner.raw_gpu_ptr(),
+				as_: mesh.inner.as_addr(),
 			},
 		});
 		self.len += 1;
@@ -326,6 +487,8 @@ impl Scene {
 				},
 				aabb: GpuAabb::default(),
 				mesh: GpuPtr::null(),
+				raw_mesh: GpuPtr::null(),
+				as_: 0,
 			},
 		});
 		self.len -= 1;
@@ -346,6 +509,8 @@ impl Scene {
 				transform: map_transform(transform),
 				aabb: map_aabb(mesh.inner.aabb()),
 				mesh: mesh.inner.gpu_ptr(),
+				raw_mesh: mesh.inner.raw_gpu_ptr(),
+				as_: mesh.inner.as_addr(),
 			},
 		});
 
@@ -369,6 +534,8 @@ impl Scene {
 				transform: GpuTransform::default(),
 				aabb: map_aabb(mesh.inner.aabb()),
 				mesh: mesh.inner.gpu_ptr(),
+				raw_mesh: mesh.inner.raw_gpu_ptr(),
+				as_: mesh.inner.as_addr(),
 			},
 		});
 
@@ -387,6 +554,8 @@ impl Scene {
 				transform: map_transform(transform),
 				aabb: GpuAabb::default(),
 				mesh: GpuPtr::null(),
+				raw_mesh: GpuPtr::null(),
+				as_: 0,
 			},
 		});
 	}
