@@ -194,7 +194,9 @@ impl Renderer {
 			for tris in tris.iter() {
 				match &tris.primitive {
 					Primitive::Mesh(m) => match m.texture_id {
-						TextureId::User(x) => pass.reference::<ImageView>(Res::from_raw(x as _), img_usage),
+						TextureId::User(x) if (x & (1 << 63)) == 0 => {
+							pass.reference::<ImageView>(Res::from_raw(x as _), img_usage)
+						},
 						_ => {},
 					},
 					_ => {},
@@ -318,7 +320,12 @@ impl Renderer {
 							(image.id.unwrap(), *sampler)
 						},
 						TextureId::User(x) => {
-							let image: ImageView = pass.get(Res::from_raw(x as _));
+							let masked = x & !(1 << 63);
+							let image = if masked != x {
+								ImageId::from_raw(masked as _)
+							} else {
+								pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
+							};
 							let sampler = self.samplers[&TextureOptions {
 								magnification: TextureFilter::Linear,
 								minification: TextureFilter::Linear,
@@ -326,7 +333,7 @@ impl Renderer {
 								wrap_mode: TextureWrapMode::ClampToEdge,
 							}]
 								.1;
-							(image.id.unwrap(), sampler)
+							(image, sampler)
 						},
 					};
 					pass.device.device().cmd_push_constants(
@@ -580,3 +587,5 @@ impl ScissorRect {
 }
 
 pub fn to_texture_id(r: Res<ImageView>) -> TextureId { TextureId::User(r.into_raw() as _) }
+
+pub fn raw_texture_to_id(r: ImageId) -> TextureId { TextureId::User((1 << 63) | r.get() as u64) }

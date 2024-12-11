@@ -40,15 +40,17 @@ impl Asset for Image {
 		uuid!("e68fac6b-41d0-48c5-a5ff-3e6cfe9b53f0")
 	}
 
-	fn load(mut data: Box<dyn AssetView>) -> Result<Self, std::io::Error>
+	fn load(mut view: Box<dyn AssetView>) -> Result<Self, std::io::Error>
 	where
 		Self: Sized,
 	{
 		transcoder_init();
-		data.seek_begin()?;
-		let mut read = data.read_section()?;
+		view.seek_begin()?;
+		let mut read = view.read_section()?;
 		let mut data = Vec::new();
 		read.read_to_end(&mut data)?;
+		drop(read);
+		let name = view.name();
 
 		let mut trans = Transcoder::new();
 		trans
@@ -83,16 +85,17 @@ impl Asset for Image {
 			height: info.m_height,
 			depth: 1,
 		};
+		let format = if is_srgb {
+			vk::Format::BC7_SRGB_BLOCK
+		} else {
+			vk::Format::BC7_UNORM_BLOCK
+		};
 		let image = resource::Image::create(
 			device,
 			ImageDesc {
-				name: "image",
+				name,
 				size,
-				format: if is_srgb {
-					vk::Format::BC7_SRGB_BLOCK
-				} else {
-					vk::Format::BC7_UNORM_BLOCK
-				},
+				format,
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
@@ -104,7 +107,7 @@ impl Asset for Image {
 		let staging = Buffer::create(
 			device,
 			BufferDesc {
-				name: "image staging",
+				name: &format!("{name} staging buffer"),
 				size: data.len() as _,
 				readback: false,
 			},
@@ -129,8 +132,8 @@ impl Asset for Image {
 					image: image.handle(),
 					range: vk::ImageSubresourceRange::default()
 						.base_array_layer(0)
-						.base_mip_level(0)
 						.layer_count(1)
+						.base_mip_level(0)
 						.level_count(1)
 						.aspect_mask(vk::ImageAspectFlags::COLOR),
 				})]),
@@ -148,8 +151,8 @@ impl Asset for Image {
 						.image_subresource(
 							vk::ImageSubresourceLayers::default()
 								.base_array_layer(0)
-								.mip_level(0)
 								.layer_count(1)
+								.mip_level(0)
 								.aspect_mask(vk::ImageAspectFlags::COLOR),
 						)
 						.image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
@@ -164,8 +167,8 @@ impl Asset for Image {
 					image: image.handle(),
 					range: vk::ImageSubresourceRange::default()
 						.base_array_layer(0)
-						.base_mip_level(0)
 						.layer_count(1)
+						.base_mip_level(0)
 						.level_count(1)
 						.aspect_mask(vk::ImageAspectFlags::COLOR),
 				})]),
@@ -180,10 +183,10 @@ impl Asset for Image {
 		let view = ImageView::create(
 			device,
 			ImageViewDesc {
-				name: "image view",
+				name: &format!("{name} view"),
 				image: image.handle(),
 				view_type: vk::ImageViewType::TYPE_2D,
-				format: vk::Format::UNDEFINED,
+				format,
 				usage: ImageViewUsage::Sampled,
 				size,
 				subresource: Subresource::default(),
@@ -207,6 +210,10 @@ pub struct ImportImage<'a> {
 }
 
 impl Image {
+	pub fn image(&self) -> &resource::Image { &self.image }
+
+	pub fn view(&self) -> &ImageView { &self.view }
+
 	pub fn import(name: &str, data: ImportImage, mut into: Box<dyn AssetView>) -> Result<(), io::Error> {
 		let s = trace_span!("import image", name = name);
 		let _e = s.enter();
@@ -221,7 +228,7 @@ impl Image {
 			(data.data.len() as u32 / (data.width * data.height)) as _,
 		);
 		params.set_basis_format(BasisTextureFormat::UASTC4x4);
-		params.set_rdo_uastc(Some(0.5));
+		params.set_rdo_uastc(Some(1.0));
 		params.set_color_space(if data.is_srgb {
 			ColorSpace::Srgb
 		} else {

@@ -49,15 +49,9 @@ impl Dir {
 	pub fn assets(&self) -> impl ExactSizeIterator<Item = (&String, &AssetHeader)> + '_ { self.assets.iter() }
 
 	fn add_asset(&mut self, rel_path: &Path, asset: AssetHeader) {
-		self.add_dir(rel_path.parent().unwrap()).assets.insert(
-			rel_path
-				.with_extension("")
-				.file_name()
-				.unwrap()
-				.to_string_lossy()
-				.into_owned(),
-			asset,
-		);
+		self.add_dir(rel_path.parent().unwrap())
+			.assets
+			.insert(rel_path.file_name().unwrap().to_string_lossy().into_owned(), asset);
 	}
 }
 
@@ -116,11 +110,7 @@ impl FsAssetSystem {
 			root: RwLock::new(r),
 			..Default::default()
 		};
-		for entry in w
-			.into_iter()
-			.filter_map(|x| x.ok())
-			.filter(|x| x.path().extension().map(|x| x == "radass").unwrap_or(false))
-		{
+		for entry in w.into_iter().filter_map(|x| x.ok()) {
 			let path = entry.path();
 			let is_file = path.is_file();
 			if is_file && path.extension().and_then(|x| x.to_str()) == Some("radass") {
@@ -158,10 +148,15 @@ impl FsAssetSystem {
 		self.root
 			.read()
 			.as_ref()
-			.and_then(|x| abs_path.strip_prefix(x).ok().map(|x| x.to_owned()))
+			.and_then(|x| abs_path.strip_prefix(x).ok().map(|x| x.with_extension("")))
 	}
 
-	fn abs_path(&self, rel_path: &Path) -> Option<PathBuf> { self.root.read().as_ref().map(|x| x.join(rel_path)) }
+	fn abs_path(&self, rel_path: &Path) -> Option<PathBuf> {
+		self.root
+			.read()
+			.as_ref()
+			.map(|x| x.join(rel_path).with_extension("radass"))
+	}
 }
 
 impl AssetSource for FsAssetSystem {
@@ -178,9 +173,12 @@ impl AssetSource for FsAssetSystem {
 
 struct FsAssetView {
 	file: fs::File,
+	name: String,
 }
 
 impl AssetView for FsAssetView {
+	fn name(&self) -> &str { self.name.as_str() }
+
 	fn clear(&mut self) -> Result<(), io::Error> { self.file.set_len(std::mem::size_of::<AssetHeader>() as _) }
 
 	fn new_section(&mut self) -> Result<Box<dyn io::Write + '_>, io::Error> {
@@ -199,15 +197,25 @@ impl AssetView for FsAssetView {
 }
 
 impl FsAssetView {
+	fn name(path: &Path) -> String {
+		path.with_extension("")
+			.file_name()
+			.unwrap()
+			.to_string_lossy()
+			.into_owned()
+	}
+
 	fn open(path: &Path) -> Result<Self, io::Error> {
 		Ok(Self {
 			file: fs::OpenOptions::new().read(true).write(true).create(true).open(path)?,
+			name: Self::name(path),
 		})
 	}
 
 	fn open_ro(path: &Path) -> Result<Self, io::Error> {
 		Ok(Self {
 			file: fs::OpenOptions::new().read(true).open(path)?,
+			name: Self::name(path),
 		})
 	}
 
@@ -215,7 +223,10 @@ impl FsAssetView {
 		let mut file = fs::OpenOptions::new().read(true).write(true).create(true).open(path)?;
 		let header = AssetHeader { id, ty };
 		file.write_all(bytemuck::bytes_of(&header))?;
-		Ok(Self { file })
+		Ok(Self {
+			file,
+			name: Self::name(path),
+		})
 	}
 
 	fn header(&mut self) -> Result<AssetHeader, io::Error> {

@@ -12,6 +12,11 @@ use crate::{device::Device, Result};
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ImageId(NonZeroU32);
+impl ImageId {
+	pub fn get(&self) -> u32 { self.0.get() }
+
+	pub unsafe fn from_raw(raw: u32) -> Self { Self(NonZeroU32::new_unchecked(raw)) }
+}
 /// An ID representing a storage image, for use by a shader.
 ///
 /// Is a `u32`, bound to binding `1`.

@@ -157,6 +157,8 @@ impl AssetRegistry {
 }
 
 pub trait AssetView {
+	fn name(&self) -> &str;
+
 	fn clear(&mut self) -> Result<(), io::Error>;
 
 	fn new_section(&mut self) -> Result<Box<dyn io::Write + '_>, io::Error>;

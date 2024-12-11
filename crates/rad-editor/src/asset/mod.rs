@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rad_core::{asset::Asset, Engine};
-use rad_renderer::assets::mesh::Mesh;
+use rad_renderer::assets::{image::Image, mesh::Mesh};
 use rad_ui::{
 	egui::{Button, Context, Grid, Key, KeyboardShortcut, Modifiers, RichText, ScrollArea, TopBottomPanel},
 	icons::{self, icon},
@@ -10,16 +10,18 @@ use rad_world::World;
 use tracing::{error, info};
 
 use crate::{
-	asset::{fs::FsAssetSystem, import::GltfImporter},
+	asset::{fs::FsAssetSystem, image_preview::ImagePreviewer, import::GltfImporter},
 	world::WorldContext,
 };
 
 pub mod fs;
+mod image_preview;
 mod import;
 
 pub struct AssetTray {
 	open: bool,
 	cursor: PathBuf,
+	image_previewer: ImagePreviewer,
 }
 
 impl AssetTray {
@@ -27,10 +29,13 @@ impl AssetTray {
 		Self {
 			open: false,
 			cursor: PathBuf::new(),
+			image_previewer: ImagePreviewer::new(),
 		}
 	}
 
 	pub fn render(&mut self, ctx: &Context, world: &mut WorldContext) {
+		self.image_previewer.render(ctx);
+
 		self.open =
 			self.open ^ ctx.input_mut(|x| x.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Space)));
 
@@ -160,19 +165,32 @@ impl AssetTray {
 											}
 
 											let is_world = header.ty == World::uuid();
+											let is_mesh = header.ty == Mesh::uuid();
+											let is_image = header.ty == Image::uuid();
 											ui.vertical_centered(|ui| {
 												let i = if is_world {
 													icons::MAP
-												} else if header.ty == Mesh::uuid() {
+												} else if is_mesh {
 													icons::CUBE
+												} else if is_image {
+													icons::IMAGE
 												} else {
 													icons::FILE
 												};
 												if ui.add(Button::new(icon(i).size(35.0)).frame(false)).double_clicked()
-													&& is_world
 												{
-													if let Err(e) = world.open(header.id) {
-														error!("failed to open world: {:?}", e);
+													if is_world {
+														if let Err(e) = world.open(header.id) {
+															error!("failed to open world: {:?}", e);
+														}
+													} else if is_mesh {
+														if let Err(e) = world.open_mesh(header.id) {
+															error!("failed to open mesh: {:?}", e);
+														}
+													} else if is_image {
+														if let Ok(image) = Engine::get().asset(header.id) {
+															self.image_previewer.add_preview(image);
+														}
 													}
 												}
 												ui.label(n);

@@ -1,8 +1,15 @@
 use std::io;
 
-use rad_core::{asset::AssetId, Engine};
+use rad_core::{
+	asset::{aref::ARef, AssetId},
+	Engine,
+};
 use rad_renderer::{
-	components::camera::{CameraComponent, PrimaryViewComponent},
+	assets::mesh::Mesh,
+	components::{
+		camera::{CameraComponent, PrimaryViewComponent},
+		mesh::MeshComponent,
+	},
 	WorldRenderer,
 };
 use rad_world::{serde::DoNotSerialize, tick::Tick, Entity, EntityWrite, World};
@@ -26,6 +33,15 @@ impl WorldContext {
 
 	pub fn open(&mut self, id: AssetId) -> Result<(), io::Error> {
 		self.edit = *Engine::get().asset_owned(id)?;
+		self.setup_world();
+
+		Ok(())
+	}
+
+	pub fn open_mesh(&mut self, id: AssetId) -> Result<(), io::Error> {
+		let mesh: ARef<Mesh> = Engine::get().asset(id)?;
+		self.edit = World::new();
+		self.edit.spawn_empty().insert(MeshComponent::new(mesh));
 		self.setup_world();
 
 		Ok(())

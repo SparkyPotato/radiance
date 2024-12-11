@@ -7,6 +7,7 @@ pub const ARROW_UP: &str = "\u{f062}";
 pub const FILE: &str = "\u{f15b}";
 pub const FOLDER: &str = "\u{f07b}";
 pub const MAP: &str = "\u{f279}";
+pub const IMAGE: &str = "\u{f03e}";
 pub const CUBE: &str = "\u{f1b2}";
 pub const QUESTION: &str = "\u{3f}";
 

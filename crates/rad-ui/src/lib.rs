@@ -14,7 +14,7 @@ use rad_graph::{
 use rad_window::winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window};
 use vek::Vec2;
 
-pub use crate::render::to_texture_id;
+pub use crate::render::{raw_texture_to_id, to_texture_id};
 use crate::render::{Renderer, ScreenDescriptor};
 
 mod fonts;

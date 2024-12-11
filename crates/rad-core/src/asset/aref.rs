@@ -44,6 +44,8 @@ impl<T: Asset> ARef<T> {
 			ptr: Arc::new(Data { id, inner: obj }),
 		}
 	}
+
+	pub fn asset_id(&self) -> AssetId { self.ptr.id }
 }
 
 impl<T: Asset + ?Sized> ARef<T> {

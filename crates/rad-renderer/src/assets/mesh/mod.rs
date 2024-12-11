@@ -133,6 +133,7 @@ impl Asset for Mesh {
 					_ => io::Error::new(io::ErrorKind::Other, "bincode error"),
 				},
 			)?;
+		let name = data.name();
 
 		let bvh_byte_offset = 0;
 		let bvh_byte_len = (m.bvh.len() * std::mem::size_of::<GpuBvhNode>()) as u64;
@@ -147,7 +148,7 @@ impl Asset for Mesh {
 		let buffer = Buffer::create(
 			device,
 			BufferDesc {
-				name: "mesh buffer",
+				name: &format!("{name} buffer"),
 				size,
 				readback: false,
 			},
@@ -192,7 +193,7 @@ impl Asset for Mesh {
 		let raw_buffer = Buffer::create(
 			device,
 			BufferDesc {
-				name: "raw mesh buffer",
+				name: &format!("{name} raw buffer"),
 				size: (cast_slice::<_, u8>(&m.raw_vertices).len() + cast_slice::<_, u8>(&m.raw_indices).len()) as u64,
 				readback: false,
 			},
@@ -238,7 +239,7 @@ impl Asset for Mesh {
 			let old = AS::create(
 				device,
 				ASDesc {
-					name: "mesh AS",
+					name: &format!("{name} uncompacted AS"),
 					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
 					ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
 					size: sinfo.acceleration_structure_size,
@@ -247,7 +248,7 @@ impl Asset for Mesh {
 			let scratch = Buffer::create(
 				device,
 				BufferDesc {
-					name: "mesh AS scratch",
+					name: &format!("{name} AS build scratch"),
 					size: sinfo.build_scratch_size,
 					readback: false,
 				},
@@ -318,7 +319,7 @@ impl Asset for Mesh {
 			let as_ = AS::create(
 				device,
 				ASDesc {
-					name: "mesh AS",
+					name: &format!("{name} AS"),
 					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
 					ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
 					size: size[0],
