@@ -127,6 +127,9 @@ impl AssetTray {
 								Grid::new("assets")
 									.striped(false)
 									.start_row(range.start)
+									.min_col_width(60.0)
+									.min_row_height(60.0)
+									.max_col_width(60.0)
 									.show(ui, |ui| {
 										let start_item = range.start * per_row;
 										let end_item = (range.end * per_row).min(count);
@@ -165,7 +168,7 @@ impl AssetTray {
 												} else {
 													icons::FILE
 												};
-												if ui.add(Button::new(icon(i).size(35.0)).frame(false)).clicked()
+												if ui.add(Button::new(icon(i).size(35.0)).frame(false)).double_clicked()
 													&& is_world
 												{
 													if let Err(e) = world.open(header.id) {

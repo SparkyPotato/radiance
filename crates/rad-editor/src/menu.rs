@@ -4,14 +4,14 @@ use rad_core::Engine;
 use rad_ui::egui::{menu, Context, Key, KeyboardShortcut, Modifiers, TopBottomPanel};
 use rfd::FileDialog;
 
-use crate::asset::fs::FsAssetSystem;
+use crate::{asset::fs::FsAssetSystem, render::Renderer};
 
 pub struct Menu {}
 
 impl Menu {
 	pub fn new() -> Self { Self {} }
 
-	pub fn render(&mut self, ctx: &Context) {
+	pub fn render(&mut self, ctx: &Context, renderer: &mut Renderer) {
 		let fs: &Arc<FsAssetSystem> = Engine::get().asset_source().unwrap();
 
 		let mut new = ctx.input_mut(|x| x.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::N)));
@@ -22,6 +22,10 @@ impl Menu {
 				ui.menu_button("file", |ui| {
 					new |= ui.button("new").clicked();
 					open |= ui.button("open").clicked();
+				});
+
+				ui.menu_button("window", |ui| {
+					ui.checkbox(&mut renderer.debug_window.enabled, "debug");
 				});
 			});
 		});

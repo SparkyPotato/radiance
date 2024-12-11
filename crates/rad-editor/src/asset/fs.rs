@@ -21,26 +21,17 @@ pub struct AssetHeader {
 	pub ty: Uuid,
 }
 
+#[derive(Default)]
 pub struct Dir {
 	dirs: BTreeMap<String, Dir>,
 	assets: BTreeMap<String, AssetHeader>,
 }
 
 impl Dir {
-	fn new() -> Self {
-		Self {
-			dirs: BTreeMap::new(),
-			assets: BTreeMap::new(),
-		}
-	}
-
 	fn add_dir(&mut self, rel_path: &Path) -> &mut Dir {
 		let mut dir = self;
 		for part in rel_path.iter() {
-			dir = dir
-				.dirs
-				.entry(part.to_string_lossy().into_owned())
-				.or_insert_with(Dir::new);
+			dir = dir.dirs.entry(part.to_string_lossy().into_owned()).or_default();
 		}
 		dir
 	}
@@ -64,6 +55,7 @@ impl Dir {
 	}
 }
 
+#[derive(Default)]
 pub struct FsAssetSystem {
 	root: RwLock<Option<PathBuf>>,
 	assets: RwLock<FxHashMap<AssetId, PathBuf>>,
@@ -75,9 +67,7 @@ impl FsAssetSystem {
 	pub fn new() -> Arc<Self> {
 		let this = Arc::new(Self {
 			root: RwLock::new(std::env::args().nth(1).map(PathBuf::from)),
-			assets: RwLock::new(FxHashMap::default()),
-			by_type: RwLock::new(FxHashMap::default()),
-			dir: RwLock::new(Dir::new()),
+			..Default::default()
 		});
 		let a = this.clone();
 		// TODO: yuck
@@ -93,12 +83,12 @@ impl FsAssetSystem {
 	pub fn open(&self, root: PathBuf) { *self.root.write() = Some(root) }
 
 	pub fn create(&self, path: &Path, id: AssetId, ty: Uuid) -> Result<Box<dyn AssetView>, io::Error> {
+		let header = AssetHeader { id, ty };
+		self.add_asset(path, header);
+
 		let path = self
-			.root
-			.read()
-			.as_ref()
-			.map(|x| x.join(path.with_extension("radass")))
-			.ok_or(io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
+			.abs_path(path)
+			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
 		fs::create_dir_all(path.parent().unwrap())?;
 		FsAssetView::create(&path, id, ty).map(|x| Box::new(x) as Box<_>)
 	}
@@ -109,16 +99,17 @@ impl FsAssetSystem {
 	// 	self.by_type.read().get(&ty).cloned().unwrap_or_default()
 	// }
 
-	pub(super) fn rescan(&self) {
+	fn rescan(&self) {
 		let r = self.root.read().clone();
-		let Some(root) = r else {
+		let Some(ref root) = r else {
 			return;
 		};
 		let w = WalkDir::new(&root);
 
-		let mut assets = FxHashMap::default();
-		let mut by_type: FxHashMap<Uuid, FxHashSet<AssetId>> = FxHashMap::default();
-		let mut dir = Dir::new();
+		let new = Self {
+			root: RwLock::new(r),
+			..Default::default()
+		};
 		for entry in w
 			.into_iter()
 			.filter_map(|x| x.ok())
@@ -129,18 +120,46 @@ impl FsAssetSystem {
 			if is_file && path.extension().and_then(|x| x.to_str()) == Some("radass") {
 				if let Ok(mut view) = FsAssetView::open_ro(entry.path()) {
 					if let Ok(header) = view.header() {
-						assets.insert(header.id, entry.path().to_path_buf());
-						by_type.entry(header.ty).or_default().insert(header.id);
-						dir.add_asset(&path.strip_prefix(&root).unwrap().with_extension(""), header);
+						new.add_asset_abs(path, header);
 					}
 				}
 			} else if !is_file {
-				dir.add_dir(&path.strip_prefix(&root).unwrap().with_extension(""));
+				new.add_dir_abs(path);
 			}
 		}
-		*self.assets.write() = assets;
-		*self.by_type.write() = by_type;
-		*self.dir.write() = dir;
+		*self.assets.write() = new.assets.into_inner();
+		*self.by_type.write() = new.by_type.into_inner();
+		*self.dir.write() = new.dir.into_inner();
+	}
+
+	fn add_asset(&self, rel_path: &Path, asset: AssetHeader) {
+		self.assets.write().insert(asset.id, self.abs_path(rel_path).unwrap());
+		self.by_type.write().entry(asset.ty).or_default().insert(asset.id);
+		self.dir.write().add_asset(rel_path, asset);
+	}
+
+	fn add_asset_abs(&self, abs_path: &Path, asset: AssetHeader) {
+		self.assets.write().insert(asset.id, abs_path.to_owned());
+		self.by_type.write().entry(asset.ty).or_default().insert(asset.id);
+		self.dir.write().add_asset(&self.rel_path(abs_path).unwrap(), asset);
+	}
+
+	fn add_dir(&self, rel_path: &Path) { self.dir.write().add_dir(rel_path); }
+
+	fn add_dir_abs(&self, abs_path: &Path) { self.dir.write().add_dir(&self.rel_path(abs_path).unwrap()); }
+
+	fn rel_path(&self, abs_path: &Path) -> Option<PathBuf> {
+		self.root
+			.read()
+			.as_ref()
+			.and_then(|x| abs_path.strip_prefix(x).ok().map(|x| x.to_owned()))
+	}
+
+	fn abs_path(&self, rel_path: &Path) -> Option<PathBuf> {
+		self.root
+			.read()
+			.as_ref()
+			.map(|x| x.join(rel_path.with_extension("radass")))
 	}
 }
 

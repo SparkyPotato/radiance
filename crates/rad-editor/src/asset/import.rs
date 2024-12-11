@@ -98,7 +98,6 @@ impl GltfImporter {
 					.ratio(total),
 				);
 
-				sys.rescan();
 				Engine::get().asset::<Mesh>(id)
 			})
 			.collect::<Result<_, _>>()?;
