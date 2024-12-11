@@ -35,6 +35,8 @@ pub struct RendererModule;
 impl Module for RendererModule {
 	fn init(engine: &mut EngineBuilder) {
 		engine.asset::<assets::mesh::Mesh>();
+		engine.asset::<assets::image::Image>();
+
 		engine.component::<components::mesh::MeshComponent>();
 		engine.component::<components::camera::CameraComponent>();
 		engine.component::<components::camera::PrimaryViewComponent>();

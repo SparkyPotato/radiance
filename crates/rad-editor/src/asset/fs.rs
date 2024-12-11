@@ -49,9 +49,15 @@ impl Dir {
 	pub fn assets(&self) -> impl ExactSizeIterator<Item = (&String, &AssetHeader)> + '_ { self.assets.iter() }
 
 	fn add_asset(&mut self, rel_path: &Path, asset: AssetHeader) {
-		self.add_dir(rel_path.parent().unwrap())
-			.assets
-			.insert(rel_path.file_name().unwrap().to_string_lossy().into_owned(), asset);
+		self.add_dir(rel_path.parent().unwrap()).assets.insert(
+			rel_path
+				.with_extension("")
+				.file_name()
+				.unwrap()
+				.to_string_lossy()
+				.into_owned(),
+			asset,
+		);
 	}
 }
 
@@ -144,7 +150,7 @@ impl FsAssetSystem {
 		self.dir.write().add_asset(&self.rel_path(abs_path).unwrap(), asset);
 	}
 
-	fn add_dir(&self, rel_path: &Path) { self.dir.write().add_dir(rel_path); }
+	// fn add_dir(&self, rel_path: &Path) { self.dir.write().add_dir(rel_path); }
 
 	fn add_dir_abs(&self, abs_path: &Path) { self.dir.write().add_dir(&self.rel_path(abs_path).unwrap()); }
 
@@ -155,12 +161,7 @@ impl FsAssetSystem {
 			.and_then(|x| abs_path.strip_prefix(x).ok().map(|x| x.to_owned()))
 	}
 
-	fn abs_path(&self, rel_path: &Path) -> Option<PathBuf> {
-		self.root
-			.read()
-			.as_ref()
-			.map(|x| x.join(rel_path.with_extension("radass")))
-	}
+	fn abs_path(&self, rel_path: &Path) -> Option<PathBuf> { self.root.read().as_ref().map(|x| x.join(rel_path)) }
 }
 
 impl AssetSource for FsAssetSystem {

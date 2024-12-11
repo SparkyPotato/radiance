@@ -375,8 +375,6 @@ pub struct ImageBarrier<'a> {
 	pub previous_usages: &'a [UsageType],
 	pub next_usages: &'a [UsageType],
 	pub discard_contents: bool,
-	pub src_queue_family_index: u32,
-	pub dst_queue_family_index: u32,
 	pub image: vk::Image,
 	pub range: vk::ImageSubresourceRange,
 }
@@ -387,8 +385,6 @@ impl Default for ImageBarrier<'_> {
 			previous_usages: &[],
 			next_usages: &[],
 			discard_contents: false,
-			src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
-			dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
 			image: vk::Image::null(),
 			range: vk::ImageSubresourceRange::default(),
 		}

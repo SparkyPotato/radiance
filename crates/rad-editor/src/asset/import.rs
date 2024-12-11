@@ -1,7 +1,7 @@
 use std::{
 	fs::File,
 	io::{self, BufReader},
-	path::Path,
+	path::{Path, PathBuf},
 	sync::{
 		atomic::{AtomicUsize, Ordering},
 		Arc,
@@ -13,6 +13,7 @@ use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
 	camera::Projection,
+	image,
 	Document,
 	Gltf,
 };
@@ -21,7 +22,10 @@ use rad_core::{
 	Engine,
 };
 use rad_renderer::{
-	assets::mesh::{GpuVertex, Mesh, MeshData},
+	assets::{
+		image::{Image, ImportImage},
+		mesh::{GpuVertex, Mesh, MeshData},
+	},
 	components::{camera::CameraComponent, mesh::MeshComponent},
 	vek::{Mat4, Quaternion, Vec2, Vec3},
 };
@@ -33,11 +37,13 @@ use crate::asset::fs::FsAssetSystem;
 
 pub struct GltfImporter {
 	gltf: Document,
+	base: PathBuf,
 	buffers: Vec<buffer::Data>,
 }
 
 #[derive(Copy, Clone)]
 struct ImportProgress {
+	images: u32,
 	meshes: u32,
 	scenes: u32,
 }
@@ -71,11 +77,53 @@ impl GltfImporter {
 
 	pub fn import(self, progress: impl Fn(f32) + Send + Sync) -> Result<(), io::Error> {
 		let total = ImportProgress {
+			images: self.gltf.images().count() as _,
 			meshes: self.gltf.meshes().count() as _,
 			scenes: self.gltf.scenes().count() as _,
 		};
 		progress(0.0);
 		let sys: &Arc<FsAssetSystem> = Engine::get().asset_source().unwrap();
+
+		let prog = AtomicUsize::new(0);
+		let images: Vec<_> = self
+			.gltf
+			.images()
+			.par_bridge()
+			.map(|image| {
+				let id = AssetId::new();
+				let name = image.name().unwrap_or("unnamed image");
+				let path =
+					Path::new("images").join(image.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string()));
+				let data = {
+					let s = trace_span!("load image", name = name);
+					let _e = s.enter();
+					image::Data::from_source(image.source(), Some(self.base.as_path()), &self.buffers)
+						.map_err(io::Error::other)?
+				};
+				Image::import(
+					name,
+					ImportImage {
+						data: &data.pixels,
+						width: data.width,
+						height: data.height,
+						is_normal_map: false,
+						is_srgb: true,
+					},
+					sys.create(&path, id, Image::uuid())?,
+				)?;
+				let old = prog.fetch_add(1, Ordering::Relaxed);
+				progress(
+					ImportProgress {
+						images: old as u32 + 1,
+						meshes: 0,
+						scenes: 0,
+					}
+					.ratio(total),
+				);
+
+				Engine::get().asset::<Image>(id)
+			})
+			.collect::<Result<_, _>>()?;
 
 		let prog = AtomicUsize::new(0);
 		let meshes: Vec<_> = self
@@ -92,6 +140,7 @@ impl GltfImporter {
 				let old = prog.fetch_add(1, Ordering::Relaxed);
 				progress(
 					ImportProgress {
+						images: total.images,
 						meshes: old as u32 + 1,
 						scenes: 0,
 					}
@@ -112,6 +161,7 @@ impl GltfImporter {
 			let old = prog.fetch_add(1, Ordering::Relaxed);
 			progress(
 				ImportProgress {
+					images: total.images,
 					meshes: total.meshes,
 					scenes: old as u32 + 1,
 				}
@@ -137,7 +187,11 @@ impl GltfImporter {
 				Ok(data)
 			})
 			.collect::<Result<Vec<_>, _>>()?;
-		Ok(Self { gltf, buffers })
+		Ok(Self {
+			gltf,
+			base: base.to_path_buf(),
+			buffers,
+		})
 	}
 
 	fn scene(&self, name: &str, scene: gltf::Scene, meshes: &[ARef<Mesh>]) -> Result<World, gltf::Error> {
