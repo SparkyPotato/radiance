@@ -474,6 +474,7 @@ impl BvhBuilder {
 		let start = self.nodes.len() as u32;
 		self.nodes.extend(groups.iter().enumerate().map(|(i, g)| TempNode {
 			group: i as u32 + offset,
+			// TODO: wait shouldn't this be the group's lod bounds, not simple spatial bounds???
 			aabb: g.aabb,
 			children: Vec::new(),
 		}));

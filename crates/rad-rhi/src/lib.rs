@@ -20,8 +20,6 @@ impl Module for RhiModule {
 					)
 					.push_next(
 						&mut vk::PhysicalDeviceVulkan11Features::default()
-							.variable_pointers(true)
-							.variable_pointers_storage_buffer(true)
 							.storage_push_constant16(true)
 							.storage_buffer16_bit_access(true),
 					)

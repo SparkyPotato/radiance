@@ -13,7 +13,7 @@ use gltf::{
 	accessor::{DataType, Dimensions},
 	buffer,
 	camera::Projection,
-	image,
+	image::{self, Source},
 	Document,
 	Gltf,
 };
@@ -92,8 +92,18 @@ impl GltfImporter {
 			.map(|image| {
 				let id = AssetId::new();
 				let name = image.name().unwrap_or("unnamed image");
-				let path =
-					Path::new("images").join(image.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string()));
+				let path = Path::new("images").join(
+					image
+						.name()
+						.map(|x| x.to_string())
+						.or_else(|| {
+							let Source::Uri { uri, .. } = image.source() else {
+								return None;
+							};
+							Some(uri.to_string())
+						})
+						.unwrap_or_else(|| id.to_string()),
+				);
 				let data = {
 					let s = trace_span!("load image", name = name);
 					let _e = s.enter();
@@ -106,6 +116,7 @@ impl GltfImporter {
 						data: &data.pixels,
 						width: data.width,
 						height: data.height,
+						// TODO: yeah
 						is_normal_map: false,
 						is_srgb: true,
 					},
