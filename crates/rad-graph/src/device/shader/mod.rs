@@ -11,7 +11,7 @@ use std::{
 use ash::vk::{self, Handle, TaggedStructure};
 use notify_debouncer_full::{
 	new_debouncer,
-	notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher},
+	notify::{EventKind, RecommendedWatcher, RecursiveMode},
 	DebounceEventResult,
 	Debouncer,
 	FileIdMap,
@@ -530,7 +530,7 @@ impl ShaderRuntime {
 			}
 		})
 		.unwrap();
-		let _ = watcher.watcher().watch(&source, RecursiveMode::Recursive);
+		let _ = watcher.watch(&source, RecursiveMode::Recursive);
 
 		Self {
 			_watcher: watcher,

@@ -11,10 +11,11 @@ pub fn setup_fonts(ctx: &Context) {
 	let mut fonts = FontDefinitions::default();
 	fonts
 		.font_data
-		.insert("Inter".to_string(), FontData::from_static(INTER));
-	fonts
-		.font_data
-		.insert("Font Awesome".to_string(), FontData::from_static(FONT_AWESOME));
+		.insert("Inter".to_string(), Arc::new(FontData::from_static(INTER)));
+	fonts.font_data.insert(
+		"Font Awesome".to_string(),
+		Arc::new(FontData::from_static(FONT_AWESOME)),
+	);
 	fonts
 		.families
 		.insert(FontFamily::Proportional, vec!["Inter".to_string()]);

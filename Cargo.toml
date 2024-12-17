@@ -22,21 +22,21 @@ bevy_reflect = "0.15.0"
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 bytemuck = { version = "1.15.0", features = ["derive"] }
 crossbeam-channel = "0.5.13"
-egui = { version = "0.29.1" }
-egui-winit = { version = "0.29.1" }
+egui = { version = "0.30.0" }
+egui-winit = { version = "0.30.0" }
 gltf = { version = "1.4.1" }
 gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", features = ["vulkan", "visualizer"] }
-hashbrown = { version = "0.14.3", features = ["nightly"] }
+hashbrown = { version = "0.14.5", features = ["nightly"] }
 metis = "0.2.1"
 meshopt = { git = "https://github.com/SparkyPotato/meshopt-rs" }
-notify-debouncer-full = "0.3.1"
+notify-debouncer-full = "0.4.0"
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
 proc-macro2 = "1.0.92"
 raw-window-handle = "0.6.0"
 rayon = "1.9.0"
 rfd = "0.15.1"
 rspirv = "0.12.0"
-rustc-hash = "1.1.0"
+rustc-hash = "2.1.0"
 serde = "1.0.215"
 slang = { git = "https://github.com/SparkyPotato/slang-rs" }
 static_assertions = "1.1.0"
