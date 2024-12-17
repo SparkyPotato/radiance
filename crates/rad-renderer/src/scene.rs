@@ -252,20 +252,15 @@ impl SceneUpdater {
 					ptr.0.add(i).write(u);
 				});
 
-				self.pass.dispatch(
-					&PushConstants {
-						instances: pass.get(instances).ptr(),
-						as_instances: pass.get(as_instances).ptr(),
-						updates: update_buf.ptr(),
-						frame: frame_index,
-						count,
-						_pad: 0,
-					},
-					&pass,
-					(count + 63) / 64,
-					1,
-					1,
-				);
+				let push = PushConstants {
+					instances: pass.get(instances).ptr(),
+					as_instances: pass.get(as_instances).ptr(),
+					updates: update_buf.ptr(),
+					frame: frame_index,
+					count,
+					_pad: 0,
+				};
+				self.pass.dispatch(&mut pass, &push, (count + 63) / 64, 1, 1);
 
 				struct Huh(*mut GpuSceneUpdate);
 				unsafe impl Send for Huh {}

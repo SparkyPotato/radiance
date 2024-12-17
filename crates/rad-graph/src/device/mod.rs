@@ -22,7 +22,7 @@ pub use crate::device::{
 		SyncStage,
 		Transfer,
 	},
-	shader::{GraphicsPipelineDesc, HotreloadStatus, Pipeline, ShaderInfo},
+	shader::{ComputePipeline, GraphicsPipeline, GraphicsPipelineDesc, HotreloadStatus, ShaderInfo},
 };
 use crate::{
 	device::{descriptor::Descriptors, queue::QueueData, shader::ShaderRuntime},
@@ -57,12 +57,12 @@ pub struct Device {
 
 impl Device {
 	#[track_caller]
-	pub fn graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<Pipeline> {
+	pub fn graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<GraphicsPipeline> {
 		self.inner.shaders.create_graphics_pipeline(desc).map_err(Into::into)
 	}
 
 	#[track_caller]
-	pub fn compute_pipeline(&self, shader: ShaderInfo) -> Result<Pipeline> {
+	pub fn compute_pipeline(&self, shader: ShaderInfo) -> Result<ComputePipeline> {
 		self.inner.shaders.create_compute_pipeline(shader).map_err(Into::into)
 	}
 

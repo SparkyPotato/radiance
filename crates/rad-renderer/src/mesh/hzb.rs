@@ -191,20 +191,15 @@ impl HzbGen {
 
 		let x = (io.size.x + 63) >> 6;
 		let y = (io.size.y + 63) >> 6;
-		self.pass.dispatch(
-			&PushConstants {
-				atomic: atomic.ptr(),
-				visbuffer: visbuffer.storage_id.unwrap(),
-				outs,
-				mips: io.levels,
-				target: x * y - 1,
-				_pad: 0,
-			},
-			&pass,
-			x,
-			y,
-			1,
-		);
+		let push = PushConstants {
+			atomic: atomic.ptr(),
+			visbuffer: visbuffer.storage_id.unwrap(),
+			outs,
+			mips: io.levels,
+			target: x * y - 1,
+			_pad: 0,
+		};
+		self.pass.dispatch(&mut pass, &push, x, y, 1);
 	}
 
 	pub fn destroy(self, device: &Device) {

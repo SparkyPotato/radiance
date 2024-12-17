@@ -98,7 +98,7 @@ impl ShaderBuilder {
 		let mut module = self.load_raw(name)?;
 		let mut sentry = module
 			.find_entry_point_by_name(entry)
-			.map_err(|_| format!("could not find `{entry}` in `{name}`"))?;
+			.map_err(|e| format!("error in `{name}.{entry}`: {}", fmt_error(e)))?;
 		let prog = if spec.is_empty() {
 			sentry.link()
 		} else {

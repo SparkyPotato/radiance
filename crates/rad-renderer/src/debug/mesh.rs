@@ -1,7 +1,7 @@
 use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
-	device::{Device, GraphicsPipelineDesc, ShaderInfo},
+	device::{Device, ShaderInfo},
 	graph::{
 		BufferDesc,
 		BufferLoc,
@@ -17,8 +17,8 @@ use rad_graph::{
 	},
 	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
 	util::{
-		pipeline::{no_blend, no_cull, simple_blend},
-		render::RenderPass,
+		pass::{Attachment, Load},
+		render::FullscreenPass,
 	},
 	Result,
 };
@@ -57,7 +57,7 @@ impl DebugVis {
 }
 
 pub struct DebugMesh {
-	pass: RenderPass<PushConstants>,
+	pass: FullscreenPass<PushConstants>,
 }
 
 #[repr(C)]
@@ -76,25 +76,13 @@ struct PushConstants {
 impl DebugMesh {
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
-			pass: RenderPass::new(
+			pass: FullscreenPass::new(
 				device,
-				GraphicsPipelineDesc {
-					shaders: &[
-						ShaderInfo {
-							shader: "graph.util.screen",
-							..Default::default()
-						},
-						ShaderInfo {
-							shader: "passes.debug.main",
-							spec: &["passes.mesh.debug"],
-						},
-					],
-					raster: no_cull(),
-					blend: simple_blend(&[no_blend()]),
-					color_attachments: &[vk::Format::R8G8B8A8_SRGB],
-					..Default::default()
+				ShaderInfo {
+					shader: "passes.debug.main",
+					spec: &["passes.mesh.debug"],
 				},
-				false,
+				&[vk::Format::R8G8B8A8_SRGB],
 			)?,
 		})
 	}
@@ -148,8 +136,6 @@ impl DebugMesh {
 		&'pass self, mut pass: PassContext, vis: DebugVis, output: RenderOutput,
 		highlight_buf: Option<Res<BufferHandle>>, highlights: impl Iterator<Item = u32> + 'pass, out: Res<ImageView>,
 	) {
-		let out = pass.get(out);
-
 		unsafe {
 			let highlight = highlight_buf.map(|x| pass.get(x));
 			let mut count = 0;
@@ -169,7 +155,7 @@ impl DebugMesh {
 			let camera = pass.get(output.camera).ptr();
 			let read = output.reader.get_debug(&mut pass);
 			self.pass.run(
-				&pass,
+				&mut pass,
 				&PushConstants {
 					instances,
 					camera,
@@ -180,21 +166,15 @@ impl DebugMesh {
 					overdraw_scale,
 					pad: 0,
 				},
-				vk::Extent2D {
-					width: out.size.width,
-					height: out.size.height,
-				},
-				&[vk::RenderingAttachmentInfo::default()
-					.image_view(out.view)
-					.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-					.load_op(vk::AttachmentLoadOp::CLEAR)
-					.clear_value(vk::ClearValue {
+				&[Attachment {
+					image: out,
+					load: Load::Clear(vk::ClearValue {
 						color: vk::ClearColorValue {
 							float32: [0.0, 0.0, 0.0, 1.0],
 						},
-					})
-					.store_op(vk::AttachmentStoreOp::STORE)],
-				|dev, buf| dev.device().cmd_draw(buf, 3, 1, 0, 0),
+					}),
+					store: true,
+				}],
 			);
 		}
 	}

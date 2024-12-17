@@ -75,14 +75,13 @@ impl InstanceCull {
 		let frame = resources.scene.frame;
 		let res = resources.res;
 		pass.build(move |mut pass| {
-			let latei = pass.get(late_instances);
 			let push = PushConstants {
 				instances: pass.get(instances).ptr(),
 				camera: pass.get(camera).ptr(),
 				hzb: pass.get(hzb).id.unwrap(),
 				hzb_sampler,
 				next: pass.get(next).ptr(),
-				late_instances: latei.ptr(),
+				late_instances: pass.get(late_instances).ptr(),
 				stats: pass.get(stats).ptr(),
 				frame,
 				instance_count,
@@ -90,10 +89,10 @@ impl InstanceCull {
 				_pad: 0,
 			};
 			if self.early {
-				self.pass.dispatch(&push, &pass, (instance_count + 63) / 64, 1, 1);
+				self.pass.dispatch(&mut pass, &push, (instance_count + 63) / 64, 1, 1);
 			} else {
 				self.pass
-					.dispatch_indirect(&push, &pass, latei.buffer, std::mem::size_of::<u32>());
+					.dispatch_indirect(&mut pass, &push, late_instances, std::mem::size_of::<u32>());
 			}
 		});
 	}

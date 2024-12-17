@@ -1,13 +1,13 @@
-module scene_update;
+module scene;
 
 import graph;
 import asset;
 
 struct VkAccelerationStructureInstanceKHR {
-    f32 transform[3][4];
-    u32 instanceCustomIndexAndMask;
-    u32 instanceShaderBindingTableRecordOffsetAndFlags;
-    u64 accelerationStructureReference;
+	f32 transform[3][4];
+	u32 instanceCustomIndexAndMask;
+	u32 instanceShaderBindingTableRecordOffsetAndFlags;
+	u64 accelerationStructureReference;
 }
 
 enum UpdateType {

@@ -22,7 +22,7 @@ use rspirv::{
 	spirv::{ExecutionModel, Op},
 };
 
-use crate::device::shader::compile::ShaderBuilder;
+use crate::device::{shader::compile::ShaderBuilder, Device};
 
 macro_rules! c_str {
 	($name:literal) => {
@@ -183,10 +183,40 @@ impl Default for GraphicsPipelineDesc<'_> {
 	}
 }
 
-pub struct Pipeline(Arc<AtomicU64>, Arc<Mutex<RuntimeShared>>);
+pub struct GraphicsPipeline(Arc<AtomicU64>, Arc<Mutex<RuntimeShared>>);
+pub struct ComputePipeline(Arc<AtomicU64>, Arc<Mutex<RuntimeShared>>);
 
-impl Pipeline {
-	pub fn get(&self) -> vk::Pipeline { vk::Pipeline::from_raw(self.0.load(Ordering::Relaxed)) }
+impl GraphicsPipeline {
+	pub fn bind(&self, device: &Device, buf: vk::CommandBuffer) {
+		unsafe {
+			device.device().cmd_bind_pipeline(
+				buf,
+				vk::PipelineBindPoint::GRAPHICS,
+				vk::Pipeline::from_raw(self.0.load(Ordering::Relaxed)),
+			);
+		}
+	}
+
+	pub unsafe fn destroy(self) {
+		let s = self.1.lock().unwrap();
+		(s.destroy_pipeline)(
+			s.device,
+			vk::Pipeline::from_raw(self.0.swap(0, Ordering::Relaxed)),
+			std::ptr::null(),
+		);
+	}
+}
+
+impl ComputePipeline {
+	pub fn bind(&self, device: &Device, buf: vk::CommandBuffer) {
+		unsafe {
+			device.device().cmd_bind_pipeline(
+				buf,
+				vk::PipelineBindPoint::COMPUTE,
+				vk::Pipeline::from_raw(self.0.load(Ordering::Relaxed)),
+			);
+		}
+	}
 
 	pub unsafe fn destroy(self) {
 		let s = self.1.lock().unwrap();
@@ -285,7 +315,7 @@ impl RuntimeShared {
 	}
 
 	#[track_caller]
-	fn create_compute_pipeline(this: Arc<Mutex<Self>>, shader: ShaderInfo) -> Result<Pipeline, vk::Result> {
+	fn create_compute_pipeline(this: Arc<Mutex<Self>>, shader: ShaderInfo) -> Result<ComputePipeline, vk::Result> {
 		let mut t = this.lock().unwrap();
 		let Self {
 			ref mut builder,
@@ -306,11 +336,13 @@ impl RuntimeShared {
 		t.pipelines.push((PipelineDesc::Compute(shader), inner.clone()));
 		drop(t);
 
-		Ok(Pipeline(inner, this))
+		Ok(ComputePipeline(inner, this))
 	}
 
 	#[track_caller]
-	fn create_graphics_pipeline(this: Arc<Mutex<Self>>, desc: &GraphicsPipelineDesc) -> Result<Pipeline, vk::Result> {
+	fn create_graphics_pipeline(
+		this: Arc<Mutex<Self>>, desc: &GraphicsPipelineDesc,
+	) -> Result<GraphicsPipeline, vk::Result> {
 		let mut t = this.lock().unwrap();
 		let desc = desc.owned();
 		let Self {
@@ -332,7 +364,7 @@ impl RuntimeShared {
 		t.pipelines.push((PipelineDesc::Graphics(desc), inner.clone()));
 		drop(t);
 
-		Ok(Pipeline(inner, this))
+		Ok(GraphicsPipeline(inner, this))
 	}
 
 	#[track_caller]
@@ -539,12 +571,12 @@ impl ShaderRuntime {
 	}
 
 	#[track_caller]
-	pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<Pipeline, vk::Result> {
+	pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<GraphicsPipeline, vk::Result> {
 		RuntimeShared::create_graphics_pipeline(self.shared.clone(), &desc)
 	}
 
 	#[track_caller]
-	pub fn create_compute_pipeline(&self, shader: ShaderInfo) -> Result<Pipeline, vk::Result> {
+	pub fn create_compute_pipeline(&self, shader: ShaderInfo) -> Result<ComputePipeline, vk::Result> {
 		RuntimeShared::create_compute_pipeline(self.shared.clone(), shader)
 	}
 

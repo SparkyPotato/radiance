@@ -19,7 +19,6 @@ use rad_graph::{
 		descriptor::{ImageId, SamplerId},
 		Device,
 		GraphicsPipelineDesc,
-		Pipeline,
 		ShaderInfo,
 	},
 	graph::{
@@ -49,7 +48,11 @@ use rad_graph::{
 		Resource,
 		Subresource,
 	},
-	util::pipeline::{default_blend, no_cull, simple_blend},
+	util::{
+		pass::{Attachment, Load},
+		pipeline::{default_blend, no_cull, simple_blend},
+		render::RenderPass,
+	},
 	Result,
 };
 use rustc_hash::FxHashMap;
@@ -67,7 +70,7 @@ pub struct ScreenDescriptor {
 pub struct Renderer {
 	images: FxHashMap<u64, (Image, Vec2<u32>, ImageView, SamplerId)>,
 	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
-	pipeline: Pipeline,
+	pass: RenderPass<PushConstantsStatic>,
 	vertex_size: u64,
 	index_size: u64,
 }
@@ -94,27 +97,31 @@ struct PushConstantsDynamic {
 
 impl Renderer {
 	pub fn new(device: &Device) -> Result<Self> {
-		let pipeline = device.graphics_pipeline(GraphicsPipelineDesc {
-			shaders: &[
-				ShaderInfo {
-					shader: "egui.vertex",
-					..Default::default()
-				},
-				ShaderInfo {
-					shader: "egui.pixel",
-					..Default::default()
-				},
-			],
-			color_attachments: &[vk::Format::B8G8R8A8_UNORM],
-			blend: simple_blend(&[default_blend()]),
-			raster: no_cull(),
-			..Default::default()
-		})?;
+		let pass = RenderPass::new(
+			device,
+			GraphicsPipelineDesc {
+				shaders: &[
+					ShaderInfo {
+						shader: "egui.vertex",
+						..Default::default()
+					},
+					ShaderInfo {
+						shader: "egui.pixel",
+						..Default::default()
+					},
+				],
+				color_attachments: &[vk::Format::B8G8R8A8_UNORM],
+				blend: simple_blend(&[default_blend()]),
+				raster: no_cull(),
+				..Default::default()
+			},
+			false,
+		)?;
 
 		Ok(Self {
 			images: FxHashMap::default(),
 			samplers: FxHashMap::default(),
-			pipeline,
+			pass,
 			vertex_size: VERTEX_BUFFER_START_CAPACITY,
 			index_size: INDEX_BUFFER_START_CAPACITY,
 		})
@@ -220,7 +227,7 @@ impl Renderer {
 				device.descriptors().return_sampler(id);
 			}
 		}
-		self.pipeline.destroy();
+		self.pass.destroy();
 	}
 
 	unsafe fn execute(
@@ -228,92 +235,38 @@ impl Renderer {
 	) {
 		let vertex = pass.get(io.vertex);
 		let index = pass.get(io.index);
-		let out = pass.get(io.out);
-
 		Self::generate_buffers(vertex, index, tris);
 
-		pass.device.device().cmd_begin_rendering(
-			pass.buf,
-			&vk::RenderingInfo::default()
-				.render_area(
-					vk::Rect2D::default().extent(
-						vk::Extent2D::default()
-							.width(screen.physical_size.x)
-							.height(screen.physical_size.y),
-					),
-				)
-				.layer_count(1)
-				.color_attachments(&[vk::RenderingAttachmentInfo::default()
-					.image_view(out.view)
-					.image_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-					.load_op(vk::AttachmentLoadOp::CLEAR)
-					.clear_value(vk::ClearValue {
-						color: vk::ClearColorValue {
-							float32: [0.0, 0.0, 0.0, 1.0],
-						},
-					})
-					.store_op(vk::AttachmentStoreOp::STORE)]),
-		);
-		pass.device.device().cmd_set_viewport(
-			pass.buf,
-			0,
-			&[vk::Viewport {
-				x: 0.0,
-				y: 0.0,
-				width: screen.physical_size.x as f32,
-				height: screen.physical_size.y as f32,
-				min_depth: 0.0,
-				max_depth: 1.0,
-			}],
-		);
-		pass.device
-			.device()
-			.cmd_bind_pipeline(pass.buf, vk::PipelineBindPoint::GRAPHICS, self.pipeline.get());
-		pass.device.device().cmd_bind_descriptor_sets(
-			pass.buf,
-			vk::PipelineBindPoint::GRAPHICS,
-			pass.device.layout(),
-			0,
-			&[pass.device.descriptors().set()],
-			&[],
-		);
-		pass.device.device().cmd_push_constants(
-			pass.buf,
-			pass.device.layout(),
-			vk::ShaderStageFlags::ALL,
-			0,
-			bytes_of(&PushConstantsStatic {
+		let mut pass = self.pass.start(
+			&mut pass,
+			&PushConstantsStatic {
 				screen_size: screen.physical_size.map(|x| x as f32) / screen.scaling,
 				vertex_buffer: vertex.ptr(),
-			}),
+			},
+			&[Attachment {
+				image: io.out,
+				load: Load::Clear(vk::ClearValue {
+					color: vk::ClearColorValue {
+						float32: [0.0, 0.0, 0.0, 1.0],
+					},
+				}),
+				store: true,
+			}],
+			None,
 		);
-		pass.device
-			.device()
-			.cmd_bind_index_buffer(pass.buf, index.buffer, 0, vk::IndexType::UINT32);
+
+		pass.bind_index_res(io.index, 0, vk::IndexType::UINT32);
 
 		let mut start_index = 0;
 		for prim in tris {
 			match &prim.primitive {
 				Primitive::Mesh(m) => {
-					let rect = ScissorRect::new(&prim.clip_rect, screen);
-					if rect.extent.x == 0 || rect.extent.y == 0 {
+					let rect = scissor(&prim.clip_rect, screen);
+					if rect.extent.width == 0 || rect.extent.height == 0 {
 						continue;
 					}
+					pass.scissor(rect);
 
-					pass.device.device().cmd_set_scissor(
-						pass.buf,
-						0,
-						&[vk::Rect2D {
-							extent: vk::Extent2D {
-								width: rect.extent.x,
-								height: rect.extent.y,
-							},
-							offset: vk::Offset2D {
-								x: rect.pos.x as _,
-								y: rect.pos.y as _,
-							},
-						}],
-					);
 					let (image, sampler) = match m.texture_id {
 						TextureId::Managed(x) => {
 							let (_, _, image, sampler) = &self.images[&x];
@@ -324,7 +277,7 @@ impl Renderer {
 							let image = if masked != x {
 								ImageId::from_raw(masked as _)
 							} else {
-								pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
+								pass.pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
 							};
 							let sampler = self.samplers[&TextureOptions {
 								magnification: TextureFilter::Linear,
@@ -336,23 +289,16 @@ impl Renderer {
 							(image, sampler)
 						},
 					};
-					pass.device.device().cmd_push_constants(
-						pass.buf,
-						pass.device.layout(),
-						vk::ShaderStageFlags::ALL,
-						std::mem::size_of::<PushConstantsStatic>() as u32,
-						bytes_of(&PushConstantsDynamic { image, sampler }),
+					pass.push(
+						std::mem::size_of::<PushConstantsStatic>(),
+						&PushConstantsDynamic { image, sampler },
 					);
-					pass.device
-						.device()
-						.cmd_draw_indexed(pass.buf, m.indices.len() as u32, 1, start_index, 0, 0);
+					pass.draw_indexed(m.indices.len() as u32, 1, start_index, 0);
 					start_index += m.indices.len() as u32;
 				},
 				Primitive::Callback(_) => panic!("Callback not supported"),
 			}
 		}
-
-		pass.device.device().cmd_end_rendering(pass.buf);
 	}
 
 	unsafe fn generate_buffers(mut vertex: BufferHandle, mut index: BufferHandle, tris: &[ClippedPrimitive]) {
@@ -560,29 +506,30 @@ impl Renderer {
 	}
 }
 
-struct ScissorRect {
-	pos: Vec2<u32>,
-	extent: Vec2<u32>,
-}
+fn scissor(clip_rect: &Rect, screen: &ScreenDescriptor) -> vk::Rect2D {
+	let min = Vec2::new(clip_rect.min.x, clip_rect.min.y);
+	let max = Vec2::new(clip_rect.max.x, clip_rect.max.y);
 
-impl ScissorRect {
-	fn new(clip_rect: &Rect, screen: &ScreenDescriptor) -> Self {
-		let min = Vec2::new(clip_rect.min.x, clip_rect.min.y);
-		let max = Vec2::new(clip_rect.max.x, clip_rect.max.y);
+	let min = (min * screen.scaling)
+		.round()
+		.map(|x| x as u32)
+		.clamped(Vec2::broadcast(0), screen.physical_size);
+	let max = (max * screen.scaling)
+		.round()
+		.map(|x| x as u32)
+		.clamped(min, screen.physical_size);
 
-		let min = (min * screen.scaling)
-			.round()
-			.map(|x| x as u32)
-			.clamped(Vec2::broadcast(0), screen.physical_size);
-		let max = (max * screen.scaling)
-			.round()
-			.map(|x| x as u32)
-			.clamped(min, screen.physical_size);
-
-		Self {
-			pos: min,
-			extent: max - min,
-		}
+	let pos = min;
+	let extent = max - min;
+	vk::Rect2D {
+		extent: vk::Extent2D {
+			width: extent.x,
+			height: extent.y,
+		},
+		offset: vk::Offset2D {
+			x: pos.x as _,
+			y: pos.y as _,
+		},
 	}
 }
 

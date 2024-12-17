@@ -202,28 +202,28 @@ impl Passes {
 			_pad: 0,
 		};
 
-		if io.early { &self.early_hw } else { &self.late_hw }.run_empty(
-			&pass,
-			&push,
-			vk::Extent2D {
-				width: visbuffer.size.width,
-				height: visbuffer.size.height,
-			},
-			|_, buf| unsafe {
-				mesh.cmd_draw_mesh_tasks_indirect(
-					buf,
-					queue.buffer,
-					std::mem::size_of::<u32>() as u64 * 2,
-					1,
-					std::mem::size_of::<u32>() as u32 * 3,
-				);
-			},
-		);
+		unsafe {
+			let pass = if io.early { &self.early_hw } else { &self.late_hw }.start_empty(
+				&mut pass,
+				&push,
+				vk::Extent2D {
+					width: visbuffer.size.width,
+					height: visbuffer.size.height,
+				},
+			);
+			mesh.cmd_draw_mesh_tasks_indirect(
+				pass.pass.buf,
+				queue.buffer,
+				std::mem::size_of::<u32>() as u64 * 2,
+				1,
+				std::mem::size_of::<u32>() as u32 * 3,
+			);
+		}
 
 		if io.early { &self.early_sw } else { &self.late_sw }.dispatch_indirect(
+			&mut pass,
 			&push,
-			&pass,
-			queue.buffer,
+			io.queue,
 			std::mem::size_of::<u32>() * 6,
 		);
 	}

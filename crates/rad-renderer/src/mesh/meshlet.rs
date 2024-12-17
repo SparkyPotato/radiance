@@ -72,21 +72,21 @@ impl MeshletCull {
 		let frame = resources.scene.frame;
 		let res = resources.res;
 		pass.build(move |mut pass| {
-			let queue = pass.get(queue);
+			let push = PushConstants {
+				instances: pass.get(instances).ptr(),
+				camera: pass.get(camera).ptr(),
+				hzb: pass.get(hzb).id.unwrap(),
+				hzb_sampler,
+				queue: pass.get(queue).ptr(),
+				render: pass.get(render).ptr(),
+				stats: pass.get(stats).ptr(),
+				frame,
+				res,
+			};
 			self.pass.dispatch_indirect(
-				&PushConstants {
-					instances: pass.get(instances).ptr(),
-					camera: pass.get(camera).ptr(),
-					hzb: pass.get(hzb).id.unwrap(),
-					hzb_sampler,
-					queue: queue.ptr(),
-					render: pass.get(render).ptr(),
-					stats: pass.get(stats).ptr(),
-					frame,
-					res,
-				},
-				&pass,
-				queue.buffer,
+				&mut pass,
+				&push,
+				queue,
 				std::mem::size_of::<u32>() * if self.early { 2 } else { 6 },
 			);
 		});

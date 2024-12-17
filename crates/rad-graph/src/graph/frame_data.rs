@@ -233,10 +233,27 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 		unsafe {
 			if self.buf == vk::CommandBuffer::null() {
 				self.buf = self.data.pool.next(device)?;
-				device.device().begin_command_buffer(
+				let dev = device.device();
+				dev.begin_command_buffer(
 					self.buf,
 					&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
 				)?;
+				dev.cmd_bind_descriptor_sets(
+					self.buf,
+					vk::PipelineBindPoint::GRAPHICS,
+					device.layout(),
+					0,
+					&[device.descriptors().set()],
+					&[],
+				);
+				dev.cmd_bind_descriptor_sets(
+					self.buf,
+					vk::PipelineBindPoint::COMPUTE,
+					device.layout(),
+					0,
+					&[device.descriptors().set()],
+					&[],
+				);
 			}
 
 			Ok(())

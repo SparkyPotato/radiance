@@ -16,6 +16,6 @@ notify-debouncer-full = { workspace = true }
 raw-window-handle = { workspace = true }
 rspirv = { workspace = true }
 rustc-hash = { workspace = true }
-slang = { workspace = true, features = ["static"] }
+slang = { workspace = true }
 tracing = { workspace = true }
 

@@ -26,8 +26,7 @@ public struct Tex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
 		return this.get().SampleLevel(sampler.get(), uv, mip);
 	}
 
-	public T sample_grad<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, 
-									     f32 ddx, f32 ddy) {
+	public T sample_grad<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, f32 ddx, f32 ddy) {
 		return this.get().SampleGrad(sampler.get(), uv, ddx, ddy);
 	}
 }

@@ -294,12 +294,6 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		}
 	}
 
-	/// Read CPU data that another pass outputs.
-	pub fn data_input<T>(&mut self, id: &GetId<T>) { let _ = id; }
-
-	/// Just like [`Self::data_input`], but the pass only gets a reference to the data.
-	pub fn data_input_ref<T>(&mut self, id: RefId<T>) { let _ = id; }
-
 	/// Output some CPU data for other passes.
 	pub fn data_output<T>(&mut self) -> (SetId<T>, GetId<T>) {
 		let real_id = self.frame.virtual_resources.len();
@@ -407,6 +401,8 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		}
 	}
 
+	/// Is a resource uninitialized? This will be true for everything except persistent resources
+	/// that were not created this frame.
 	pub fn is_uninit<T: VirtualResource>(&mut self, id: Res<T>) -> bool {
 		let id = id.id.wrapping_sub(self.base_id);
 		let res = self.resource_map.get(id as u32);

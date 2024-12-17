@@ -77,23 +77,23 @@ impl BvhCull {
 			let frame = resources.scene.frame;
 			let res = resources.res;
 			pass.build(move |mut pass| {
-				let queue = pass.get(queue);
+				let push = PushConstants {
+					instances: pass.get(instances).ptr(),
+					camera: pass.get(camera).ptr(),
+					hzb: pass.get(hzb).id.unwrap(),
+					hzb_sampler,
+					queue: pass.get(queue).ptr(),
+					meshlet: pass.get(meshlet).ptr(),
+					late: pass.get(late).ptr(),
+					frame,
+					res,
+					ping: ping as _,
+					_pad: 0,
+				};
 				self.pass.dispatch_indirect(
-					&PushConstants {
-						instances: pass.get(instances).ptr(),
-						camera: pass.get(camera).ptr(),
-						hzb: pass.get(hzb).id.unwrap(),
-						hzb_sampler,
-						queue: queue.ptr(),
-						meshlet: pass.get(meshlet).ptr(),
-						late: pass.get(late).ptr(),
-						frame,
-						res,
-						ping: ping as _,
-						_pad: 0,
-					},
-					&pass,
-					queue.buffer,
+					&mut pass,
+					&push,
+					queue,
 					std::mem::size_of::<u32>() * if ping { 2 } else { 6 },
 				);
 			});
