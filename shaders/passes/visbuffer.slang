@@ -135,6 +135,8 @@ public struct VisBufferReader {
 
 // http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/
 public struct DecodedTri {
+	public Instance instance;
+	public Meshlet meshlet;
 	public Vertex v0;
 	public Vertex v1;
 	public Vertex v2;
@@ -143,14 +145,14 @@ public struct DecodedTri {
 	public f32x3 ddy;
 
 	public __init(Instance* instances, Camera cam, f32x2 uv, u32x2 size, VisBufferPixel p) {
-		let instance = instances[p.meshlet.instance];
-		let meshlet = instance.meshlet(p.meshlet.node_offset);
-		let mvp = mul(cam.view_proj, instance.transform.mat());
+		this.instance = instances[p.meshlet.instance];
+		this.meshlet = instance.meshlet(p.meshlet.node_offset);
+		let mvp = mul(cam.view_proj, this.instance.transform.mat());
 
-		let t = meshlet.tri(instance.mesh, p.raw.triangle_id);
-		this.v0 = meshlet.vertex(instance.mesh, t.x);
-		this.v1 = meshlet.vertex(instance.mesh, t.y);
-		this.v2 = meshlet.vertex(instance.mesh, t.z);
+		let t = this.meshlet.tri(this.instance.mesh, p.raw.triangle_id);
+		this.v0 = this.meshlet.vertex(this.instance.mesh, t.x);
+		this.v1 = this.meshlet.vertex(this.instance.mesh, t.y);
+		this.v2 = this.meshlet.vertex(this.instance.mesh, t.z);
 		let v0 = VertexTransform(mvp, this.v0).clip;
 		let v1 = VertexTransform(mvp, this.v1).clip;
 		let v2 = VertexTransform(mvp, this.v2).clip;
@@ -191,11 +193,65 @@ public struct DecodedTri {
 		return this.interp(this.v0.normal, this.v1.normal, this.v2.normal);
 	}
 
+	// https://www.jeremyong.com/graphics/2023/12/16/surface-gradient-bump-mapping
+	public f32x3x3 tbn_basis() {
+		let normal = this.normal();
+		let pos_ddx = this.position_ddx();
+		let proj_pos_ddx = pos_ddx - dot(pos_ddx, normal) * normal;
+		let pos_ddy = this.position_ddy();
+		let proj_pos_ddy = pos_ddy - dot(pos_ddy, normal) * normal;
+		let uv_ddx = this.uv_ddx();
+		let uv_ddy = this.uv_ddy();
+
+		let jacobian = sign(determinant(f32x2x2(uv_ddx, uv_ddy)));
+		var tangent = jacobian * (uv_ddy.y * proj_pos_ddx - uv_ddx.y * proj_pos_ddy);
+		if (jacobian != 0.f) {
+			tangent = normalize(tangent);
+		}
+		let bitangent = jacobian * sign(dot(pos_ddy, cross(normal, pos_ddx))) * cross(normal, tangent);
+
+		// clang-format off
+		return f32x3x3(
+			tangent.x, bitangent.x, normal.x,
+			tangent.y, bitangent.y, normal.y,
+			tangent.z, bitangent.z, normal.z
+		);
+		// clang-format on
+	}
+
+	public f32x3 position() {
+		return this.interp(this.v0.position, this.v1.position, this.v2.position);
+	}
+
+	public f32x3 position_ddx() {
+		return this.ddx_of(this.v0.position, this.v1.position, this.v2.position);
+	}
+
+	public f32x3 position_ddy() {
+		return this.ddy_of(this.v0.position, this.v1.position, this.v2.position);
+	}
+
 	public f32x2 uv() {
 		return this.interp(this.v0.uv, this.v1.uv, this.v2.uv);
 	}
 
+	public f32x2 uv_ddx() {
+		return this.ddx_of(this.v0.uv, this.v1.uv, this.v2.uv);
+	}
+
+	public f32x2 uv_ddy() {
+		return this.ddy_of(this.v0.uv, this.v1.uv, this.v2.uv);
+	}
+
 	public T interp<T : IFloat>(T a, T b, T c) {
 		return a * T(this.lambda.x) + b * T(this.lambda.y) + c * T(this.lambda.z);
+	}
+
+	public T ddx_of<T : IFloat>(T a, T b, T c) {
+		return a * T(this.ddx.x) + b * T(this.ddx.y) + c * T(this.ddx.z);
+	}
+
+	public T ddy_of<T : IFloat>(T a, T b, T c) {
+		return a * T(this.ddy.x) + b * T(this.ddy.y) + c * T(this.ddy.z);
 	}
 }

@@ -1,10 +1,13 @@
 use std::collections::BTreeMap;
 
 use ash::vk;
-use bytemuck::NoUninit;
-use rad_core::Engine;
+use bytemuck::{checked::cast_slice_mut, NoUninit, Pod, Zeroable};
+use rad_core::{
+	asset::aref::{ARef, AWeak},
+	Engine,
+};
 use rad_graph::{
-	device::{Device, ShaderInfo},
+	device::{descriptor::ImageId, Device, ShaderInfo},
 	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, ExternalBuffer, Frame, Res},
 	resource::{self, ASDesc, Buffer, BufferHandle, GpuPtr, Resource, AS},
 	sync::Shader,
@@ -14,10 +17,14 @@ use rad_graph::{
 use rad_world::{transform::Transform, Entity};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
-use vek::{Aabb, Quaternion, Vec3};
+use vek::{Aabb, Quaternion, Vec3, Vec4};
 
 use crate::{
-	assets::mesh::{GpuAabb, GpuVertex},
+	assets::{
+		image::Image,
+		material::Material,
+		mesh::{GpuAabb, GpuVertex},
+	},
 	components::mesh::MeshComponent,
 };
 
@@ -29,6 +36,19 @@ pub struct GpuTransform {
 	pub scale: Vec3<f32>,
 }
 
+#[derive(Copy, Clone, Default, Pod, Zeroable)]
+#[repr(C)]
+pub struct GpuMaterial {
+	pub base_color: Option<ImageId>,
+	pub base_color_factor: Vec4<f32>,
+	pub metallic_roughness: Option<ImageId>,
+	pub metallic_factor: f32,
+	pub roughness_factor: f32,
+	pub normal: Option<ImageId>,
+	pub emissive: Option<ImageId>,
+	pub emissive_factor: Vec3<f32>,
+}
+
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuInstance {
@@ -38,6 +58,7 @@ pub struct GpuInstance {
 	pub update_frame: u64,
 	pub mesh: GpuPtr<u8>,
 	pub raw_mesh: GpuPtr<GpuVertex>,
+	pub material: GpuPtr<GpuMaterial>,
 }
 
 #[derive(Copy, Clone, Default, NoUninit)]
@@ -47,6 +68,7 @@ struct GpuNewInstance {
 	aabb: GpuAabb,
 	mesh: GpuPtr<u8>,
 	raw_mesh: GpuPtr<GpuVertex>,
+	material: GpuPtr<GpuMaterial>,
 	as_: u64,
 }
 
@@ -388,13 +410,63 @@ impl<T: PartialEq> PartialEq for InvertOrd<T> {
 }
 impl<T: Eq> Eq for InvertOrd<T> {}
 
+struct MatBuf {
+	materials: Buffer,
+	len: u32,
+	cap: u32,
+	map: FxHashMap<AWeak<Material>, GpuPtr<GpuMaterial>>,
+}
+
+impl MatBuf {
+	pub fn new(device: &Device) -> Result<Self> {
+		Ok(Self {
+			materials: Buffer::create(
+				device,
+				resource::BufferDesc {
+					name: "scene materials",
+					size: std::mem::size_of::<GpuMaterial>() as u64 * 1024,
+					readback: false,
+				},
+			)?,
+			len: 0,
+			cap: 1024,
+			map: FxHashMap::default(),
+		})
+	}
+
+	fn id(img: &Option<ARef<Image>>) -> Option<ImageId> { img.as_ref().map(|x| x.view().id.unwrap()) }
+
+	// TODO: remove and resize materials
+	fn get_material(&mut self, mat: &ARef<Material>) -> GpuPtr<GpuMaterial> {
+		*self.map.entry(mat.downgrade()).or_insert_with(|| {
+			let i = self.len;
+			self.len += 1;
+			if i == self.cap {
+				panic!("too many materials");
+			}
+			cast_slice_mut::<_, GpuMaterial>(unsafe { self.materials.data().as_mut() })[i as usize] = GpuMaterial {
+				base_color: Self::id(&mat.base_color),
+				base_color_factor: mat.base_color_factor,
+				metallic_roughness: Self::id(&mat.metallic_roughness),
+				metallic_factor: mat.metallic_factor,
+				roughness_factor: mat.roughness_factor,
+				normal: Self::id(&mat.normal),
+				emissive: Self::id(&mat.emissive),
+				emissive_factor: mat.emissive_factor,
+			};
+			self.materials.ptr().offset(i as _)
+		})
+	}
+}
+
 pub struct Scene {
 	instances: Buffer,
 	as_instances: Buffer,
+	materials: MatBuf,
 	as_: AS,
 	len: u32,
 	cap: u32,
-	entity_map: FxHashMap<Entity, (u32, u32)>,
+	entity_map: FxHashMap<Entity, Vec<(u32, u32)>>,
 	updates: Vec<GpuSceneUpdate>,
 	depth_refs: BTreeMap<InvertOrd<u32>, u32>,
 }
@@ -435,6 +507,7 @@ impl Scene {
 					readback: false,
 				},
 			)?,
+			materials: MatBuf::new(device)?,
 			as_: AS::default(),
 			len: 0,
 			cap: 1024,
@@ -445,113 +518,145 @@ impl Scene {
 	}
 
 	pub fn add(&mut self, entity: Entity, transform: &Transform, mesh: &MeshComponent) {
-		self.updates.push(GpuSceneUpdate {
-			instance: self.len,
-			ty: GpuUpdateType::Add,
-			data: GpuNewInstance {
-				transform: map_transform(transform),
-				aabb: map_aabb(mesh.inner.aabb()),
-				mesh: mesh.inner.gpu_ptr(),
-				raw_mesh: mesh.inner.raw_gpu_ptr(),
-				as_: mesh.inner.as_addr(),
-			},
-		});
-		self.len += 1;
+		let data = mesh
+			.inner
+			.iter()
+			.map(|m| {
+				let instance = self.len;
+				let material = self.materials.get_material(m.material());
+				self.updates.push(GpuSceneUpdate {
+					instance,
+					ty: GpuUpdateType::Add,
+					data: GpuNewInstance {
+						transform: map_transform(transform),
+						aabb: map_aabb(m.aabb()),
+						mesh: m.gpu_ptr(),
+						raw_mesh: m.raw_gpu_ptr(),
+						as_: m.as_addr(),
+						material,
+					},
+				});
+				self.len += 1;
 
-		let depth = mesh.inner.bvh_depth();
-		*self.depth_refs.entry(InvertOrd(depth)).or_insert(0) += 1;
-		self.entity_map.insert(entity, (self.len, depth));
+				let depth = m.bvh_depth();
+				*self.depth_refs.entry(InvertOrd(depth)).or_insert(0) += 1;
+				(instance, depth)
+			})
+			.collect();
+
+		self.entity_map.insert(entity, data);
 	}
 
 	pub fn remove(&mut self, entity: Entity) {
-		let (instance, depth) = self.entity_map.remove(&entity).expect("entity not in scene");
-		let depth = self.depth_refs.get_mut(&InvertOrd(depth)).unwrap();
-		*depth -= 1;
-		if *depth == 0 {
-			let d = *depth;
-			self.depth_refs.remove(&InvertOrd(d));
-		}
+		for (instance, depth) in self.entity_map.remove(&entity).expect("entity not in scene") {
+			let depth = self.depth_refs.get_mut(&InvertOrd(depth)).unwrap();
+			*depth -= 1;
+			if *depth == 0 {
+				let d = *depth;
+				self.depth_refs.remove(&InvertOrd(d));
+			}
 
-		self.updates.push(GpuSceneUpdate {
-			instance,
-			ty: GpuUpdateType::Move,
-			data: GpuNewInstance {
-				transform: GpuTransform {
-					position: Vec3::new(f32::from_bits(self.len - 1), 0.0, 0.0),
-					..Default::default()
+			self.updates.push(GpuSceneUpdate {
+				instance,
+				ty: GpuUpdateType::Move,
+				data: GpuNewInstance {
+					transform: GpuTransform {
+						position: Vec3::new(f32::from_bits(self.len - 1), 0.0, 0.0),
+						..Default::default()
+					},
+					aabb: GpuAabb::default(),
+					mesh: GpuPtr::null(),
+					raw_mesh: GpuPtr::null(),
+					as_: 0,
+					material: GpuPtr::null(),
 				},
-				aabb: GpuAabb::default(),
-				mesh: GpuPtr::null(),
-				raw_mesh: GpuPtr::null(),
-				as_: 0,
-			},
-		});
-		self.len -= 1;
+			});
+			self.len -= 1;
+		}
 	}
 
 	pub fn change_mesh_and_transform(&mut self, entity: Entity, transform: &Transform, mesh: &MeshComponent) {
-		let (instance, depth) = self.entity_map.get_mut(&entity).expect("entity not in scene");
-		let old_depth = self.depth_refs.get_mut(&InvertOrd(*depth)).unwrap();
-		*old_depth -= 1;
-		if *old_depth == 0 {
-			self.depth_refs.remove(&InvertOrd(*depth));
+		for ((instance, depth), m) in self
+			.entity_map
+			.get_mut(&entity)
+			.expect("entity not in scene")
+			.iter_mut()
+			.zip(&mesh.inner)
+		{
+			let old_depth = self.depth_refs.get_mut(&InvertOrd(*depth)).unwrap();
+			*old_depth -= 1;
+			if *old_depth == 0 {
+				self.depth_refs.remove(&InvertOrd(*depth));
+			}
+
+			let material = self.materials.get_material(m.material());
+			self.updates.push(GpuSceneUpdate {
+				instance: *instance,
+				ty: GpuUpdateType::Add,
+				data: GpuNewInstance {
+					transform: map_transform(transform),
+					aabb: map_aabb(m.aabb()),
+					mesh: m.gpu_ptr(),
+					raw_mesh: m.raw_gpu_ptr(),
+					as_: m.as_addr(),
+					material,
+				},
+			});
+
+			let new_depth = m.bvh_depth();
+			*self.depth_refs.entry(InvertOrd(new_depth)).or_insert(0) += 1;
+			*depth = new_depth;
 		}
-
-		self.updates.push(GpuSceneUpdate {
-			instance: *instance,
-			ty: GpuUpdateType::Add,
-			data: GpuNewInstance {
-				transform: map_transform(transform),
-				aabb: map_aabb(mesh.inner.aabb()),
-				mesh: mesh.inner.gpu_ptr(),
-				raw_mesh: mesh.inner.raw_gpu_ptr(),
-				as_: mesh.inner.as_addr(),
-			},
-		});
-
-		let new_depth = mesh.inner.bvh_depth();
-		*self.depth_refs.entry(InvertOrd(new_depth)).or_insert(0) += 1;
-		*depth = new_depth;
 	}
 
 	pub fn change_mesh(&mut self, entity: Entity, mesh: &MeshComponent) {
-		let (instance, depth) = self.entity_map.get_mut(&entity).expect("entity not in scene");
-		let old_depth = self.depth_refs.get_mut(&InvertOrd(*depth)).unwrap();
-		*old_depth -= 1;
-		if *old_depth == 0 {
-			self.depth_refs.remove(&InvertOrd(*depth));
+		for ((instance, depth), m) in self
+			.entity_map
+			.get_mut(&entity)
+			.expect("entity not in scene")
+			.iter_mut()
+			.zip(&mesh.inner)
+		{
+			let old_depth = self.depth_refs.get_mut(&InvertOrd(*depth)).unwrap();
+			*old_depth -= 1;
+			if *old_depth == 0 {
+				self.depth_refs.remove(&InvertOrd(*depth));
+			}
+
+			let material = self.materials.get_material(m.material());
+			self.updates.push(GpuSceneUpdate {
+				instance: *instance,
+				ty: GpuUpdateType::ChangeMesh,
+				data: GpuNewInstance {
+					transform: GpuTransform::default(),
+					aabb: map_aabb(m.aabb()),
+					mesh: m.gpu_ptr(),
+					raw_mesh: m.raw_gpu_ptr(),
+					as_: m.as_addr(),
+					material,
+				},
+			});
+
+			let new_depth = m.bvh_depth();
+			*self.depth_refs.entry(InvertOrd(new_depth)).or_insert(0) += 1;
+			*depth = new_depth;
 		}
-
-		self.updates.push(GpuSceneUpdate {
-			instance: *instance,
-			ty: GpuUpdateType::ChangeMesh,
-			data: GpuNewInstance {
-				transform: GpuTransform::default(),
-				aabb: map_aabb(mesh.inner.aabb()),
-				mesh: mesh.inner.gpu_ptr(),
-				raw_mesh: mesh.inner.raw_gpu_ptr(),
-				as_: mesh.inner.as_addr(),
-			},
-		});
-
-		let new_depth = mesh.inner.bvh_depth();
-		*self.depth_refs.entry(InvertOrd(new_depth)).or_insert(0) += 1;
-		*depth = new_depth;
 	}
 
 	pub fn change_transform(&mut self, entity: Entity, transform: &Transform) {
-		let (instance, _) = self.entity_map.get(&entity).expect("entity not in scene");
-
-		self.updates.push(GpuSceneUpdate {
-			instance: *instance,
-			ty: GpuUpdateType::ChangeTransform,
-			data: GpuNewInstance {
-				transform: map_transform(transform),
-				aabb: GpuAabb::default(),
-				mesh: GpuPtr::null(),
-				raw_mesh: GpuPtr::null(),
-				as_: 0,
-			},
-		});
+		for (instance, _) in self.entity_map.get(&entity).expect("entity not in scene") {
+			self.updates.push(GpuSceneUpdate {
+				instance: *instance,
+				ty: GpuUpdateType::ChangeTransform,
+				data: GpuNewInstance {
+					transform: map_transform(transform),
+					aabb: GpuAabb::default(),
+					mesh: GpuPtr::null(),
+					raw_mesh: GpuPtr::null(),
+					as_: 0,
+					material: GpuPtr::null(),
+				},
+			});
+		}
 	}
 }

@@ -2,13 +2,17 @@ use std::{cell::RefCell, collections::BTreeMap, ops::Range};
 
 use meshopt::VertexDataAdapter;
 use metis::Graph;
+use rad_core::asset::aref::ARef;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
 use rustc_hash::{FxHashMap, FxHashSet};
 use thread_local::ThreadLocal;
 use tracing::{debug_span, field, info_span, trace_span};
 use vek::{Aabb, Sphere, Vec3};
 
-use crate::assets::mesh::data::{BvhNode, Mesh, Meshlet, Vertex};
+use crate::assets::{
+	material::Material,
+	mesh::data::{BvhNode, Mesh, Meshlet, Vertex},
+};
 
 impl Meshlet {
 	fn vertices(&self) -> Range<usize> {
@@ -23,6 +27,7 @@ impl Meshlet {
 pub struct MeshData {
 	pub vertices: Vec<Vertex>,
 	pub indices: Vec<u32>,
+	pub material: ARef<Material>,
 }
 
 #[derive(Clone)]
@@ -366,7 +371,11 @@ fn find_connections(range: Range<usize>, meshlets: &Meshlets) -> Vec<Vec<(usize,
 }
 
 fn convert_meshlets(mesh: MeshData, meshlets: Meshlets, bvh: Vec<BvhNode>, bvh_depth: u32) -> Mesh {
-	let MeshData { vertices, indices } = mesh;
+	let MeshData {
+		vertices,
+		indices,
+		material,
+	} = mesh;
 	let mut outv = Vec::with_capacity(vertices.len());
 	let mut outi = Vec::with_capacity(meshlets.meshlets.len() * 124 * 3);
 	let meshlets = meshlets
@@ -399,6 +408,7 @@ fn convert_meshlets(mesh: MeshData, meshlets: Meshlets, bvh: Vec<BvhNode>, bvh_d
 		aabb,
 		raw_vertices: vertices,
 		raw_indices: indices,
+		material,
 	}
 }
 

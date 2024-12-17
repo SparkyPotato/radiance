@@ -78,6 +78,17 @@ public struct Transform {
 	}
 }
 
+public struct Material {
+	public OTex2D<f32x4> base_color;
+	public f32x4 base_color_factor;
+	public OTex2D<f32x4> metallic_roughness;
+	public f32 metallic_factor;
+	public f32 roughness_factor;
+	public OTex2D<f32x4> normal;
+	public OTex2D<f32x4> emissive;
+	public f32x3 emissive_factor;
+}
+
 public struct Instance {
 	public Transform transform;
 	public Transform last_updated_transform;
@@ -85,6 +96,7 @@ public struct Instance {
 	public u64 update_frame;
 	public u8* mesh;
 	public Vertex* raw_mesh;
+	public Material* material;
 
 	public __init(NewInstance instance) {
 		this.transform = instance.transform;
@@ -92,6 +104,7 @@ public struct Instance {
 		this.aabb = instance.aabb;
 		this.mesh = instance.mesh;
 		this.raw_mesh = instance.raw_mesh;
+		this.material = instance.material;
 		this.update_frame = 0;
 	}
 
@@ -117,6 +130,7 @@ public struct NewInstance {
 	public Aabb aabb;
 	public u8* mesh;
 	public Vertex* raw_mesh;
+	public Material* material;
 	public u64 as;
 }
 

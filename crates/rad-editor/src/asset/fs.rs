@@ -155,7 +155,7 @@ impl FsAssetSystem {
 		self.root
 			.read()
 			.as_ref()
-			.map(|x| x.join(rel_path).with_extension("radass"))
+			.map(|x| x.join(rel_path).with_added_extension("radass"))
 	}
 }
 

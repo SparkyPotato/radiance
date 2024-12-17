@@ -24,6 +24,7 @@ use rad_core::{
 use rad_renderer::{
 	assets::{
 		image::{Image, ImportImage},
+		material::Material,
 		mesh::{GpuVertex, Mesh, MeshData},
 	},
 	components::{camera::CameraComponent, mesh::MeshComponent},
@@ -44,13 +45,15 @@ pub struct GltfImporter {
 #[derive(Copy, Clone)]
 struct ImportProgress {
 	images: u32,
+	materials: u32,
 	meshes: u32,
 	scenes: u32,
 }
 
 impl ImportProgress {
 	fn ratio(&self, total: ImportProgress) -> f32 {
-		(self.meshes + self.scenes) as f32 / (total.meshes + total.scenes) as f32
+		(self.images + self.materials + self.meshes + self.scenes) as f32
+			/ (total.images + total.materials + total.meshes + total.scenes) as f32
 	}
 }
 
@@ -78,6 +81,7 @@ impl GltfImporter {
 	pub fn import(self, progress: impl Fn(f32) + Send + Sync) -> Result<(), io::Error> {
 		let total = ImportProgress {
 			images: self.gltf.images().count() as _,
+			materials: self.gltf.materials().count() as _,
 			meshes: self.gltf.meshes().count() as _,
 			scenes: self.gltf.scenes().count() as _,
 		};
@@ -91,19 +95,17 @@ impl GltfImporter {
 			.par_bridge()
 			.map(|image| {
 				let id = AssetId::new();
-				let name = image.name().unwrap_or("unnamed image");
-				let path = Path::new("images").join(
-					image
-						.name()
-						.map(|x| x.to_string())
-						.or_else(|| {
-							let Source::Uri { uri, .. } = image.source() else {
-								return None;
-							};
-							Some(uri.to_string())
-						})
-						.unwrap_or_else(|| id.to_string()),
-				);
+				let name = image
+					.name()
+					.map(|x| x.to_string())
+					.or_else(|| {
+						let Source::Uri { uri, .. } = image.source() else {
+							return None;
+						};
+						Some(uri.to_string())
+					})
+					.unwrap_or_else(|| id.to_string());
+				let path = Path::new("images").join(&name);
 				let data = {
 					let s = trace_span!("load image", name = name);
 					let _e = s.enter();
@@ -111,7 +113,7 @@ impl GltfImporter {
 						.map_err(io::Error::other)?
 				};
 				Image::import(
-					name,
+					&name,
 					ImportImage {
 						data: &data.pixels,
 						width: data.width,
@@ -126,6 +128,7 @@ impl GltfImporter {
 				progress(
 					ImportProgress {
 						images: old as u32 + 1,
+						materials: 0,
 						meshes: 0,
 						scenes: 0,
 					}
@@ -137,42 +140,84 @@ impl GltfImporter {
 			.collect::<Result<_, _>>()?;
 
 		let prog = AtomicUsize::new(0);
+		let materials: Vec<_> = self
+			.gltf
+			.materials()
+			.par_bridge()
+			.map(|mat| {
+				let id = AssetId::new();
+				let name = mat.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
+				let path = Path::new("materials").join(&name);
+				let mat = self.material(&name, mat, &images);
+				mat.save(&mut sys.create(&path, id, Material::uuid())?)?;
+				let old = prog.fetch_add(1, Ordering::Relaxed);
+				progress(
+					ImportProgress {
+						images: total.images,
+						materials: old as u32 + 1,
+						meshes: 0,
+						scenes: 0,
+					}
+					.ratio(total),
+				);
+
+				Ok::<_, io::Error>(ARef::new(id, mat))
+			})
+			.collect::<Result<_, _>>()?;
+
+		let prog = AtomicUsize::new(0);
 		let meshes: Vec<_> = self
 			.gltf
 			.meshes()
 			.par_bridge()
 			.map(|mesh| {
-				let id = AssetId::new();
-				let name = mesh.name().unwrap_or("unnamed mesh");
-				let path =
-					Path::new("meshes").join(mesh.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string()));
-				let mesh = self.conv_to_mesh(mesh).map_err(io::Error::other)?;
-				Mesh::import(name, mesh, sys.create(&path, id, Mesh::uuid())?)?;
+				let name = mesh.name().map(|x| x.to_string());
+				let prims = self.conv_to_meshes(mesh, &materials).map_err(io::Error::other)?;
+				let c = prims.len();
+				let ids = prims
+					.into_iter()
+					.enumerate()
+					.map(|(i, m)| {
+						let id = AssetId::new();
+						let name = name.clone().unwrap_or_else(|| id.to_string());
+						let name = if c == 1 {
+							name.to_string()
+						} else {
+							format!("{name}-{i}")
+						};
+						let path = Path::new("meshes").join(&name);
+						Mesh::import(&name, m, sys.create(&path, id, Mesh::uuid())?)?;
+						Engine::get().asset::<Mesh>(id)
+					})
+					.collect::<Result<Vec<_>, _>>()?;
+
 				let old = prog.fetch_add(1, Ordering::Relaxed);
 				progress(
 					ImportProgress {
 						images: total.images,
+						materials: total.materials,
 						meshes: old as u32 + 1,
 						scenes: 0,
 					}
 					.ratio(total),
 				);
 
-				Engine::get().asset::<Mesh>(id)
+				Ok(ids)
 			})
-			.collect::<Result<_, _>>()?;
+			.collect::<Result<_, io::Error>>()?;
 
 		let prog = AtomicUsize::new(0);
 		self.gltf.scenes().par_bridge().try_for_each(|scene| {
 			let id = AssetId::new();
-			let name = scene.name().unwrap_or("unnamed scene");
-			let path = Path::new("scenes").join(scene.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string()));
+			let name = scene.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
+			let path = Path::new("scenes").join(&name);
 			let world = self.scene(&name, scene, &meshes).map_err(io::Error::other)?;
 			world.save(sys.create(&path, id, World::uuid())?.as_mut())?;
 			let old = prog.fetch_add(1, Ordering::Relaxed);
 			progress(
 				ImportProgress {
 					images: total.images,
+					materials: total.materials,
 					meshes: total.meshes,
 					scenes: old as u32 + 1,
 				}
@@ -205,7 +250,33 @@ impl GltfImporter {
 		})
 	}
 
-	fn scene(&self, name: &str, scene: gltf::Scene, meshes: &[ARef<Mesh>]) -> Result<World, gltf::Error> {
+	fn material(&self, name: &str, mat: gltf::Material, images: &[ARef<Image>]) -> Material {
+		let s = span!(Level::INFO, "importing material", name = name);
+		let _e = s.enter();
+
+		let m = mat.pbr_metallic_roughness();
+
+		Material {
+			base_color: m
+				.base_color_texture()
+				.map(|x| images[x.texture().source().index()].clone()),
+			base_color_factor: m.base_color_factor().into(),
+			metallic_roughness: m
+				.metallic_roughness_texture()
+				.map(|x| images[x.texture().source().index()].clone()),
+			metallic_factor: m.metallic_factor(),
+			roughness_factor: m.roughness_factor(),
+			normal: mat
+				.normal_texture()
+				.map(|x| images[x.texture().source().index()].clone()),
+			emissive: mat
+				.emissive_texture()
+				.map(|x| images[x.texture().source().index()].clone()),
+			emissive_factor: mat.emissive_factor().into(),
+		}
+	}
+
+	fn scene(&self, name: &str, scene: gltf::Scene, meshes: &[Vec<ARef<Mesh>>]) -> Result<World, gltf::Error> {
 		let s = span!(Level::INFO, "importing scene", name = name);
 		let _e = s.enter();
 
@@ -217,7 +288,7 @@ impl GltfImporter {
 		Ok(out)
 	}
 
-	fn node(&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[ARef<Mesh>], out: &mut World) {
+	fn node(&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[Vec<ARef<Mesh>>], out: &mut World) {
 		// let name = node.name().unwrap_or("unnamed node").to_string();
 		let this_transform = Mat4::from_col_arrays(node.transform().matrix());
 		let transform = transform * this_transform;
@@ -234,7 +305,7 @@ impl GltfImporter {
 		});
 
 		if let Some(mesh) = node.mesh() {
-			entity.insert(MeshComponent::new(meshes[mesh.index()].clone()));
+			entity.insert(MeshComponent::new(&meshes[mesh.index()].clone()));
 		}
 
 		if let Some(Projection::Perspective(p)) = node.camera().as_ref().map(|x| x.projection()) {
@@ -284,76 +355,66 @@ impl GltfImporter {
 		))
 	}
 
-	fn conv_to_mesh(&self, mesh: gltf::Mesh) -> Result<MeshData, gltf::Error> {
+	fn conv_to_meshes(&self, mesh: gltf::Mesh, materials: &[ARef<Material>]) -> Result<Vec<MeshData>, gltf::Error> {
 		let s = trace_span!("convert from gltf");
 		let _e = s.enter();
 
-		let mut out = MeshData {
-			vertices: Vec::with_capacity(
-				mesh.primitives()
-					.flat_map(|x| x.get(&gltf::Semantic::Positions).map(|x| x.count()))
-					.sum(),
-			),
-			indices: Vec::with_capacity(mesh.primitives().flat_map(|x| x.indices().map(|x| x.count())).sum()),
-		};
-		for prim in mesh.primitives() {
-			let positions = prim
-				.get(&gltf::Semantic::Positions)
-				.ok_or(gltf::Error::Io(io::Error::other("invalid gltf")))?;
-			let (positions, ty, comp) = self.accessor(positions)?;
-			if comp != Dimensions::Vec3 || ty != DataType::F32 {
-				return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
-			}
-			let positions = positions.map(|p| *from_bytes::<Vec3<f32>>(p));
+		let out = mesh
+			.primitives()
+			.map(|prim| {
+				let positions = prim
+					.get(&gltf::Semantic::Positions)
+					.ok_or(gltf::Error::Io(io::Error::other("invalid gltf")))?;
+				let (positions, ty, comp) = self.accessor(positions)?;
+				if comp != Dimensions::Vec3 || ty != DataType::F32 {
+					return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
+				}
+				let positions = positions.map(|p| *from_bytes::<Vec3<f32>>(p));
 
-			let normals = prim
-				.get(&gltf::Semantic::Normals)
-				.ok_or_else(|| gltf::Error::Io(io::Error::other("invalid gltf")))?;
-			let (normals, ty, comp) = self.accessor(normals)?;
-			if comp != Dimensions::Vec3 || ty != DataType::F32 {
-				return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
-			}
-			let normals = normals.map(|n| *from_bytes::<Vec3<f32>>(n));
+				let normals = prim
+					.get(&gltf::Semantic::Normals)
+					.ok_or_else(|| gltf::Error::Io(io::Error::other("invalid gltf")))?;
+				let (normals, ty, comp) = self.accessor(normals)?;
+				if comp != Dimensions::Vec3 || ty != DataType::F32 {
+					return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
+				}
+				let normals = normals.map(|n| *from_bytes::<Vec3<f32>>(n));
 
-			let uv = prim.get(&gltf::Semantic::TexCoords(0));
-			let mut uv = uv
-				.map(|uv| {
-					let (uv, ty, comp) = self.accessor(uv)?;
-					if comp != Dimensions::Vec2 {
-						return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
-					}
+				let uv = prim.get(&gltf::Semantic::TexCoords(0));
+				let mut uv = uv
+					.map(|uv| {
+						let (uv, ty, comp) = self.accessor(uv)?;
+						if comp != Dimensions::Vec2 {
+							return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
+						}
 
-					if !matches!(ty, DataType::F32 | DataType::U8 | DataType::U16) {
-						return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
-					}
-					Ok(uv.map(move |uv| match ty {
-						DataType::F32 => *from_bytes(uv),
-						DataType::U8 => from_bytes::<Vec2<u8>>(uv).map(|u| u as f32 / 255.0),
-						DataType::U16 => from_bytes::<Vec2<u16>>(uv).map(|u| u as f32 / 65535.0),
-						_ => panic!("yikes"),
-					}))
-				})
-				.transpose()?;
+						if !matches!(ty, DataType::F32 | DataType::U8 | DataType::U16) {
+							return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
+						}
+						Ok(uv.map(move |uv| match ty {
+							DataType::F32 => *from_bytes(uv),
+							DataType::U8 => from_bytes::<Vec2<u8>>(uv).map(|u| u as f32 / 255.0),
+							DataType::U16 => from_bytes::<Vec2<u16>>(uv).map(|u| u as f32 / 65535.0),
+							_ => panic!("yikes"),
+						}))
+					})
+					.transpose()?;
 
-			let indices = prim
-				.indices()
-				.ok_or_else(|| gltf::Error::Io(io::Error::other("invalid gltf")))?;
-			let (indices, ty, comp) = self.accessor(indices)?;
-			if comp != Dimensions::Scalar {
-				return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
-			}
-			let offset = out.vertices.len() as u32;
-			match ty {
-				DataType::U8 => out.indices.extend(indices.flatten().map(|&i| i as u32 + offset)),
-				DataType::U16 => out
-					.indices
-					.extend(indices.map(|i| *from_bytes::<u16>(i) as u32 + offset)),
-				DataType::U32 => out.indices.extend(indices.map(|i| *from_bytes::<u32>(i) + offset)),
-				_ => return Err(gltf::Error::Io(io::Error::other("invalid gltf"))),
-			}
+				let indices = prim
+					.indices()
+					.ok_or_else(|| gltf::Error::Io(io::Error::other("invalid gltf")))?;
+				let (indices, ty, comp) = self.accessor(indices)?;
+				if comp != Dimensions::Scalar {
+					return Err(gltf::Error::Io(io::Error::other("invalid gltf")));
+				}
+				let indices = match ty {
+					DataType::U8 => indices.flatten().map(|&i| i as u32).collect(),
+					DataType::U16 => indices.map(|i| *from_bytes::<u16>(i) as u32).collect(),
+					DataType::U32 => indices.map(|i| *from_bytes::<u32>(i)).collect(),
+					_ => return Err(gltf::Error::Io(io::Error::other("invalid gltf"))),
+				};
 
-			out.vertices.extend(
-				positions
+				let vertices = positions
 					.zip(normals)
 					.zip(std::iter::from_fn(move || {
 						if let Some(ref mut uv) = uv {
@@ -362,9 +423,19 @@ impl GltfImporter {
 							Some(Vec2::new(0.0, 0.0))
 						}
 					}))
-					.map(|((position, normal), uv)| GpuVertex { position, normal, uv }),
-			);
-		}
+					.map(|((position, normal), uv)| GpuVertex { position, normal, uv })
+					.collect();
+
+				Ok(MeshData {
+					vertices,
+					indices,
+					material: materials[prim.material().index().ok_or_else(|| {
+						io::Error::new(io::ErrorKind::Unsupported, "gltf default material unsupported")
+					})?]
+					.clone(),
+				})
+			})
+			.collect::<Result<Vec<_>, _>>()?;
 
 		Ok(out)
 	}

@@ -1,5 +1,6 @@
 use std::{
 	any::Any,
+	hash::{Hash, Hasher},
 	marker::Unsize,
 	ops::{CoerceUnsized, Deref},
 	sync::{Arc, Weak},
@@ -44,8 +45,16 @@ impl<T: Asset> ARef<T> {
 			ptr: Arc::new(Data { id, inner: obj }),
 		}
 	}
+}
 
+impl<T: ?Sized + Asset> ARef<T> {
 	pub fn asset_id(&self) -> AssetId { self.ptr.id }
+
+	pub fn downgrade(&self) -> AWeak<T> {
+		AWeak {
+			ptr: Arc::downgrade(&self.ptr),
+		}
+	}
 }
 
 impl<T: Asset + ?Sized> ARef<T> {
@@ -67,16 +76,10 @@ impl ARef<dyn Asset> {
 			}
 		}
 	}
-
-	pub fn downgrade(this: &Self) -> AWeak<dyn Asset> {
-		AWeak {
-			ptr: Arc::downgrade(&this.ptr),
-		}
-	}
 }
 
 impl<T: Asset> TypePath for ARef<T> {
-	fn type_path() -> &'static str { "rad_core::asset::aref::ARef" }
+	fn type_path() -> &'static str { format!("rad_core::asset::aref::ARef<{}>", std::any::type_name::<T>()).leak() }
 
 	fn short_type_path() -> &'static str { "ARef" }
 }
@@ -103,12 +106,17 @@ pub struct AWeak<T: Asset + ?Sized> {
 impl<T: Asset + ?Sized> Clone for AWeak<T> {
 	fn clone(&self) -> Self { Self { ptr: self.ptr.clone() } }
 }
+impl<T: Asset + ?Sized> Hash for AWeak<T> {
+	fn hash<H: Hasher>(&self, state: &mut H) { self.ptr.as_ptr().hash(state); }
+}
+impl<T: Asset + ?Sized, U: Asset + ?Sized> PartialEq<AWeak<U>> for AWeak<T> {
+	fn eq(&self, other: &AWeak<U>) -> bool { self.ptr.as_ptr().addr() == other.ptr.as_ptr().addr() }
+}
+impl<T: Asset + ?Sized> Eq for AWeak<T> {}
 
 impl<T: Asset + Unsize<U> + ?Sized, U: Asset + ?Sized> CoerceUnsized<AWeak<U>> for AWeak<T> {}
 
 impl<T: Asset + ?Sized> AWeak<T> {
-	pub fn ptr_eq(&self, other: &AWeak<T>) -> bool { self.ptr.ptr_eq(&other.ptr) }
-
 	pub fn upgrade(&self) -> Option<ARef<T>> { self.ptr.upgrade().map(|ptr| ARef { ptr }) }
 }
 

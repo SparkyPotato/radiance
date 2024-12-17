@@ -31,6 +31,18 @@ public struct Tex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
 	}
 }
 
+public struct OTex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
+	u32 index;
+
+	public Optional<Tex<T, Shape, U>> get() {
+		if (this.index == 0) {
+			return none;
+		} else {
+			return Tex<T, Shape, U>.from_index(this.index);
+		}
+	}
+}
+
 public typealias D1 = __Shape1D;
 public typealias D2 = __Shape2D;
 public typealias D3 = __Shape3D;
@@ -38,6 +50,9 @@ public typealias D3 = __Shape3D;
 __generic<T> public typealias Tex1D = Tex<T, D1>;
 __generic<T> public typealias Tex2D = Tex<T, D2>;
 __generic<T> public typealias Tex3D = Tex<T, D3>;
+__generic<T> public typealias OTex1D = OTex<T, D1>;
+__generic<T> public typealias OTex2D = OTex<T, D2>;
+__generic<T> public typealias OTex3D = OTex<T, D3>;
 
 __generic<T, U : Uniformity> public extension Tex<T, D1, U> {
 	public T load(u32 pixel, u32 mip = 0) {
@@ -76,6 +91,76 @@ __generic<T, U : Uniformity> public extension Tex<T, D3, U> {
 		u32 w, h, d, _;
 		this.get().GetDimensions(mip, w, h, d, _);
 		return u32x3(w, h, d);
+	}
+}
+
+__generic<T, Shape : __ITextureShape, U : Uniformity = Uniform> public extension Optional<Tex<T, Shape, U>> {
+	public T sample<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, T default = T()) {
+		if (this.hasValue) {
+			return this.value.sample(sampler, uv);
+		} else {
+			return default;
+		}
+	}
+}
+
+__generic<T, U : Uniformity> public extension Optional<Tex<T, D1, U>> {
+	public T load(u32 pixel, T default = T(), u32 mip = 0) {
+		if (this.hasValue) {
+			return this.value.load(pixel, mip);
+		} else {
+			return default;
+		}
+	}
+
+	public u32 size(u32 mip = 0) {
+		if (this.hasValue) {
+			return this.value.size(mip);
+		} else {
+			return 0;
+		}
+	}
+}
+__generic<T, U : Uniformity> public extension Optional<Tex<T, D2, U>> {
+	public T load(u32x2 pixel, T default = T(), u32 mip = 0) {
+		if (this.hasValue) {
+			return this.value.load(pixel, mip);
+		} else {
+			return default;
+		}
+	}
+
+	public u32x2 size(u32 mip = 0) {
+		if (this.hasValue) {
+			return this.value.size(mip);
+		} else {
+			return u32x2(0, 0);
+		}
+	}
+
+	public u32x2 pixel_of_uv(f32x2 uv, u32 mip = 0) {
+		if (this.hasValue) {
+			return this.value.pixel_of_uv(uv, mip);
+		} else {
+			return u32x2(0, 0);
+		}
+	}
+}
+__generic<T, U : Uniformity> public extension Optional<Tex<T, D3, U>> {
+	public T load(u32x3 pixel, T default = T(), u32 mip = 0) {
+		if (this.hasValue) {
+			return this.value.load(pixel, mip);
+		} else {
+			return default;
+		}
+	}
+
+	public u32x3 size(u32 mip = 0) {
+		if (this.hasValue) {
+			return this.value.size(mip);
+		} else {
+			return u32x3(0, 0, 0);
+		}
 	}
 }
 

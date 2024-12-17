@@ -1,7 +1,10 @@
 use bincode::{Decode, Encode};
 use bytemuck::{Pod, Zeroable};
+use rad_core::asset::aref::ARef;
 use static_assertions::const_assert_eq;
 use vek::{Aabb, Sphere, Vec2, Vec3};
+
+use crate::assets::material::Material;
 
 #[derive(Pod, Zeroable, Copy, Clone, Default, Encode, Decode)]
 #[repr(C)]
@@ -70,4 +73,7 @@ pub struct Mesh {
 	pub raw_vertices: Vec<Vertex>,
 	/// Input indices for the mesh.
 	pub raw_indices: Vec<u32>,
+	#[bincode(with_serde)]
+	/// Material of the mesh.
+	pub material: ARef<Material>,
 }

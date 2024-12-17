@@ -8,7 +8,7 @@ use ash::vk;
 use bincode::error::{DecodeError, EncodeError};
 use bytemuck::{cast_slice, NoUninit, Pod, Zeroable};
 use rad_core::{
-	asset::{Asset, AssetView, Uuid},
+	asset::{aref::ARef, Asset, AssetView, Uuid},
 	uuid,
 	Engine,
 };
@@ -23,7 +23,7 @@ use tracing::{span, Level};
 use vek::{Aabb, Sphere, Vec3, Vec4};
 
 pub use crate::assets::mesh::import::MeshData;
-use crate::util::SliceWriter;
+use crate::{assets::material::Material, util::SliceWriter};
 
 mod data;
 mod import;
@@ -82,6 +82,7 @@ pub struct Mesh {
 	as_: AS,
 	bvh_depth: u32,
 	aabb: Aabb<f32>,
+	material: ARef<Material>,
 }
 
 impl Mesh {
@@ -107,6 +108,8 @@ impl Mesh {
 	pub fn raw_gpu_ptr(&self) -> GpuPtr<GpuVertex> { self.raw_buffer.ptr() }
 
 	pub fn as_addr(&self) -> u64 { self.as_.addr() }
+
+	pub fn material(&self) -> &ARef<Material> { &self.material }
 }
 
 impl Asset for Mesh {
@@ -351,6 +354,7 @@ impl Asset for Mesh {
 				as_,
 				bvh_depth: m.bvh_depth,
 				aabb: m.aabb,
+				material: m.material,
 			})
 		}
 	}

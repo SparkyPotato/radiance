@@ -60,6 +60,7 @@ void update(u32 id: SV_DispatchThreadID) {
 		}
 		case UpdateType.ChangeMesh: {
 			instance->mesh = update.data.mesh;
+			instance->material = update.data.material;
 			as_instance->accelerationStructureReference = update.data.as;
 			break;
 		}

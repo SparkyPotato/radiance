@@ -29,6 +29,10 @@ impl DebugWindow {
 			4 => "normals",
 			5 => "uvs",
 			6 => "error",
+			7 => "base color",
+			8 => "roughness",
+			9 => "metallic",
+			10 => "emissive",
 			_ => unreachable!(),
 		}
 	}
@@ -38,7 +42,7 @@ impl DebugWindow {
 			let mut sel = self.debug_vis.to_u32() as usize;
 			ComboBox::from_label("debug vis")
 				.selected_text(Self::text_of_index(sel))
-				.show_index(ui, &mut sel, 7, Self::text_of_index);
+				.show_index(ui, &mut sel, 11, Self::text_of_index);
 			self.debug_vis = match sel {
 				0 => DebugVis::Triangles,
 				1 => DebugVis::Meshlets,
@@ -47,6 +51,10 @@ impl DebugWindow {
 				4 => DebugVis::Normals,
 				5 => DebugVis::Uvs,
 				6 => DebugVis::Error,
+				7 => DebugVis::BaseColor,
+				8 => DebugVis::Roughness,
+				9 => DebugVis::Metallic,
+				10 => DebugVis::Emissive,
 				_ => unreachable!(),
 			};
 

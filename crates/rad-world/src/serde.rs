@@ -27,7 +27,7 @@ use bevy_reflect::{
 	VariantInfo,
 };
 use bincode::{
-	de::{read::Reader, Decoder},
+	de::Decoder,
 	enc::Encoder,
 	error::{DecodeError, EncodeError},
 	serde::Compat,
@@ -71,7 +71,7 @@ fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &Compo
 	let reg = ty_reg().get(ty).ok_or_else(|| {
 		io::Error::new(
 			io::ErrorKind::InvalidData,
-			format!("Component (`{}`) not registered", info.name()),
+			format!("component (`{}`) not registered", info.name()),
 		)
 	})?;
 	let refl = reg
@@ -79,7 +79,7 @@ fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &Compo
 		.ok_or_else(|| {
 			io::Error::new(
 				io::ErrorKind::InvalidData,
-				format!("Component (`{}`) not reflectable", info.name()),
+				format!("component (`{}`) not reflectable", info.name()),
 			)
 		})?
 		.reflect(en)
@@ -90,7 +90,7 @@ fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &Compo
 		.ok_or_else(|| {
 			io::Error::new(
 				io::ErrorKind::InvalidData,
-				format!("Component (`{}`) not reflectable", info.name()),
+				format!("component (`{}`) not reflectable", info.name()),
 			)
 		})?
 		.get_func)(refl)
@@ -102,23 +102,23 @@ fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &Compo
 	Ok(())
 }
 
-pub fn deserialize_entity(from: &mut impl Reader, world: &mut World) -> Result<(), io::Error> {
+pub fn deserialize_entity(mut from: &mut dyn io::Read, world: &mut World) -> Result<(), io::Error> {
 	let c = bincode::config::standard();
-	let id = bincode::decode_from_reader(&mut *from, c).map_err(map_dec_err)?;
+	let id = bincode::decode_from_std_read(&mut from, c).map_err(map_dec_err)?;
 	#[allow(deprecated)]
 	let mut en = world.get_or_spawn(bevy_ecs::entity::Entity::from_raw(id)).unwrap();
-	let count: u32 = bincode::decode_from_reader(&mut *from, c).map_err(map_dec_err)?;
+	let count: u32 = bincode::decode_from_std_read(&mut from, c).map_err(map_dec_err)?;
 
 	for _ in 0..count {
-		deserialize_component(&mut *from, &mut en)?;
+		deserialize_component(&mut from, &mut en)?;
 	}
 
 	Ok(())
 }
 
-fn deserialize_component(from: &mut impl Reader, en: &mut EntityWorldMut) -> Result<(), io::Error> {
+fn deserialize_component(mut from: &mut dyn io::Read, en: &mut EntityWorldMut) -> Result<(), io::Error> {
 	let c = bincode::config::standard();
-	let comp: CompenentDecoder = bincode::decode_from_reader(from, c).map_err(map_dec_err)?;
+	let comp: CompenentDecoder = bincode::decode_from_std_read(&mut from, c).map_err(map_dec_err)?;
 	comp.refl.insert(en, comp.obj.as_partial_reflect(), ty_reg());
 
 	Ok(())
@@ -149,7 +149,7 @@ impl Decode for CompenentDecoder {
 		let id = uuid_to_ty(uuid.0).ok_or_else(|| DecodeError::Io {
 			inner: io::Error::new(
 				io::ErrorKind::InvalidData,
-				format!("Unknown component UUID (`{}`) not registered", uuid.0),
+				format!("unknown component UUID (`{}`) not registered", uuid.0),
 			),
 			additional: 0,
 		})?;
@@ -157,7 +157,7 @@ impl Decode for CompenentDecoder {
 		let refl = reg.data::<ReflectComponent>().ok_or_else(|| DecodeError::Io {
 			inner: io::Error::new(
 				io::ErrorKind::InvalidData,
-				format!("Component (`{}`) not reflectable", reg.type_info().type_path()),
+				format!("component (`{}`) not reflectable", reg.type_info().type_path()),
 			),
 			additional: 0,
 		})?;
@@ -228,7 +228,7 @@ impl Encode for DynEncoder<'_> {
 				let se = ty_reg()
 					.get_type_data::<ReflectSerialize>(refl.type_id())
 					.ok_or_else(|| EncodeError::Io {
-						inner: io::Error::new(io::ErrorKind::InvalidData, "Opaque type not serializable"),
+						inner: io::Error::new(io::ErrorKind::InvalidData, "opaque type not serializable"),
 						index: 0,
 					})?;
 
@@ -254,7 +254,7 @@ impl DynDecoder {
 			TypeInfo::Struct(x) => {
 				let mut s = DynamicStruct::default();
 				for i in 0..x.field_len() {
-					let reg = ty_reg().get(x.field_at(i).unwrap().type_id()).unwrap();
+					let reg = ty_reg().get(x.field_at(i).unwrap().ty().id()).unwrap();
 					s.insert_boxed(x.field_names()[i], Self { reg }.decode(decoder)?);
 				}
 				self.reg
@@ -262,7 +262,7 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!("component (`{}`) not unreflectable", self.reg.type_info().type_path()),
 						),
 						additional: 0,
 					})?
@@ -272,7 +272,7 @@ impl DynDecoder {
 			TypeInfo::TupleStruct(x) => {
 				let mut s = DynamicTupleStruct::default();
 				for i in 0..x.field_len() {
-					let reg = ty_reg().get(x.field_at(i).unwrap().type_id()).unwrap();
+					let reg = ty_reg().get(x.field_at(i).unwrap().ty().id()).unwrap();
 					s.insert_boxed(Self { reg }.decode(decoder)?);
 				}
 				self.reg
@@ -280,7 +280,7 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!("component (`{}`) not unreflectable", self.reg.type_info().type_path()),
 						),
 						additional: 0,
 					})?
@@ -290,7 +290,7 @@ impl DynDecoder {
 			TypeInfo::Tuple(x) => {
 				let mut s = DynamicTuple::default();
 				for i in 0..x.field_len() {
-					let reg = ty_reg().get(x.field_at(i).unwrap().type_id()).unwrap();
+					let reg = ty_reg().get(x.field_at(i).unwrap().ty().id()).unwrap();
 					s.insert_boxed(Self { reg }.decode(decoder)?);
 				}
 				self.reg
@@ -298,7 +298,7 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!("component (`{}`) not unreflectable", self.reg.type_info().type_path()),
 						),
 						additional: 0,
 					})?
@@ -317,7 +317,11 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!(
+								"component (`{}`) not unreflectable ({:?})",
+								self.reg.type_info().type_path(),
+								self.reg.type_id()
+							),
 						),
 						additional: 0,
 					})?
@@ -335,7 +339,7 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!("component (`{}`) not unreflectable", self.reg.type_info().type_path()),
 						),
 						additional: 0,
 					})?
@@ -357,7 +361,7 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!("component (`{}`) not unreflectable", self.reg.type_info().type_path()),
 						),
 						additional: 0,
 					})?
@@ -376,7 +380,7 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!("component (`{}`) not unreflectable", self.reg.type_info().type_path()),
 						),
 						additional: 0,
 					})?
@@ -389,7 +393,7 @@ impl DynDecoder {
 					VariantInfo::Struct(x) => {
 						let mut s = DynamicStruct::default();
 						for i in 0..x.field_len() {
-							let reg = ty_reg().get(x.field_at(i).unwrap().type_id()).unwrap();
+							let reg = ty_reg().get(x.field_at(i).unwrap().ty().id()).unwrap();
 							s.insert_boxed(x.field_names()[i], Self { reg }.decode(decoder)?);
 						}
 						DynamicVariant::Struct(s)
@@ -397,7 +401,7 @@ impl DynDecoder {
 					VariantInfo::Tuple(x) => {
 						let mut s = DynamicTuple::default();
 						for i in 0..x.field_len() {
-							let reg = ty_reg().get(x.field_at(i).unwrap().type_id()).unwrap();
+							let reg = ty_reg().get(x.field_at(i).unwrap().ty().id()).unwrap();
 							s.insert_boxed(Self { reg }.decode(decoder)?);
 						}
 						DynamicVariant::Tuple(s)
@@ -410,7 +414,7 @@ impl DynDecoder {
 					.ok_or_else(|| DecodeError::Io {
 						inner: io::Error::new(
 							io::ErrorKind::InvalidData,
-							format!("Component (`{}`) not reflectable", self.reg.type_info().type_path()),
+							format!("component (`{}`) not unreflectable", self.reg.type_info().type_path()),
 						),
 						additional: 0,
 					})?

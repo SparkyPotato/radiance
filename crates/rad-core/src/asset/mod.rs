@@ -128,9 +128,7 @@ impl AssetRegistry {
 
 		let (desc, data) = self.find_asset(id)?;
 		let asset = (desc.load)(id, data)?;
-		self.cache
-			.write()
-			.insert(id, CacheStatus::Loaded(ARef::downgrade(&asset)));
+		self.cache.write().insert(id, CacheStatus::Loaded(asset.downgrade()));
 
 		Ok(asset)
 	}
@@ -166,6 +164,17 @@ pub trait AssetView {
 	fn seek_begin(&mut self) -> Result<(), io::Error>;
 
 	fn read_section(&mut self) -> Result<Box<dyn io::Read + '_>, io::Error>;
+}
+impl<T: ?Sized + AssetView> AssetView for Box<T> {
+	fn name(&self) -> &str { (**self).name() }
+
+	fn clear(&mut self) -> Result<(), io::Error> { (**self).clear() }
+
+	fn new_section(&mut self) -> Result<Box<dyn io::Write + '_>, io::Error> { (**self).new_section() }
+
+	fn seek_begin(&mut self) -> Result<(), io::Error> { (**self).seek_begin() }
+
+	fn read_section(&mut self) -> Result<Box<dyn io::Read + '_>, io::Error> { (**self).read_section() }
 }
 
 pub trait Asset: Any + Send + Sync {

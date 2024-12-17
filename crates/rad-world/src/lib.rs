@@ -12,7 +12,7 @@ pub use bevy_ecs::{
 };
 use bevy_ecs::{system::Resource, world::Mut};
 pub use bevy_reflect;
-use bevy_reflect::{reflect_trait, GetTypeRegistration};
+use bevy_reflect::{reflect_trait, FromType, GetTypeRegistration, Reflect, ReflectFromReflect, TypePath};
 pub use rad_core::{asset::Uuid, uuid};
 use rad_core::{
 	asset::{Asset, AssetView},
@@ -35,12 +35,16 @@ pub mod tick;
 pub mod transform;
 
 pub struct TypeRegistry {
-	inner: bevy_reflect::TypeRegistry,
+	pub inner: bevy_reflect::TypeRegistry,
 	uuid_map: FxHashMap<Uuid, TypeId>,
 }
 
 pub trait WorldBuilderExt {
 	fn component<T: RadComponent + GetTypeRegistration>(&mut self);
+
+	fn component_dep_type<T: Reflect + TypePath>(&mut self)
+	where
+		ReflectFromReflect: FromType<T>;
 }
 
 impl WorldBuilderExt for EngineBuilder {
@@ -49,6 +53,15 @@ impl WorldBuilderExt for EngineBuilder {
 		let uuid = T::uuid();
 		self.get_global::<TypeRegistry>().inner.register::<T>();
 		self.get_global::<TypeRegistry>().uuid_map.insert(uuid, ty);
+	}
+
+	fn component_dep_type<T: Reflect + TypePath>(&mut self)
+	where
+		ReflectFromReflect: FromType<T>,
+	{
+		self.get_global::<TypeRegistry>()
+			.inner
+			.register_type_data::<T, ReflectFromReflect>();
 	}
 }
 
@@ -141,7 +154,7 @@ impl Asset for World {
 		data.seek_begin()?;
 		let mut from = BufReader::new(data.read_section()?);
 
-		let count: u32 = bincode::decode_from_reader(&mut from, c).map_err(map_dec_err)?;
+		let count: u32 = bincode::decode_from_std_read(&mut from, c).map_err(map_dec_err)?;
 
 		let mut inner = bevy_ecs::world::World::new();
 		for _ in 0..count {

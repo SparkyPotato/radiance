@@ -14,6 +14,10 @@ enum DebugVis : u32 {
 	Normals,
 	Uvs,
 	Error,
+	BaseColor,
+	Roughness,
+	Metallic,
+	Emissive,
 }
 
 struct PushConstants {
@@ -147,7 +151,11 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 			break;
 		}
 		case DebugVis.Normals: {
-			col = abs(tri.normal());
+			let basis = tri.tbn_basis();
+			let norm = tri.instance.material->normal.get();
+			let z = f32x4(0.f, 0.f, 1.f, 0.f);
+			let n = norm.load(norm.pixel_of_uv(tri.uv()), z).xyz;
+			col = abs(mul(basis, n));
 			break;
 		}
 		case DebugVis.Uvs: {
@@ -155,11 +163,9 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 			break;
 		}
 		case DebugVis.Error: {
-			let instance = Constants.instances[p.meshlet.instance];
-			let meshlet = instance.meshlet(p.meshlet.node_offset);
 			let res = Constants.read.size();
-			let cull = Cull(Constants.camera, instance, 0, res, {}, {});
-			let error = cull.error_distance(meshlet.lod_bounds);
+			let cull = Cull(Constants.camera, tri.instance, 0, res, {}, {});
+			let error = cull.error_distance(tri.meshlet.lod_bounds);
 
 			let count = f32x2(25.f, 40.f);
 			let start = floor(input.uv * count) / count;
@@ -168,6 +174,34 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 			col = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255)) / 255.f;
 			let digit = print(input.uv, start, size, error, 0.f, 8.f);
 			col = select(digit, 0.f, col);
+			break;
+		}
+		case DebugVis.BaseColor: {
+			let mat = tri.instance.material;
+			let bc = mat->base_color.get();
+			let white = f32x4(1.f, 1.f, 1.f, 1.f);
+			col = (bc.load(bc.pixel_of_uv(tri.uv()), white) * mat->base_color_factor).xyz;
+			break;
+		}
+		case DebugVis.Roughness: {
+			let mat = tri.instance.material;
+			let mr = mat->metallic_roughness.get();
+			let r = mr.load(mr.pixel_of_uv(tri.uv()), 1.f).y * mat->roughness_factor;
+			col = f32x3(r, r, r);
+			break;
+		}
+		case DebugVis.Metallic: {
+			let mat = tri.instance.material;
+			let mr = mat->metallic_roughness.get();
+			let m = mr.load(mr.pixel_of_uv(tri.uv()), 1.f).x * mat->metallic_factor;
+			col = f32x3(m, m, m);
+			break;
+		}
+		case DebugVis.Emissive: {
+			let mat = tri.instance.material;
+			let bc = mat->emissive.get();
+			let white = f32x4(1.f, 1.f, 1.f, 1.f);
+			col = bc.load(bc.pixel_of_uv(tri.uv()), white).xyz * mat->emissive_factor;
 			break;
 		}
 	}

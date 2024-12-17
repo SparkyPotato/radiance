@@ -1,3 +1,5 @@
+#![feature(path_add_extension)]
+
 use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{graph::Frame, Result};
 use rad_renderer::RendererModule;

@@ -84,7 +84,9 @@ unsafe impl<T: NoUninit> Pod for GpuPtr<T> {}
 impl<T: NoUninit> GpuPtr<T> {
 	pub fn null() -> Self { Self(0, PhantomData) }
 
-	pub fn addr(&self) -> u64 { self.0 }
+	pub fn addr(self) -> u64 { self.0 }
+
+	pub fn offset(self, i: u64) -> Self { Self(self.0 + i * std::mem::size_of::<T>() as u64, PhantomData) }
 }
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]

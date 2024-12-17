@@ -38,6 +38,10 @@ pub enum DebugVis {
 	Normals,
 	Uvs,
 	Error,
+	BaseColor,
+	Roughness,
+	Metallic,
+	Emissive,
 }
 
 impl DebugVis {
@@ -52,6 +56,10 @@ impl DebugVis {
 			DebugVis::Normals => 4,
 			DebugVis::Uvs => 5,
 			DebugVis::Error => 6,
+			DebugVis::BaseColor => 7,
+			DebugVis::Roughness => 8,
+			DebugVis::Metallic => 9,
+			DebugVis::Emissive => 10,
 		}
 	}
 }

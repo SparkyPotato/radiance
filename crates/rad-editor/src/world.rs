@@ -41,7 +41,7 @@ impl WorldContext {
 	pub fn open_mesh(&mut self, id: AssetId) -> Result<(), io::Error> {
 		let mesh: ARef<Mesh> = Engine::get().asset(id)?;
 		self.edit = World::new();
-		self.edit.spawn_empty().insert(MeshComponent::new(mesh));
+		self.edit.spawn_empty().insert(MeshComponent::new(&[mesh]));
 		self.setup_world();
 
 		Ok(())

@@ -1,6 +1,6 @@
 #![feature(let_chains)]
 
-use rad_core::{Engine, EngineBuilder, Module};
+use rad_core::{asset::aref::ARef, Engine, EngineBuilder, Module};
 use rad_graph::{graph::Frame, Result};
 use rad_world::{
 	system::{DetectChanges, Query, Ref, RemovedComponents, ResMut, Resource, WorldId},
@@ -34,10 +34,12 @@ pub struct RendererModule;
 
 impl Module for RendererModule {
 	fn init(engine: &mut EngineBuilder) {
-		engine.asset::<assets::mesh::Mesh>();
 		engine.asset::<assets::image::Image>();
+		engine.asset::<assets::material::Material>();
+		engine.asset::<assets::mesh::Mesh>();
 
 		engine.component::<components::mesh::MeshComponent>();
+		engine.component_dep_type::<Vec<ARef<assets::mesh::Mesh>>>();
 		engine.component::<components::camera::CameraComponent>();
 		engine.component::<components::camera::PrimaryViewComponent>();
 

@@ -219,7 +219,7 @@ impl Image {
 		let _e = s.enter();
 
 		encoder_init();
-		let mut comp = Compressor::new(1);
+		let mut comp = Compressor::new(std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) as _);
 		let mut params = CompressorParams::new();
 		params.source_image_mut(0).init(
 			data.data,
