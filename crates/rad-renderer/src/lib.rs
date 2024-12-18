@@ -13,21 +13,22 @@ use rad_world::{
 };
 use tracing::warn;
 pub use vek;
-use vek::Mat4;
 
 use crate::{
 	components::{
 		camera::{CameraComponent, PrimaryViewComponent},
 		mesh::MeshComponent,
 	},
-	scene::{Scene, SceneReader, SceneUpdater},
+	scene::{map_transform, GpuTransform, Scene, SceneReader, SceneUpdater},
 };
 
 pub mod assets;
 pub mod components;
 pub mod debug;
 pub mod mesh;
+pub mod pt;
 mod scene;
+pub mod tonemap;
 mod util;
 
 pub struct RendererModule;
@@ -50,7 +51,7 @@ impl Module for RendererModule {
 
 #[derive(Copy, Clone)]
 pub struct PrimaryViewData {
-	view: Mat4<f32>,
+	transform: GpuTransform,
 	camera: CameraComponent,
 	scene: SceneReader,
 	id: WorldId,
@@ -59,7 +60,7 @@ pub struct PrimaryViewData {
 pub struct WorldRenderer {
 	scene: Scene,
 	camera: CameraComponent,
-	view: Mat4<f32>,
+	transform: GpuTransform,
 	id: Option<WorldId>,
 }
 impl Resource for WorldRenderer {}
@@ -69,7 +70,7 @@ impl WorldRenderer {
 		Ok(Self {
 			scene: Scene::new()?,
 			camera: CameraComponent::default(),
-			view: Mat4::identity(),
+			transform: GpuTransform::default(),
 			id: None,
 		})
 	}
@@ -85,7 +86,7 @@ impl WorldRenderer {
 			.update(frame, &mut self.scene, frame_index);
 
 		PrimaryViewData {
-			view: self.view,
+			transform: self.transform,
 			camera: self.camera,
 			scene,
 			id: self
@@ -127,7 +128,7 @@ fn find_primary_view(mut r: ResMut<WorldRenderer>, q: Query<(Ref<Transform>, Ref
 	let mut iter = q.iter();
 	if let Some((t, c)) = iter.next() {
 		r.camera = c.0;
-		r.view = t.into_matrix().inverted();
+		r.transform = map_transform(&t);
 	} else {
 		warn!("No primary view found, using default camera");
 	}

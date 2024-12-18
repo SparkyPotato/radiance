@@ -49,7 +49,7 @@ struct Init {
 		let instance = Constants.instances[p.instance];
 		this.mesh = instance.mesh;
 		this.meshlet = instance.meshlet(p.node_offset);
-		this.mvp = mul(Constants.camera[0].view_proj, instance.transform.mat());
+		this.mvp = mul(Constants.camera[0].view_proj(), instance.transform.mat());
 	}
 
 	VertexTransform transform(u32 gtid) {
@@ -94,14 +94,13 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 		let a = Pos[tri.x].xyz;
 		let b = Pos[tri.y].xyz;
 		let c = Pos[tri.z].xyz;
-		
+
 		var culled = false;
 		culled = culled || edge_fn(a.xy, b.xy, c.xy) <= 0.f;
 		let bmin = min3(a, b, c);
 		let bmax = max3(a, b, c);
 		let prec = 1.f / 256.f;
-		culled = culled || (round(bmin.x - prec) == round(bmax.x) 
-			            || round(bmin.y) == round(bmax.y + prec));
+		culled = culled || (round(bmin.x - prec) == round(bmax.x) || round(bmin.y) == round(bmax.y + prec));
 		let in_front_of_z = a.z > 0.f && b.z > 0.f && c.z > 0.f;
 		culled = culled && in_front_of_z;
 
@@ -165,7 +164,7 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 		let e012 = -w_x;
 		let oe = e012 < 0.f;
 		let ie012 = select(e012 != 0.f, 1.f / e012, 1e8);
-		let	width = maxv.x - minv.x;
+		let width = maxv.x - minv.x;
 		for (int y = minv.y; y <= maxv.y; y++) {
 			let cross_x = w_row * ie012;
 			let min_x2 = select(oe, cross_x, 0.f);

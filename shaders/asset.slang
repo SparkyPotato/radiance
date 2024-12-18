@@ -76,6 +76,14 @@ public struct Transform {
 	public f32x4x4 mat() {
 		return mul(this.trans_mat(), mul(this.rot_mat(), this.scale_mat()));
 	}
+
+	public f32x4x4 inv_mat() {
+		var inverted = this;
+		inverted.translation *= -1.f;
+		inverted.rotation = f32x4(-inverted.rotation.xyz, inverted.rotation.w);
+		inverted.scale = 1.f / inverted.scale;
+		return mul(inverted.scale_mat(), mul(inverted.rot_mat(), inverted.trans_mat()));
+	}
 }
 
 public struct Material {
@@ -156,8 +164,46 @@ public struct Meshlet {
 }
 
 public struct Camera {
-	public f32x4x4 view;
-	public f32x4x4 view_proj;
+	public Transform transform;
+	public f32 w;
 	public f32 h;
 	public f32 near;
+
+	public f32x4x4 proj() {
+		// clang-format off
+		return {
+			w,   0.f, 0.f, 0.f,
+			0.f, h,   0.f, 0.f,
+			0.f, 0.f, 0.f, near,
+			0.f, 0.f, 1.f, 0.f,
+		};
+		// clang-format on
+	}
+
+	public f32x4x4 view() {
+		return this.transform.inv_mat();
+	}
+
+	public f32x4x4 inv_proj() {
+		// clang-format off
+		return {
+			1.f / w, 0.f,     0.f,        0.f,
+			0.f,     1.f / h, 0.f,        0.f,
+			0.f,     0.f,     0.f,        1.f,
+			0.f,     0.f,     1.f / near, 0.f,
+		};
+		// clang-format on
+	}
+
+	public f32x4x4 inv_view() {
+		return this.transform.mat();
+	}
+
+	public f32x4x4 view_proj() {
+		return mul(this.proj(), this.view());
+	}
+
+	public f32x4x4 inv_view_proj() {
+		return mul(this.inv_view(), this.inv_proj());
+	}
 }

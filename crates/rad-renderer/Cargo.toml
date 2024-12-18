@@ -16,6 +16,7 @@ crossbeam-channel = { workspace = true }
 meshopt = { workspace = true }
 metis = { workspace = true }
 parking_lot = { workspace = true }
+rand = { workspace = true }
 rayon = { workspace = true }
 rustc-hash = { workspace = true }
 static_assertions = { workspace = true }

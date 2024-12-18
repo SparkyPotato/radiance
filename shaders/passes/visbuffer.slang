@@ -134,6 +134,7 @@ public struct VisBufferReader {
 }
 
 // http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/
+// TODO: all in model space
 public struct DecodedTri {
 	public Instance instance;
 	public Meshlet meshlet;
@@ -147,7 +148,7 @@ public struct DecodedTri {
 	public __init(Instance* instances, Camera cam, f32x2 uv, u32x2 size, VisBufferPixel p) {
 		this.instance = instances[p.meshlet.instance];
 		this.meshlet = instance.meshlet(p.meshlet.node_offset);
-		let mvp = mul(cam.view_proj, this.instance.transform.mat());
+		let mvp = mul(cam.view_proj(), this.instance.transform.mat());
 
 		let t = this.meshlet.tri(this.instance.mesh, p.raw.triangle_id);
 		this.v0 = this.meshlet.vertex(this.instance.mesh, t.x);

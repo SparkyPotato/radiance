@@ -288,9 +288,9 @@ public struct Cull {
 		ret.scale = max3(transform.scale.x, transform.scale.y, transform.scale.z);
 		ret.min_scale = min3(transform.scale.x, transform.scale.y, transform.scale.z);
 
-		ret.curr_mv = mul(camera[0].view, trans_mat);
-		ret.curr_mvp = mul(camera[0].view_proj, trans_mat);
-		ret.prev_mvp = mul(occ_camera(camera).view_proj, occ_transform(instance, frame).mat());
+		ret.curr_mv = mul(camera[0].view(), trans_mat);
+		ret.curr_mvp = mul(camera[0].view_proj(), trans_mat);
+		ret.prev_mvp = mul(occ_camera(camera).view_proj(), occ_transform(instance, frame).mat());
 
 		ret.screen = f32x2(res);
 		ret.h = camera[0].h;

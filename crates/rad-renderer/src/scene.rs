@@ -356,10 +356,10 @@ impl SceneUpdater {
 				usages: &[BufferUsageType::AccelerationStructureBuildScratch],
 			},
 		);
-		pass.resource(
-			ExternalBuffer {
-				handle: as_.buf_handle(),
-			},
+		let addr = as_.addr();
+		let handle = as_.buf_handle();
+		let as_buf = pass.resource(
+			ExternalBuffer { handle },
 			BufferUsage {
 				usages: &[BufferUsageType::AccelerationStructureBuildWrite],
 			},
@@ -383,6 +383,8 @@ impl SceneUpdater {
 
 		SceneReader {
 			instances,
+			as_: as_buf,
+			as_offset: addr - handle.addr,
 			instance_count: *len,
 			max_depth: depth_refs.first_key_value().map(|(InvertOrd(d), _)| *d).unwrap_or(0),
 			frame: frame_index,
@@ -393,6 +395,8 @@ impl SceneUpdater {
 #[derive(Copy, Clone)]
 pub struct SceneReader {
 	pub instances: Res<BufferHandle>,
+	pub as_: Res<BufferHandle>,
+	pub as_offset: u64,
 	pub instance_count: u32,
 	pub max_depth: u32,
 	pub frame: u64,
@@ -478,7 +482,7 @@ fn map_aabb(aabb: Aabb<f32>) -> GpuAabb {
 	}
 }
 
-fn map_transform(transform: &Transform) -> GpuTransform {
+pub(crate) fn map_transform(transform: &Transform) -> GpuTransform {
 	GpuTransform {
 		position: transform.position,
 		rotation: transform.rotation,

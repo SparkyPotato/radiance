@@ -8,13 +8,13 @@ use rad_graph::{
 	util::{compute::ComputePass, render::RenderPass},
 	Result,
 };
-use vek::{Mat4, Vec2};
+use vek::Vec2;
 
 pub use crate::mesh::setup::{DebugRes, DebugResId};
 use crate::{
 	components::camera::CameraComponent,
 	mesh::{bvh::BvhCull, hzb::HzbGen, instance::InstanceCull, meshlet::MeshletCull, setup::Setup},
-	scene::{GpuInstance, SceneReader},
+	scene::{GpuInstance, GpuTransform, SceneReader},
 	PrimaryViewData,
 };
 
@@ -122,20 +122,20 @@ pub struct VisBuffer {
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 pub struct CameraData {
-	view: Mat4<f32>,
-	view_proj: Mat4<f32>,
+	transform: GpuTransform,
+	w: f32,
 	h: f32,
 	near: f32,
 }
 
 impl CameraData {
-	fn new(aspect: f32, camera: CameraComponent, view: Mat4<f32>) -> Self {
-		let proj = camera.projection(aspect);
-		let view_proj = proj * view;
+	pub fn new(aspect: f32, camera: CameraComponent, transform: GpuTransform) -> Self {
+		let h = (camera.fov / 2.0).tan().recip();
+		let w = h / aspect;
 		Self {
-			view,
-			view_proj,
-			h: proj.cols.y.y,
+			transform,
+			w,
+			h,
 			near: camera.near,
 		}
 	}

@@ -2,7 +2,9 @@ use rad_core::Engine;
 use rad_graph::{graph::Frame, Result};
 use rad_renderer::{
 	debug::mesh::DebugMesh,
-	mesh::{RenderInfo, VisBuffer},
+	mesh::{self, VisBuffer},
+	pt::{self, PathTracer},
+	tonemap::aces::AcesTonemap,
 	vek::Vec2,
 };
 use rad_ui::{
@@ -14,7 +16,7 @@ use rad_window::winit::{event::WindowEvent, window::Window};
 use crate::{
 	render::{
 		camera::{CameraController, Mode},
-		debug::DebugWindow,
+		debug::{DebugWindow, RenderMode},
 	},
 	world::WorldContext,
 };
@@ -25,6 +27,8 @@ mod debug;
 pub struct Renderer {
 	pub debug_window: DebugWindow,
 	visbuffer: VisBuffer,
+	pt: PathTracer,
+	aces: AcesTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
 	frame: u64,
@@ -36,6 +40,8 @@ impl Renderer {
 		Ok(Self {
 			debug_window: DebugWindow::new(),
 			visbuffer: VisBuffer::new(device)?,
+			pt: PathTracer::new(device)?,
+			aces: AcesTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
 			frame: 0,
@@ -66,24 +72,35 @@ impl Renderer {
 
 				let vis = self.debug_window.debug_vis();
 				let data = world.renderer().update(frame, self.frame);
-				let visbuffer = self.visbuffer.run(
-					frame,
-					RenderInfo {
-						data,
-						size: Vec2::new(size.x as u32, size.y as u32),
-						debug_info: vis.requires_debug_info(),
+
+				let (img, stats) = match self.debug_window.render_mode() {
+					RenderMode::Path => {
+						let hdr = self.pt.run(
+							frame,
+							pt::RenderInfo {
+								data,
+								size: Vec2::new(size.x as u32, size.y as u32),
+							},
+						);
+						let img = self.aces.run(frame, hdr);
+						(img, None)
 					},
-				);
-				let img = self.debug.run(
-					frame,
-					vis,
-					visbuffer,
-					// self.picker.get_sel().into_iter(),
-					[].into_iter(),
-				);
+					RenderMode::Debug => {
+						let visbuffer = self.visbuffer.run(
+							frame,
+							mesh::RenderInfo {
+								data,
+								size: Vec2::new(size.x as u32, size.y as u32),
+								debug_info: vis.requires_debug_info(),
+							},
+						);
+						let img = self.debug.run(frame, vis, visbuffer, [].into_iter());
+						(img, Some(visbuffer.stats))
+					},
+				};
 				ui.put(rect, Image::new((to_texture_id(img), size)));
 
-				visbuffer.stats
+				stats
 			})
 			.inner;
 
