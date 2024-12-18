@@ -47,7 +47,7 @@ void update(u32 id: SV_DispatchThreadID) {
 		case UpdateType.Add: {
 			*instance = Instance(update.data);
 			as_instance->transform = instance->transform.vk_mat();
-			as_instance->instanceCustomIndexAndMask = (id << 24) | 0xff;
+			as_instance->instanceCustomIndexAndMask = (0xff << 24) | id;
 			as_instance->instanceShaderBindingTableRecordOffsetAndFlags = 0;
 			as_instance->accelerationStructureReference = update.data.as;
 			break;
@@ -60,6 +60,8 @@ void update(u32 id: SV_DispatchThreadID) {
 		}
 		case UpdateType.ChangeMesh: {
 			instance->mesh = update.data.mesh;
+			instance->raw_mesh = update.data.raw_mesh;
+			instance->raw_vertex_count = update.data.raw_vertex_count;
 			instance->material = update.data.material;
 			as_instance->accelerationStructureReference = update.data.as;
 			break;

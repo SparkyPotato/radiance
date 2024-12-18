@@ -10,13 +10,21 @@ use rad_graph::{
 	util::render::FullscreenPass,
 	Result,
 };
+use rad_world::system::WorldId;
 use rand::{thread_rng, RngCore};
 use vek::Vec2;
 
-use crate::{mesh::CameraData, scene::GpuInstance, PrimaryViewData};
+use crate::{
+	mesh::CameraData,
+	scene::{GpuInstance, GpuTransform},
+	PrimaryViewData,
+};
 
+// TODO: reset on world change.
 pub struct PathTracer {
 	pass: FullscreenPass<PushConstants>,
+	cached: Option<(WorldId, GpuTransform)>,
+	samples: u32,
 }
 
 #[derive(Clone)]
@@ -33,6 +41,8 @@ struct PushConstants {
 	out: StorageImageId,
 	seed: u32,
 	as_: GpuPtr<u8>,
+	samples: u32,
+	_pad: u32,
 }
 
 impl PathTracer {
@@ -46,6 +56,8 @@ impl PathTracer {
 				},
 				&[],
 			)?,
+			cached: None,
+			samples: 0,
 		})
 	}
 
@@ -77,7 +89,7 @@ impl PathTracer {
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
-				persist: None,
+				persist: Some("path tracer accum"),
 			},
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
@@ -89,6 +101,13 @@ impl PathTracer {
 				subresource: Subresource::default(),
 			},
 		);
+
+		if let Some(c) = self.cached {
+			if c.0 != info.data.id || c.1 != info.data.transform {
+				self.samples = 0;
+			}
+		}
+		self.cached = Some((info.data.id, info.data.transform));
 
 		pass.build(move |mut pass| {
 			let out = pass.get(out);
@@ -113,9 +132,12 @@ impl PathTracer {
 					out: out.storage_id.unwrap(),
 					seed: thread_rng().next_u32(),
 					as_,
+					samples: self.samples,
+					_pad: 0,
 				},
 				vk::Extent2D::default().width(out.size.width).height(out.size.height),
 			);
+			self.samples += 1;
 		});
 
 		out

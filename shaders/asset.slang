@@ -105,6 +105,7 @@ public struct Instance {
 	public u8* mesh;
 	public Vertex* raw_mesh;
 	public Material* material;
+	public u32 raw_vertex_count;
 
 	public __init(NewInstance instance) {
 		this.transform = instance.transform;
@@ -113,6 +114,7 @@ public struct Instance {
 		this.mesh = instance.mesh;
 		this.raw_mesh = instance.raw_mesh;
 		this.material = instance.material;
+		this.raw_vertex_count = instance.raw_vertex_count;
 		this.update_frame = 0;
 	}
 
@@ -140,6 +142,7 @@ public struct NewInstance {
 	public Vertex* raw_mesh;
 	public Material* material;
 	public u64 as;
+	public u32 raw_vertex_count;
 }
 
 public struct Meshlet {
@@ -205,5 +208,21 @@ public struct Camera {
 
 	public f32x4x4 inv_view_proj() {
 		return mul(this.inv_view(), this.inv_proj());
+	}
+
+	f32x4x4 sus_perspective_matrix() {
+		// clang-format off
+		return f32x4x4(
+			1.f / w, 0.f, 0.f, 0.f,
+			0.f, 1.f / h, 0.f, 0.f,
+			0.f, 0.f, 0.997893f, -0.00110877f,
+			0.f, 0.f, -0.110877f, 0.110988f
+		);
+		// clang-format on
+	}
+
+	public f32x3 camera_ray(f32x2 uv) {
+		let clip = f32x2(uv.x, -uv.y) * 2.f - 1.f;
+		return normalize(mul(this.sus_perspective_matrix(), f32x4(clip, 1.f, 1.f)).xyz);
 	}
 }

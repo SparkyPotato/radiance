@@ -28,7 +28,7 @@ use crate::{
 	components::mesh::MeshComponent,
 };
 
-#[derive(Copy, Clone, Default, NoUninit)]
+#[derive(Copy, Clone, Default, PartialEq, NoUninit)]
 #[repr(C)]
 pub struct GpuTransform {
 	pub position: Vec3<f32>,
@@ -52,13 +52,15 @@ pub struct GpuMaterial {
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuInstance {
-	pub transform: GpuTransform,
-	pub prev_transform: GpuTransform,
-	pub aabb: GpuAabb,
-	pub update_frame: u64,
-	pub mesh: GpuPtr<u8>,
-	pub raw_mesh: GpuPtr<GpuVertex>,
-	pub material: GpuPtr<GpuMaterial>,
+	transform: GpuTransform,
+	prev_transform: GpuTransform,
+	aabb: GpuAabb,
+	update_frame: u64,
+	mesh: GpuPtr<u8>,
+	raw_mesh: GpuPtr<GpuVertex>,
+	material: GpuPtr<GpuMaterial>,
+	raw_vertex_count: u32,
+	_pad: u32,
 }
 
 #[derive(Copy, Clone, Default, NoUninit)]
@@ -70,6 +72,8 @@ struct GpuNewInstance {
 	raw_mesh: GpuPtr<GpuVertex>,
 	material: GpuPtr<GpuMaterial>,
 	as_: u64,
+	raw_vertex_count: u32,
+	_pad: u32,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -361,20 +365,24 @@ impl SceneUpdater {
 		let as_buf = pass.resource(
 			ExternalBuffer { handle },
 			BufferUsage {
-				usages: &[BufferUsageType::AccelerationStructureBuildWrite],
+				usages: &[
+					BufferUsageType::AccelerationStructureBuildRead,
+					BufferUsageType::AccelerationStructureBuildWrite,
+				],
 			},
 		);
 		pass.build(move |mut pass| unsafe {
-			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-				.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
-				.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-				.geometries(&geo);
-			info.dst_acceleration_structure = as_.handle();
-			info.scratch_data.device_address = pass.get(scratch).ptr::<u8>().addr();
 			pass.device.as_ext().cmd_build_acceleration_structures(
 				pass.buf,
-				&[info],
+				&[vk::AccelerationStructureBuildGeometryInfoKHR::default()
+					.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
+					.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+					.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+					.geometries(&geo)
+					.dst_acceleration_structure(as_.handle())
+					.scratch_data(vk::DeviceOrHostAddressKHR {
+						device_address: pass.get(scratch).ptr::<u8>().addr(),
+					})],
 				&[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
 					.primitive_count(count)
 					.primitive_offset(0)]],
@@ -538,6 +546,8 @@ impl Scene {
 						raw_mesh: m.raw_gpu_ptr(),
 						as_: m.as_addr(),
 						material,
+						raw_vertex_count: m.raw_vertex_count(),
+						_pad: 0,
 					},
 				});
 				self.len += 1;
@@ -573,6 +583,8 @@ impl Scene {
 					raw_mesh: GpuPtr::null(),
 					as_: 0,
 					material: GpuPtr::null(),
+					raw_vertex_count: 0,
+					_pad: 0,
 				},
 			});
 			self.len -= 1;
@@ -604,6 +616,8 @@ impl Scene {
 					raw_mesh: m.raw_gpu_ptr(),
 					as_: m.as_addr(),
 					material,
+					raw_vertex_count: m.raw_vertex_count(),
+					_pad: 0,
 				},
 			});
 
@@ -638,6 +652,8 @@ impl Scene {
 					raw_mesh: m.raw_gpu_ptr(),
 					as_: m.as_addr(),
 					material,
+					raw_vertex_count: m.raw_vertex_count(),
+					_pad: 0,
 				},
 			});
 
@@ -659,6 +675,8 @@ impl Scene {
 					raw_mesh: GpuPtr::null(),
 					as_: 0,
 					material: GpuPtr::null(),
+					raw_vertex_count: 0,
+					_pad: 0,
 				},
 			});
 		}
