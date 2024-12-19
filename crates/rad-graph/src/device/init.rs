@@ -384,10 +384,10 @@ impl<'a> DeviceBuilder<'a> {
 						// 	let rt_features = &mut *(next as *mut vk::PhysicalDeviceRayTracingPipelineFeaturesKHR);
 						// 	rt_features.ray_tracing_pipeline = true as _;
 						// },
-						// vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => {
-						// 	let rq_features = &mut *(next as *mut vk::PhysicalDeviceRayQueryFeaturesKHR);
-						// 	rq_features.ray_query = true as _;
-						// },
+						vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => {
+							let rq_features = &mut *(next as *mut vk::PhysicalDeviceRayQueryFeaturesKHR);
+							rq_features.ray_query = true as _;
+						},
 						vk::PhysicalDeviceMaintenance5FeaturesKHR::STRUCTURE_TYPE => {
 							let maint5_features = &mut *(next as *mut vk::PhysicalDeviceMaintenance5FeaturesKHR);
 							maint5_features.maintenance5 = true as _;
@@ -451,11 +451,12 @@ impl<'a> DeviceBuilder<'a> {
 		extensions.extend([
 			khr::swapchain::NAME,
 			khr::acceleration_structure::NAME,
+			khr::ray_query::NAME,
 			// khr::ray_tracing_pipeline::NAME,
 			// khr::ray_tracing_maintenance1::NAME,
-			// khr::deferred_host_operations::NAME,
-			// khr::maintenance5::NAME,
-			// khr::maintenance6::NAME,
+			khr::deferred_host_operations::NAME,
+			khr::maintenance5::NAME,
+			khr::maintenance6::NAME,
 		]);
 		extensions
 	}

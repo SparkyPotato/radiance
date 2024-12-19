@@ -373,7 +373,7 @@ impl<'graph> ResourceAliaser<'graph> {
 						let flags = data
 							.usages
 							.values()
-							.any(|u| u.format != data.desc.format)
+							.any(|u| u.format != vk::Format::UNDEFINED && u.format != data.desc.format)
 							.then_some(vk::ImageCreateFlags::MUTABLE_FORMAT)
 							.unwrap_or_default();
 						let desc = crate::resource::ImageDescUnnamed {

@@ -18,7 +18,28 @@ struct PushConstants {
 [vk::push_constant]
 PushConstants Constants;
 
-RayDesc primary_ray(inout Rng rng, u32x2 pix) {
+struct Ray {
+	f32x3 origin;
+	f32x3 dir;
+	f32 t;
+
+	__init(f32x3 origin, f32x3 dir, f32 t = 1e10f) {
+		this.origin = origin;
+		this.dir = dir;
+		this.t = t;
+	}
+
+	RayDesc to_rt() {
+		RayDesc r;
+		r.Origin = this.origin;
+		r.Direction = this.dir;
+		r.TMin = 1e-5f;
+		r.TMax = this.t;
+		return r;
+	}
+}
+
+Ray primary_ray(inout Rng rng, u32x2 pix) {
 	let size = Constants.output.size();
 	let uv = (f32x2(pix) + rng.sample2()) / f32x2(size);
 	let clip = f32x2(uv.x, uv.y) * 2.f - 1.f;
@@ -26,34 +47,49 @@ RayDesc primary_ray(inout Rng rng, u32x2 pix) {
 	let origin = mul(cam.inv_view(), f32x4(0.f, 0.f, 0.f, 1.f)).xyz;
 	let view_dir = normalize(mul(cam.inv_proj(), f32x4(clip.x, -clip.y, 1.f, 1.f)).xyz);
 	let dir = mul(cam.inv_view(), f32x4(view_dir, 0.f)).xyz;
-	return ray(origin, dir);
+	return Ray(origin, dir);
 }
 
-RayDesc ray(f32x3 origin, f32x3 wi) {
-	RayDesc r;
-	r.Origin = origin;
-	r.Direction = wi;
-	r.TMin = 1e-5f;
-	r.TMax = 1e10f;
-	return r;
-}
+struct Bsdf : Brdf {
+	Lambertian lambert;
 
-bool is_unshadowed(RayDesc ray) {
-	RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
-	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray);
-	q.Proceed();
-	return q.CommittedStatus() == COMMITTED_NOTHING;
+	__init(f32x3 base_color) {
+		this.lambert = Lambertian(base_color);
+	}
+	
+	f32x3 eval(f32x3 wo, f32x3 wi) {
+		return this.lambert.eval(wo, wi);
+	}
+
+	BrdfSample sample(inout Rng rng, f32x3 wo) {
+		return this.lambert.sample(rng, wo);
+	}
 }
 
 struct Hit {
 	f32x3 position;
 	f32x3 normal;
-	f32x3 base_color;
+	f32x3 emissive;
+	f32x3x3 to_shading_basis;
+	f32x3x3 from_shading_basis;
+	Bsdf bsdf;
+
+	f32x3 ray_origin() {
+		return this.position + this.normal * 1e-5f;
+	}
+
+	f32x3 to_shading(f32x3 x) {
+		return mul(this.to_shading_basis, x);
+	}
+
+	f32x3 from_shading(f32x3 x) {
+		return mul(this.from_shading_basis, x);
+	}
 }
 
-Optional<Hit> trace_ray(RayDesc ray) {
+Optional<Hit> trace_ray(Ray ray) {
 	RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
-	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray);
+	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray.to_rt());
 	while (q.Proceed());
 	if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
 		Hit h;
@@ -72,24 +108,98 @@ Optional<Hit> trace_ray(RayDesc ray) {
 		let uv = bary.x * v0.uv + bary.y * v1.uv + bary.z * v2.uv;
 		let tmat = instance.transform.mat();
 		let position = mul(tmat, f32x4(bary.x * v0.position + bary.y * v1.position + bary.z * v2.position, 1.f)).xyz;
-		let normal = mul(tmat, f32x4(bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal, 0.f)).xyz;
+		let normal = normalize(mul(tmat, f32x4(bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal, 0.f)).xyz);
 
 		let bc = mat->base_color.get();
 		let mr = mat->metallic_roughness.get();
 		let nm = mat->normal.get();
 		let em = mat->emissive.get();
 		let white = f32x4(1.f);
+		let base_color = (bc.load(bc.pixel_of_uv(uv), white) * mat->base_color_factor).xyz;
 
 		h.position = position;
-		h.normal = normal;
-		h.base_color = (bc.load(bc.pixel_of_uv(uv), white) * mat->base_color_factor).xyz;
+		h.normal = f32x3(0.f, 0.f, 1.f);
+		h.emissive = f32x3(0.f);
+		h.from_shading_basis = gen_basis(normal);
+		h.to_shading_basis = transpose(h.from_shading_basis);
+		h.bsdf = Bsdf(base_color);
 		return h;
 	} else
 		return none;
 }
 
+struct LightSample {
+	f32x3 L;
+	f32x3 wi;
+	f32 t;
+	f32 pdf;
+}
+
 f32x3 sample_sky() {
-	return f32x3(0.43f, 0.61f, 0.92f) * 3.f;
+	return f32x3(0.43f, 0.61f, 0.92f) * 2.f;
+}
+
+LightSample sample_light(inout Rng rng, Hit hit) {
+	let L = sample_sky();
+	let wi = rng.sample_cos_hemi();
+	let pdf = wi.z / PI;
+	return { L, wi, 1e10f, pdf };
+}
+
+bool is_unshadowed(Hit hit, LightSample ls) {
+	let ray = Ray(hit.ray_origin(), hit.from_shading(ls.wi), ls.t);
+	RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
+	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray.to_rt());
+	q.Proceed();
+	return q.CommittedStatus() == COMMITTED_NOTHING;
+}
+
+f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
+	let ls = sample_light(rng, hit);
+	if (any(ls.L <= 0.f) || ls.pdf <= 0.f) return 0.f;
+	let f = hit.bsdf.eval(wo, ls.wi) * abs(dot(ls.wi, hit.normal));
+	if (any(f <= 0.f)) return 0.f;
+	let unshadowed = is_unshadowed(hit, ls);
+	return f32(unshadowed) * f * ls.L / ls.pdf;
+}
+
+struct BsdfEstimate {
+	f32x3 b;
+	Ray r;
+}
+
+BsdfEstimate estimate_with_bsdf_sample(inout Rng rng, Hit hit, f32x3 wo) {
+	let bsdf = hit.bsdf.sample(rng, wo);
+	let b = bsdf.L * abs(dot(bsdf.wi, hit.normal)) / bsdf.pdf;
+	let r = Ray(hit.ray_origin(), hit.from_shading(bsdf.wi));
+	return { b, r };
+}
+
+f32x3 li(inout Rng rng, Ray ray) {
+	f32x3 L = f32x3(0.f);
+	f32x3 b = f32x3(1.f);
+	var specular = true;
+
+	for (int i = 0; i < 10; i++) {
+		let h = trace_ray(ray);
+		if (!h.hasValue) {
+			if (specular)
+				L += b * sample_sky();
+			break;
+		}
+		let hit = h.value;
+
+		if (specular)
+			L += b * hit.emissive;
+
+		let wo = hit.to_shading(-ray.dir);
+		L += b * estimate_with_light_sample(rng, hit, wo);
+		let es = estimate_with_bsdf_sample(rng, hit, wo);
+		b *= es.b;
+		ray = es.r;
+	}
+
+	return L;
 }
 
 [shader("pixel")]
@@ -97,25 +207,12 @@ void main(ScreenOutput input) {
 	let pix = Constants.output.pixel_of_uv(input.uv);
 	var rng = Constants.rng.init_at(pix);
 
-	f32x3 ret = 0.f;
-	for (int i = 0; i < 20; i++) {
-		if (let hit = trace_ray(primary_ray(rng, pix))) {
-			let brdf = Lambertian(hit.base_color);
-			let sample = brdf.sample(rng, f32x3(0.f, 0.f, 0.f));
-			let wi_w = mul(gen_basis(hit.normal), sample.sample.wi);
-			if (is_unshadowed(ray(hit.position, wi_w))) {
-				ret += sample.sample.color * sample_sky() / sample.pdf;
-			}
-		} else {
-			ret += sample_sky();
-		}
-	}
+	let r = primary_ray(rng, pix);
+	f32x3 ret = li(rng, r);
 
 	let prev = Constants.output.load(pix);
-	let curr = ret / 20.f;
 	let n = f32(Constants.samples);
-	let n1 = n + 1.f;
-	Constants.output.store(pix, prev * n / n1 + curr / n1);
+	Constants.output.store(pix, lerp(prev, ret, 1.f / (n + 1.f)));
 }
 
 f32x3x3 gen_basis(f32x3 z) {

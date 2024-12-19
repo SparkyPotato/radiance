@@ -4,14 +4,15 @@ import graph;
 import graph.util.rng;
 
 public struct BrdfSample {
-	public f32x3 color;
+	public f32x3 L;
 	public f32x3 wi;
+	public f32 pdf;
 }
 
 public interface Brdf {
 	f32x3 eval(f32x3 wo, f32x3 wi);
 
-	Sample<BrdfSample> sample(inout Rng rng, f32x3 wo);
+	BrdfSample sample(inout Rng rng, f32x3 wo);
 }
 
 // Resources:
@@ -39,12 +40,11 @@ public struct Lambertian : Brdf {
 		return this.base_color / PI;
 	}
 
-	public Sample<BrdfSample> sample(inout Rng rng, f32x3 wo) {
+	public BrdfSample sample(inout Rng rng, f32x3 wo) {
 		let wi = rng.sample_cos_hemi();
-		// let wi = f32x3(0.f, 0.f, 1.f);
 		let pdf = wi.z / PI;
-		let color = this.eval(wo, wi);
-		return { { color, wi }, pdf };
+		let L = this.eval(wo, wi);
+		return { L, wi, pdf };
 	}
 }
 

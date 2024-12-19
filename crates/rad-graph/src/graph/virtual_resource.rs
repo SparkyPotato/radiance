@@ -294,19 +294,16 @@ impl VirtualResource for ImageView {
 						} else {
 							usage.format
 						},
-						usage: {
-							let mut u = ImageViewUsage::None;
-							for i in usage.usages.iter() {
-								u = u | match i {
-									ImageUsageType::ShaderStorageRead(_) => ImageViewUsage::Storage,
-									ImageUsageType::ShaderStorageWrite(_) => ImageViewUsage::Storage,
-									ImageUsageType::ShaderReadSampledImage(_) => ImageViewUsage::Sampled,
-									ImageUsageType::General => ImageViewUsage::Both,
-									_ => ImageViewUsage::None,
-								};
+						usage: usage.usages.iter().fold(ImageViewUsage::None, |u, i| {
+							u | match i {
+								ImageUsageType::ShaderStorageRead(_) | ImageUsageType::ShaderStorageWrite(_) => {
+									ImageViewUsage::Storage
+								},
+								ImageUsageType::ShaderReadSampledImage(_) => ImageViewUsage::Sampled,
+								ImageUsageType::General => ImageViewUsage::Both,
+								_ => ImageViewUsage::None,
 							}
-							u
-						},
+						}),
 						subresource: usage.subresource,
 					},
 				)

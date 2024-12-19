@@ -20,10 +20,10 @@ use crate::{
 	PrimaryViewData,
 };
 
-// TODO: reset on world change.
+// TODO: reset on world edit.
 pub struct PathTracer {
 	pass: FullscreenPass<PushConstants>,
-	cached: Option<(WorldId, GpuTransform)>,
+	cached: Option<(WorldId, GpuTransform, Vec2<u32>)>,
 	samples: u32,
 }
 
@@ -80,7 +80,7 @@ impl PathTracer {
 
 		let out = pass.resource(
 			ImageDesc {
-				format: vk::Format::B10G11R11_UFLOAT_PACK32,
+				format: vk::Format::R32G32B32A32_SFLOAT,
 				size: vk::Extent3D {
 					width: info.size.x,
 					height: info.size.y,
@@ -103,13 +103,16 @@ impl PathTracer {
 		);
 
 		if let Some(c) = self.cached {
-			if c.0 != info.data.id || c.1 != info.data.transform {
+			if c.0 != info.data.id || c.1 != info.data.transform || c.2 != info.size {
 				self.samples = 0;
 			}
 		}
-		self.cached = Some((info.data.id, info.data.transform));
+		self.cached = Some((info.data.id, info.data.transform, info.size));
 
 		pass.build(move |mut pass| {
+			if pass.is_uninit(out) {
+				self.samples = 0;
+			}
 			let out = pass.get(out);
 			let as_ = pass
 				.get(info.data.scene.as_)

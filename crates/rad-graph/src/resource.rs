@@ -181,7 +181,7 @@ impl Resource for Buffer {
 						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
 						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
 						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
-						| vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
+						// | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
 				)
 				.sharing_mode(vk::SharingMode::CONCURRENT);
 
