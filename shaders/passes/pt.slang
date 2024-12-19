@@ -50,29 +50,13 @@ Ray primary_ray(inout Rng rng, u32x2 pix) {
 	return Ray(origin, dir);
 }
 
-struct Bsdf : Brdf {
-	Lambertian lambert;
-
-	__init(f32x3 base_color) {
-		this.lambert = Lambertian(base_color);
-	}
-	
-	f32x3 eval(f32x3 wo, f32x3 wi) {
-		return this.lambert.eval(wo, wi);
-	}
-
-	BrdfSample sample(inout Rng rng, f32x3 wo) {
-		return this.lambert.sample(rng, wo);
-	}
-}
-
 struct Hit {
 	f32x3 position;
 	f32x3 normal;
 	f32x3 emissive;
 	f32x3x3 to_shading_basis;
 	f32x3x3 from_shading_basis;
-	Bsdf bsdf;
+	ShadingParams params;
 
 	f32x3 ray_origin() {
 		return this.position + this.normal * 1e-5f;
@@ -116,13 +100,20 @@ Optional<Hit> trace_ray(Ray ray) {
 		let em = mat->emissive.get();
 		let white = f32x4(1.f);
 		let base_color = (bc.load(bc.pixel_of_uv(uv), white) * mat->base_color_factor).xyz;
+		let met_rough = mr.load(mr.pixel_of_uv(uv), white).xy;
+		let metallic = met_rough.x * mat->metallic_factor;
+		let roughness = met_rough.y * mat->roughness_factor;
 
 		h.position = position;
 		h.normal = f32x3(0.f, 0.f, 1.f);
 		h.emissive = f32x3(0.f);
 		h.from_shading_basis = gen_basis(normal);
 		h.to_shading_basis = transpose(h.from_shading_basis);
-		h.bsdf = Bsdf(base_color);
+		h.params.base_color = base_color;
+		h.params.roughness = roughness;
+		h.params.metallic = metallic;
+		h.params.rel_ior = 1.5f;
+		h.params.ior = 1.5f;
 		return h;
 	} else
 		return none;
@@ -156,9 +147,11 @@ bool is_unshadowed(Hit hit, LightSample ls) {
 
 f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let ls = sample_light(rng, hit);
-	if (any(ls.L <= 0.f) || ls.pdf <= 0.f) return 0.f;
-	let f = hit.bsdf.eval(wo, ls.wi) * abs(dot(ls.wi, hit.normal));
-	if (any(f <= 0.f)) return 0.f;
+	if (any(ls.L <= 0.f) || ls.pdf <= 0.f)
+		return 0.f;
+	let f = eval_disney_bsdf(hit.params, wo, ls.wi, false).L;
+	if (any(f <= 0.f))
+		return 0.f;
 	let unshadowed = is_unshadowed(hit, ls);
 	return f32(unshadowed) * f * ls.L / ls.pdf;
 }
@@ -169,8 +162,8 @@ struct BsdfEstimate {
 }
 
 BsdfEstimate estimate_with_bsdf_sample(inout Rng rng, Hit hit, f32x3 wo) {
-	let bsdf = hit.bsdf.sample(rng, wo);
-	let b = bsdf.L * abs(dot(bsdf.wi, hit.normal)) / bsdf.pdf;
+	let bsdf = sample_disney_bsdf(rng, hit.params, wo, false);
+	let b = bsdf.L * abs(dot(bsdf.wi, hit.normal));
 	let r = Ray(hit.ray_origin(), hit.from_shading(bsdf.wi));
 	return { b, r };
 }
