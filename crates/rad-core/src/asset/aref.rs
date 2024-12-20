@@ -45,6 +45,24 @@ impl<T: Asset> ARef<T> {
 			ptr: Arc::new(Data { id, inner: obj }),
 		}
 	}
+
+	pub fn unloaded(id: AssetId) -> Self {
+		Self {
+			ptr: Arc::new(Data {
+				id,
+				inner: T::unloaded(),
+			}),
+		}
+	}
+
+	pub fn unknown() -> Self {
+		Self {
+			ptr: Arc::new(Data {
+				id: AssetId::default(),
+				inner: T::unloaded(),
+			}),
+		}
+	}
 }
 
 impl<T: ?Sized + Asset> ARef<T> {
@@ -79,7 +97,7 @@ impl ARef<dyn Asset> {
 }
 
 impl<T: Asset> TypePath for ARef<T> {
-	fn type_path() -> &'static str { format!("rad_core::asset::aref::ARef<{}>", std::any::type_name::<T>()).leak() }
+	fn type_path() -> &'static str { "rad_core::asset::aref::ARef" }
 
 	fn short_type_path() -> &'static str { "ARef" }
 }

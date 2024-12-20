@@ -36,6 +36,22 @@ impl Asset for Material {
 		uuid!("15695530-bc12-4745-9410-21d24480e8f1")
 	}
 
+	fn unloaded() -> Self
+	where
+		Self: Sized,
+	{
+		Self {
+			base_color: None,
+			base_color_factor: Vec4::new(1.0, 0.0, 1.0, 1.0),
+			metallic_roughness: None,
+			metallic_factor: 1.0,
+			roughness_factor: 1.0,
+			normal: None,
+			emissive: None,
+			emissive_factor: Vec3::new(100000.0, 0.0, 100000.0),
+		}
+	}
+
 	fn load(mut data: Box<dyn AssetView>) -> Result<Self, io::Error>
 	where
 		Self: Sized,

@@ -81,6 +81,7 @@ pub struct Mesh {
 	raw_buffer: Buffer,
 	as_: AS,
 	raw_vertex_count: u32,
+	raw_tri_count: u32,
 	bvh_depth: u32,
 	aabb: Aabb<f32>,
 	material: ARef<Material>,
@@ -104,6 +105,8 @@ impl Mesh {
 
 	pub fn raw_vertex_count(&self) -> u32 { self.raw_vertex_count }
 
+	pub fn raw_tri_count(&self) -> u32 { self.raw_tri_count }
+
 	pub fn aabb(&self) -> Aabb<f32> { self.aabb }
 
 	pub fn gpu_ptr(&self) -> GpuPtr<u8> { self.buffer.ptr() }
@@ -121,6 +124,22 @@ impl Asset for Mesh {
 		Self: Sized,
 	{
 		uuid!("0ab1a518-ced8-41c9-ae55-9c208a461636")
+	}
+
+	fn unloaded() -> Self
+	where
+		Self: Sized,
+	{
+		Self {
+			buffer: Buffer::default(),
+			raw_buffer: Buffer::default(),
+			as_: AS::default(),
+			raw_vertex_count: 0,
+			raw_tri_count: 0,
+			bvh_depth: 0,
+			aabb: Aabb::default(),
+			material: ARef::unknown(),
+		}
 	}
 
 	fn load(mut data: Box<dyn AssetView>) -> Result<Self, io::Error>
@@ -356,6 +375,7 @@ impl Asset for Mesh {
 				raw_buffer,
 				as_,
 				raw_vertex_count: m.raw_vertices.len() as _,
+				raw_tri_count: (m.raw_indices.len() / 3) as _,
 				bvh_depth: m.bvh_depth,
 				aabb: m.aabb,
 				material: m.material,

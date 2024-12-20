@@ -17,15 +17,18 @@ use rad_graph::{
 use rad_world::{transform::Transform, Entity};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
-use vek::{Aabb, Quaternion, Vec3, Vec4};
+use vek::{Aabb, Mat4, Quaternion, Vec3, Vec4};
 
 use crate::{
 	assets::{
 		image::Image,
 		material::Material,
-		mesh::{GpuAabb, GpuVertex},
+		mesh::{GpuAabb, GpuVertex, Mesh},
 	},
-	components::mesh::MeshComponent,
+	components::{
+		light::{LightComponent, LightType},
+		mesh::MeshComponent,
+	},
 };
 
 #[derive(Copy, Clone, Default, PartialEq, NoUninit)]
@@ -50,6 +53,23 @@ pub struct GpuMaterial {
 }
 
 #[derive(Copy, Clone, NoUninit)]
+#[repr(u32)]
+pub enum GpuLightType {
+	Point,
+	Directional,
+	Emissive,
+	Sky,
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct GpuLight {
+	pub ty: GpuLightType,
+	pub radiance: Vec3<f32>,
+	pub pos_or_dir: Vec3<f32>,
+}
+
+#[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 pub struct GpuInstance {
 	transform: GpuTransform,
@@ -60,20 +80,20 @@ pub struct GpuInstance {
 	raw_mesh: GpuPtr<GpuVertex>,
 	material: GpuPtr<GpuMaterial>,
 	raw_vertex_count: u32,
-	_pad: u32,
+	raw_tri_count: u32,
 }
 
 #[derive(Copy, Clone, Default, NoUninit)]
 #[repr(C)]
-struct GpuNewInstance {
-	transform: GpuTransform,
+struct GpuUpdate {
+	transform: GpuTransform, // for lights, position = radiance, scale = pos_or_dir
 	aabb: GpuAabb,
 	mesh: GpuPtr<u8>,
 	raw_mesh: GpuPtr<GpuVertex>,
 	material: GpuPtr<GpuMaterial>,
 	as_: u64,
-	raw_vertex_count: u32,
-	_pad: u32,
+	raw_vertex_count: u32, // move => index, add light => ty
+	raw_tri_count: u32,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -83,6 +103,8 @@ enum GpuUpdateType {
 	Move,
 	ChangeMesh,
 	ChangeTransform,
+	AddLight,
+	MoveLight,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -90,7 +112,144 @@ enum GpuUpdateType {
 struct GpuSceneUpdate {
 	pub instance: u32,
 	pub ty: GpuUpdateType,
-	pub data: GpuNewInstance,
+	pub data: GpuUpdate,
+}
+
+impl GpuSceneUpdate {
+	fn add(instance: u32, transform: &Transform, m: &ARef<Mesh>, material: GpuPtr<GpuMaterial>) -> Self {
+		Self {
+			instance,
+			ty: GpuUpdateType::Add,
+			data: GpuUpdate {
+				transform: map_transform(transform),
+				aabb: map_aabb(m.aabb()),
+				mesh: m.gpu_ptr(),
+				raw_mesh: m.raw_gpu_ptr(),
+				as_: m.as_addr(),
+				material,
+				raw_vertex_count: m.raw_vertex_count(),
+				raw_tri_count: m.raw_tri_count(),
+			},
+		}
+	}
+
+	fn remove(instance: u32, last: u32) -> Self {
+		Self {
+			instance,
+			ty: GpuUpdateType::Move,
+			data: GpuUpdate {
+				transform: GpuTransform::default(),
+				aabb: GpuAabb::default(),
+				mesh: GpuPtr::null(),
+				raw_mesh: GpuPtr::null(),
+				as_: 0,
+				material: GpuPtr::null(),
+				raw_vertex_count: last,
+				raw_tri_count: 0,
+			},
+		}
+	}
+
+	fn change_mesh(instance: u32, m: &ARef<Mesh>, material: GpuPtr<GpuMaterial>) -> Self {
+		Self {
+			instance,
+			ty: GpuUpdateType::ChangeMesh,
+			data: GpuUpdate {
+				transform: GpuTransform::default(),
+				aabb: map_aabb(m.aabb()),
+				mesh: m.gpu_ptr(),
+				raw_mesh: m.raw_gpu_ptr(),
+				as_: m.as_addr(),
+				material,
+				raw_vertex_count: m.raw_vertex_count(),
+				raw_tri_count: m.raw_tri_count(),
+			},
+		}
+	}
+
+	fn change_transform(instance: u32, transform: &Transform) -> Self {
+		Self {
+			instance,
+			ty: GpuUpdateType::ChangeTransform,
+			data: GpuUpdate {
+				transform: map_transform(transform),
+				aabb: GpuAabb::default(),
+				mesh: GpuPtr::null(),
+				raw_mesh: GpuPtr::null(),
+				as_: 0,
+				material: GpuPtr::null(),
+				raw_vertex_count: 0,
+				raw_tri_count: 0,
+			},
+		}
+	}
+
+	fn add_light(instance: u32, transform: &Transform, light: &LightComponent) -> Self {
+		let pos_or_dir = match light.ty {
+			LightType::Point => transform.position,
+			LightType::Directional => {
+				let (angle, axis) = transform.rotation.into_angle_axis();
+				(Mat4::rotation_3d(angle, axis) * -Vec4::unit_z()).xyz()
+			},
+			LightType::Sky => Vec3::zero(),
+		};
+
+		Self {
+			instance,
+			ty: GpuUpdateType::AddLight,
+			data: GpuUpdate {
+				transform: GpuTransform {
+					position: light.radiance,
+					rotation: Quaternion::zero(),
+					scale: pos_or_dir,
+				},
+				aabb: GpuAabb::default(),
+				mesh: GpuPtr::null(),
+				raw_mesh: GpuPtr::null(),
+				material: GpuPtr::null(),
+				as_: 0,
+				raw_vertex_count: map_light_ty(light.ty) as _,
+				raw_tri_count: 0,
+			},
+		}
+	}
+
+	fn remove_light(instance: u32, last: u32) -> Self {
+		Self {
+			instance,
+			ty: GpuUpdateType::MoveLight,
+			data: GpuUpdate {
+				transform: GpuTransform::default(),
+				aabb: GpuAabb::default(),
+				mesh: GpuPtr::null(),
+				raw_mesh: GpuPtr::null(),
+				material: GpuPtr::null(),
+				as_: 0,
+				raw_vertex_count: last,
+				raw_tri_count: 0,
+			},
+		}
+	}
+
+	fn add_emissive(instance: u32, mesh_instance: u32) -> Self {
+		Self {
+			instance,
+			ty: GpuUpdateType::AddLight,
+			data: GpuUpdate {
+				transform: GpuTransform {
+					position: Vec3::new(f32::from_bits(mesh_instance), 0.0, 0.0),
+					..Default::default()
+				},
+				aabb: GpuAabb::default(),
+				mesh: GpuPtr::null(),
+				raw_mesh: GpuPtr::null(),
+				material: GpuPtr::null(),
+				as_: 0,
+				raw_vertex_count: GpuLightType::Emissive as _,
+				raw_tri_count: 0,
+			},
+		}
+	}
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -98,6 +257,7 @@ struct GpuSceneUpdate {
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
 	as_instances: GpuPtr<u64>,
+	lights: GpuPtr<GpuLight>,
 	updates: GpuPtr<GpuSceneUpdate>,
 	frame: u64,
 	count: u32,
@@ -126,17 +286,21 @@ impl SceneUpdater {
 	) -> SceneReader {
 		let Scene {
 			instances,
+			lights,
 			as_instances,
 			as_,
 			len,
 			cap,
+			light_len,
+			light_cap,
+			sky_light,
 			updates,
 			depth_refs,
 			..
 		} = scene;
 		let asi = as_instances.handle();
 
-		let res = if *len > *cap {
+		let ins = if *len > *cap {
 			while *len > *cap {
 				*cap *= 2;
 			}
@@ -162,7 +326,7 @@ impl SceneUpdater {
 			let old = std::mem::replace(instances, new);
 			let old_as = std::mem::replace(as_instances, new_as);
 
-			let mut pass = frame.pass("copy scene");
+			let mut pass = frame.pass("copy meshes");
 			let src = pass.resource(
 				ExternalBuffer { handle: old.handle() },
 				BufferUsage {
@@ -224,6 +388,56 @@ impl SceneUpdater {
 		} else {
 			None
 		};
+		let ls = if *light_len > *light_cap {
+			while *light_len > *light_cap {
+				*light_cap *= 2;
+			}
+
+			let new = Buffer::create(
+				frame.device(),
+				resource::BufferDesc {
+					name: "scene lights",
+					size: *light_cap as u64 * std::mem::size_of::<GpuLight>() as u64,
+					readback: false,
+				},
+			)
+			.unwrap();
+			let old = std::mem::replace(lights, new);
+
+			let mut pass = frame.pass("copy lights");
+			let src = pass.resource(
+				ExternalBuffer { handle: old.handle() },
+				BufferUsage {
+					usages: &[BufferUsageType::TransferRead],
+				},
+			);
+			let dst = pass.resource(
+				ExternalBuffer {
+					handle: lights.handle(),
+				},
+				BufferUsage {
+					usages: &[BufferUsageType::TransferWrite],
+				},
+			);
+			pass.build(move |mut pass| unsafe {
+				let src = pass.get(src);
+				let dst = pass.get(dst);
+				pass.device.device().cmd_copy_buffer(
+					pass.buf,
+					src.buffer,
+					dst.buffer,
+					&[vk::BufferCopy::default()
+						.src_offset(0)
+						.dst_offset(0)
+						.size(*light_cap as u64 * std::mem::size_of::<GpuLight>() as u64)],
+				);
+			});
+			frame.delete(old);
+
+			Some(dst)
+		} else {
+			None
+		};
 
 		let mut pass = frame.pass("update scene");
 
@@ -238,7 +452,7 @@ impl SceneUpdater {
 				&[]
 			},
 		};
-		let (instances, as_instances) = if let Some((instances, as_instances)) = res {
+		let (instances, as_instances) = if let Some((instances, as_instances)) = ins {
 			pass.reference(instances, usages);
 			pass.reference(as_instances, usages);
 			(instances, as_instances)
@@ -256,6 +470,17 @@ impl SceneUpdater {
 				usages,
 			);
 			(i, a)
+		};
+		let lights = if let Some(lights) = ls {
+			pass.reference(lights, usages);
+			lights
+		} else {
+			pass.resource(
+				ExternalBuffer {
+					handle: lights.handle(),
+				},
+				usages,
+			)
 		};
 		let update_buffer = (count > 0).then(|| {
 			pass.resource(
@@ -281,6 +506,7 @@ impl SceneUpdater {
 				let push = PushConstants {
 					instances: pass.get(instances).ptr(),
 					as_instances: pass.get(as_instances).ptr(),
+					lights: pass.get(lights).ptr(),
 					updates: update_buf.ptr(),
 					frame: frame_index,
 					count,
@@ -392,6 +618,9 @@ impl SceneUpdater {
 		SceneReader {
 			instances,
 			as_: as_buf,
+			lights,
+			light_count: *light_len,
+			sky_light: *sky_light,
 			as_offset: addr - handle.addr,
 			instance_count: *len,
 			max_depth: depth_refs.first_key_value().map(|(InvertOrd(d), _)| *d).unwrap_or(0),
@@ -404,6 +633,9 @@ impl SceneUpdater {
 pub struct SceneReader {
 	pub instances: Res<BufferHandle>,
 	pub as_: Res<BufferHandle>,
+	pub lights: Res<BufferHandle>,
+	pub light_count: u32,
+	pub sky_light: u32,
 	pub as_offset: u64,
 	pub instance_count: u32,
 	pub max_depth: u32,
@@ -436,12 +668,12 @@ impl MatBuf {
 				device,
 				resource::BufferDesc {
 					name: "scene materials",
-					size: std::mem::size_of::<GpuMaterial>() as u64 * 1024,
+					size: std::mem::size_of::<GpuMaterial>() as u64 * 4096,
 					readback: false,
 				},
 			)?,
 			len: 0,
-			cap: 1024,
+			cap: 4096,
 			map: FxHashMap::default(),
 		})
 	}
@@ -474,11 +706,16 @@ impl MatBuf {
 pub struct Scene {
 	instances: Buffer,
 	as_instances: Buffer,
+	lights: Buffer,
 	materials: MatBuf,
 	as_: AS,
 	len: u32,
 	cap: u32,
+	light_len: u32,
+	light_cap: u32,
+	sky_light: u32,
 	entity_map: FxHashMap<Entity, Vec<(u32, u32)>>,
+	light_map: FxHashMap<Entity, u32>,
 	updates: Vec<GpuSceneUpdate>,
 	depth_refs: BTreeMap<InvertOrd<u32>, u32>,
 }
@@ -498,6 +735,14 @@ pub(crate) fn map_transform(transform: &Transform) -> GpuTransform {
 	}
 }
 
+fn map_light_ty(ty: LightType) -> GpuLightType {
+	match ty {
+		LightType::Point => GpuLightType::Point,
+		LightType::Directional => GpuLightType::Directional,
+		LightType::Sky => GpuLightType::Sky,
+	}
+}
+
 impl Scene {
 	pub fn new() -> Result<Self> {
 		let device: &Device = Engine::get().global();
@@ -507,7 +752,7 @@ impl Scene {
 				device,
 				resource::BufferDesc {
 					name: "scene instances",
-					size: std::mem::size_of::<GpuInstance>() as u64 * 1024,
+					size: std::mem::size_of::<GpuInstance>() as u64 * 4096,
 					readback: false,
 				},
 			)?,
@@ -515,15 +760,27 @@ impl Scene {
 				device,
 				resource::BufferDesc {
 					name: "AS scene instances",
-					size: std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u64 * 1024,
+					size: std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u64 * 4096,
+					readback: false,
+				},
+			)?,
+			lights: Buffer::create(
+				device,
+				resource::BufferDesc {
+					name: "scene lights",
+					size: std::mem::size_of::<GpuLight>() as u64 * 4096,
 					readback: false,
 				},
 			)?,
 			materials: MatBuf::new(device)?,
 			as_: AS::default(),
 			len: 0,
-			cap: 1024,
+			cap: 4096,
+			light_len: 0,
+			light_cap: 4096,
+			sky_light: u32::MAX,
 			entity_map: FxHashMap::default(),
+			light_map: FxHashMap::default(),
 			updates: Vec::new(),
 			depth_refs: BTreeMap::new(),
 		})
@@ -535,22 +792,16 @@ impl Scene {
 			.iter()
 			.map(|m| {
 				let instance = self.len;
-				let material = self.materials.get_material(m.material());
-				self.updates.push(GpuSceneUpdate {
-					instance,
-					ty: GpuUpdateType::Add,
-					data: GpuNewInstance {
-						transform: map_transform(transform),
-						aabb: map_aabb(m.aabb()),
-						mesh: m.gpu_ptr(),
-						raw_mesh: m.raw_gpu_ptr(),
-						as_: m.as_addr(),
-						material,
-						raw_vertex_count: m.raw_vertex_count(),
-						_pad: 0,
-					},
-				});
 				self.len += 1;
+				let mat = m.material();
+				let material = self.materials.get_material(mat);
+				self.updates.push(GpuSceneUpdate::add(instance, transform, m, material));
+				if mat.emissive_factor != Vec3::zero() {
+					self.updates
+						.push(GpuSceneUpdate::add_emissive(self.light_len, instance));
+					self.light_map.insert(entity, self.light_len);
+					self.light_len += 1;
+				}
 
 				let depth = m.bvh_depth();
 				*self.depth_refs.entry(InvertOrd(depth)).or_insert(0) += 1;
@@ -559,6 +810,16 @@ impl Scene {
 			.collect();
 
 		self.entity_map.insert(entity, data);
+	}
+
+	pub fn add_light(&mut self, entity: Entity, transform: &Transform, light: &LightComponent) {
+		let instance = self.light_len;
+		self.light_len += 1;
+		self.light_map.insert(entity, instance);
+		self.updates.push(GpuSceneUpdate::add_light(instance, transform, light));
+		if matches!(light.ty, LightType::Sky) {
+			self.sky_light = instance;
+		}
 	}
 
 	pub fn remove(&mut self, entity: Entity) {
@@ -570,25 +831,17 @@ impl Scene {
 				self.depth_refs.remove(&InvertOrd(d));
 			}
 
-			self.updates.push(GpuSceneUpdate {
-				instance,
-				ty: GpuUpdateType::Move,
-				data: GpuNewInstance {
-					transform: GpuTransform {
-						position: Vec3::new(f32::from_bits(self.len - 1), 0.0, 0.0),
-						..Default::default()
-					},
-					aabb: GpuAabb::default(),
-					mesh: GpuPtr::null(),
-					raw_mesh: GpuPtr::null(),
-					as_: 0,
-					material: GpuPtr::null(),
-					raw_vertex_count: 0,
-					_pad: 0,
-				},
-			});
+			// TODO: deal with lights and materials.
+			self.updates.push(GpuSceneUpdate::remove(instance, self.len - 1));
 			self.len -= 1;
 		}
+	}
+
+	pub fn remove_light(&mut self, entity: Entity) {
+		let instance = self.light_map.remove(&entity).expect("entity not in scene");
+		self.updates
+			.push(GpuSceneUpdate::remove_light(instance, self.light_len - 1));
+		self.light_len -= 1;
 	}
 
 	pub fn change_mesh_and_transform(&mut self, entity: Entity, transform: &Transform, mesh: &MeshComponent) {
@@ -605,21 +858,10 @@ impl Scene {
 				self.depth_refs.remove(&InvertOrd(*depth));
 			}
 
+			// TODO: deal with lights.
 			let material = self.materials.get_material(m.material());
-			self.updates.push(GpuSceneUpdate {
-				instance: *instance,
-				ty: GpuUpdateType::Add,
-				data: GpuNewInstance {
-					transform: map_transform(transform),
-					aabb: map_aabb(m.aabb()),
-					mesh: m.gpu_ptr(),
-					raw_mesh: m.raw_gpu_ptr(),
-					as_: m.as_addr(),
-					material,
-					raw_vertex_count: m.raw_vertex_count(),
-					_pad: 0,
-				},
-			});
+			self.updates
+				.push(GpuSceneUpdate::add(*instance, transform, m, material));
 
 			let new_depth = m.bvh_depth();
 			*self.depth_refs.entry(InvertOrd(new_depth)).or_insert(0) += 1;
@@ -641,21 +883,9 @@ impl Scene {
 				self.depth_refs.remove(&InvertOrd(*depth));
 			}
 
+			// TODO: deal with lights.
 			let material = self.materials.get_material(m.material());
-			self.updates.push(GpuSceneUpdate {
-				instance: *instance,
-				ty: GpuUpdateType::ChangeMesh,
-				data: GpuNewInstance {
-					transform: GpuTransform::default(),
-					aabb: map_aabb(m.aabb()),
-					mesh: m.gpu_ptr(),
-					raw_mesh: m.raw_gpu_ptr(),
-					as_: m.as_addr(),
-					material,
-					raw_vertex_count: m.raw_vertex_count(),
-					_pad: 0,
-				},
-			});
+			self.updates.push(GpuSceneUpdate::change_mesh(*instance, m, material));
 
 			let new_depth = m.bvh_depth();
 			*self.depth_refs.entry(InvertOrd(new_depth)).or_insert(0) += 1;
@@ -665,20 +895,8 @@ impl Scene {
 
 	pub fn change_transform(&mut self, entity: Entity, transform: &Transform) {
 		for (instance, _) in self.entity_map.get(&entity).expect("entity not in scene") {
-			self.updates.push(GpuSceneUpdate {
-				instance: *instance,
-				ty: GpuUpdateType::ChangeTransform,
-				data: GpuNewInstance {
-					transform: map_transform(transform),
-					aabb: GpuAabb::default(),
-					mesh: GpuPtr::null(),
-					raw_mesh: GpuPtr::null(),
-					as_: 0,
-					material: GpuPtr::null(),
-					raw_vertex_count: 0,
-					_pad: 0,
-				},
-			});
+			self.updates
+				.push(GpuSceneUpdate::change_transform(*instance, transform));
 		}
 	}
 }

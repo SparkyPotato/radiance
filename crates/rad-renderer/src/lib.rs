@@ -17,6 +17,7 @@ pub use vek;
 use crate::{
 	components::{
 		camera::{CameraComponent, PrimaryViewComponent},
+		light::LightComponent,
 		mesh::MeshComponent,
 	},
 	scene::{map_transform, GpuTransform, Scene, SceneReader, SceneUpdater},
@@ -41,6 +42,7 @@ impl Module for RendererModule {
 
 		engine.component::<components::mesh::MeshComponent>();
 		engine.component_dep_type::<Vec<ARef<assets::mesh::Mesh>>>();
+		engine.component::<components::light::LightComponent>();
 		engine.component::<components::camera::CameraComponent>();
 		engine.component::<components::camera::PrimaryViewComponent>();
 
@@ -97,13 +99,14 @@ impl WorldRenderer {
 }
 
 fn sync_scene(
-	mut r: ResMut<WorldRenderer>, q: Query<(Entity, Ref<Transform>, Ref<MeshComponent>)>,
-	mut m: RemovedComponents<MeshComponent>, id: WorldId,
+	mut r: ResMut<WorldRenderer>, qm: Query<(Entity, Ref<Transform>, Ref<MeshComponent>)>,
+	ql: Query<(Entity, Ref<Transform>, Ref<LightComponent>)>, mut m: RemovedComponents<MeshComponent>,
+	mut l: RemovedComponents<LightComponent>, id: WorldId,
 ) {
 	r.id = Some(id);
 
 	// TODO: very inefficient
-	for (e, t, m) in q.iter() {
+	for (e, t, m) in qm.iter() {
 		let added = m.is_added();
 		let t_changed = t.is_changed();
 		let m_changed = m.is_changed();
@@ -119,8 +122,24 @@ fn sync_scene(
 		}
 	}
 
+	for (e, t, l) in ql.iter() {
+		let added = l.is_added();
+		// let t_changed = t.is_changed();
+		// let l_changed = l.is_changed();
+
+		if added {
+			r.scene.add_light(e, &*t, &*l);
+		} else {
+			// r.scene.change_light_and_transform(e, &*t, &*l);
+		}
+	}
+
 	for e in m.read() {
 		r.scene.remove(e);
+	}
+
+	for e in l.read() {
+		r.scene.remove_light(e);
 	}
 }
 

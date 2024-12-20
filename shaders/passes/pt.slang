@@ -4,15 +4,18 @@ import graph;
 import graph.util;
 import graph.util.rng;
 import asset;
-import passes.brdf;
+import passes.bsdf;
 
 struct PushConstants {
-	Instance* instances;
+	Instance<NonUniform>* instances;
+	Light* lights;
 	Camera* camera;
 	STex2D<f32x3> output;
 	Rng rng;
 	AS as;
 	u32 samples;
+	u32 light_count;
+	u32 sky_light;
 };
 
 [vk::push_constant]
@@ -45,7 +48,7 @@ Ray primary_ray(inout Rng rng, u32x2 pix) {
 	let clip = f32x2(uv.x, uv.y) * 2.f - 1.f;
 	let cam = *Constants.camera;
 	let origin = mul(cam.inv_view(), f32x4(0.f, 0.f, 0.f, 1.f)).xyz;
-	let view_dir = normalize(mul(cam.inv_proj(), f32x4(clip.x, -clip.y, 1.f, 1.f)).xyz);
+	let view_dir = normalize(mul(cam.inv_proj(), f32x4(clip.x, -clip.y, 0.f, 1.f)).xyz);
 	let dir = mul(cam.inv_view(), f32x4(view_dir, 0.f)).xyz;
 	return Ray(origin, dir);
 }
@@ -76,8 +79,6 @@ Optional<Hit> trace_ray(Ray ray) {
 	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray.to_rt());
 	while (q.Proceed());
 	if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-		Hit h;
-
 		let instance = Constants.instances[q.CommittedRayInstanceCustomIndex()];
 		let tri = q.CommittedRayPrimitiveIndex();
 		let iptr = (u32*)(instance.raw_mesh + instance.raw_vertex_count);
@@ -99,19 +100,18 @@ Optional<Hit> trace_ray(Ray ray) {
 		let nm = mat->normal.get();
 		let em = mat->emissive.get();
 		let white = f32x4(1.f);
-		let base_color = (bc.load(bc.pixel_of_uv(uv), white) * mat->base_color_factor).xyz;
 		let met_rough = mr.load(mr.pixel_of_uv(uv), white).xy;
-		let metallic = met_rough.x * mat->metallic_factor;
-		let roughness = met_rough.y * mat->roughness_factor;
+		// let emissive = em.load(em.pixel_of_uv(uv), white).xyz * mat->emissive_factor;
 
+		Hit h = {};
 		h.position = position;
 		h.normal = f32x3(0.f, 0.f, 1.f);
 		h.emissive = f32x3(0.f);
 		h.from_shading_basis = gen_basis(normal);
 		h.to_shading_basis = transpose(h.from_shading_basis);
-		h.params.base_color = base_color;
-		h.params.roughness = roughness;
-		h.params.metallic = metallic;
+		h.params.base_color = (bc.load(bc.pixel_of_uv(uv), white) * mat->base_color_factor).xyz;
+		h.params.roughness = met_rough.y * mat->roughness_factor;
+		h.params.metallic = met_rough.x * mat->metallic_factor;
 		h.params.rel_ior = 1.5f;
 		h.params.ior = 1.5f;
 		return h;
@@ -126,15 +126,86 @@ struct LightSample {
 	f32 pdf;
 }
 
-f32x3 sample_sky() {
-	return f32x3(0.43f, 0.61f, 0.92f) * 2.f;
+f32x3 sample_sky(f32x3 dir) {
+	if (Constants.sky_light == -1)
+		return f32x3(0.f);
+	return Constants.lights[Constants.sky_light].radiance;
 }
 
-LightSample sample_light(inout Rng rng, Hit hit) {
-	let L = sample_sky();
-	let wi = rng.sample_cos_hemi();
-	let pdf = wi.z / PI;
-	return { L, wi, 1e10f, pdf };
+LightSample sample_light(inout Rng rng, Hit hit, Light light) {
+	switch (light.ty) {
+		case LightType.Point: {
+			let pos = light.pos_or_dir;
+			let dir = pos - hit.position;
+			let t2 = dot(dir, dir);
+			let L = light.radiance / t2;
+			let t = sqrt(t2);
+			let wi = hit.to_shading(dir / t);
+			let pdf = 1.f;
+			return { L, wi, t, pdf };
+		}
+		case LightType.Directional: {
+			let L = light.radiance;
+			let wi = hit.to_shading(-light.pos_or_dir);
+			let pdf = 1.f;
+			return { L, wi, 1e10f, pdf };
+		}
+		case LightType.Emissive: {
+			return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
+			let i = asuint(light.radiance.x);
+			let instance = Constants.instances[i];
+
+			let tri_count = instance.raw_tri_count;
+			let tri = min(u32(rng.sample() * tri_count), tri_count - 1);
+			let iptr = (u32*)(instance.raw_mesh + instance.raw_vertex_count);
+			let indices = u32x3(iptr[tri * 3], iptr[tri * 3 + 1], iptr[tri * 3 + 2]);
+			let v0 = instance.raw_mesh[indices.x];
+			let v1 = instance.raw_mesh[indices.y];
+			let v2 = instance.raw_mesh[indices.z];
+			let b = rng.sample2();
+			let su0 = sqrt(b.x);
+			let u = 1.f - su0;
+			let v = b.y * su0;
+			let w = 1.f - u - v;
+
+			let pos = u * v0.position + v * v1.position + w * v2.position;
+			let uv = u * v0.uv + v * v1.uv + w * v2.uv;
+			let area = length(cross(v1.position - v0.position, v2.position - v0.position)) * 0.5f;
+
+			let mat = instance.material;
+			let em = mat->emissive.get();
+			let emf = mat->emissive_factor;
+
+			let dir = pos - hit.position;
+			let t2 = dot(dir, dir);
+			let t = sqrt(t2);
+			let wi = hit.to_shading(dir / t);
+			let L = em.load(em.pixel_of_uv(uv), f32x4(1.f)).xyz * emf / t2;
+
+			return { L, wi, t, 1.f / (area * f32(tri_count)) };
+		}
+		case LightType.Sky: {
+			let L = light.radiance;
+			let wi = rng.sample_cos_hemi();
+			let pdf = wi.z / PI;
+			return { L, wi, 1e10f, pdf };
+		}
+	}
+
+	return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
+}
+
+LightSample sample_one_light(inout Rng rng, Hit hit) {
+	// let n = f32(Constants.light_count);
+	let n = 0.f;
+	if (n == 0)
+		return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
+
+	let l = min(u32(rng.sample() * n), u32(n - 1.f));
+	let light = Constants.lights[l];
+	var ls = sample_light(rng, hit, light);
+	ls.pdf /= n;
+	return ls;
 }
 
 bool is_unshadowed(Hit hit, LightSample ls) {
@@ -146,7 +217,7 @@ bool is_unshadowed(Hit hit, LightSample ls) {
 }
 
 f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
-	let ls = sample_light(rng, hit);
+	let ls = sample_one_light(rng, hit);
 	if (any(ls.L <= 0.f) || ls.pdf <= 0.f)
 		return 0.f;
 	let f = eval_disney_bsdf(hit.params, wo, ls.wi, false).L;
@@ -159,13 +230,14 @@ f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 struct BsdfEstimate {
 	f32x3 b;
 	Ray r;
+	bool spec;
 }
 
 BsdfEstimate estimate_with_bsdf_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let bsdf = sample_disney_bsdf(rng, hit.params, wo, false);
 	let b = bsdf.L * abs(dot(bsdf.wi, hit.normal));
 	let r = Ray(hit.ray_origin(), hit.from_shading(bsdf.wi));
-	return { b, r };
+	return { b, r, bsdf.is_specular };
 }
 
 f32x3 li(inout Rng rng, Ray ray) {
@@ -177,7 +249,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 		let h = trace_ray(ray);
 		if (!h.hasValue) {
 			if (specular)
-				L += b * sample_sky();
+				L += b * sample_sky(ray.dir);
 			break;
 		}
 		let hit = h.value;
@@ -190,6 +262,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 		let es = estimate_with_bsdf_sample(rng, hit, wo);
 		b *= es.b;
 		ray = es.r;
+		specular = es.spec;
 	}
 
 	return L;
@@ -203,9 +276,13 @@ void main(ScreenOutput input) {
 	let r = primary_ray(rng, pix);
 	f32x3 ret = li(rng, r);
 
-	let prev = Constants.output.load(pix);
 	let n = f32(Constants.samples);
-	Constants.output.store(pix, lerp(prev, ret, 1.f / (n + 1.f)));
+	if (n == 0.f) {
+		Constants.output.store(pix, ret);
+	} else {
+		let prev = Constants.output.load(pix);
+		Constants.output.store(pix, lerp(prev, ret, 1.f / (n + 1.f)));
+	}
 }
 
 f32x3x3 gen_basis(f32x3 z) {

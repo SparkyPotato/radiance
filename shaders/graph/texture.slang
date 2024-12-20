@@ -47,12 +47,12 @@ public typealias D1 = __Shape1D;
 public typealias D2 = __Shape2D;
 public typealias D3 = __Shape3D;
 
-__generic<T> public typealias Tex1D = Tex<T, D1>;
-__generic<T> public typealias Tex2D = Tex<T, D2>;
-__generic<T> public typealias Tex3D = Tex<T, D3>;
-__generic<T> public typealias OTex1D = OTex<T, D1>;
-__generic<T> public typealias OTex2D = OTex<T, D2>;
-__generic<T> public typealias OTex3D = OTex<T, D3>;
+__generic<T, U : Uniformity = Uniform> public typealias Tex1D = Tex<T, D1, U>;
+__generic<T, U : Uniformity = Uniform> public typealias Tex2D = Tex<T, D2, U>;
+__generic<T, U : Uniformity = Uniform> public typealias Tex3D = Tex<T, D3, U>;
+__generic<T, U : Uniformity = Uniform> public typealias OTex1D = OTex<T, D1, U>;
+__generic<T, U : Uniformity = Uniform> public typealias OTex2D = OTex<T, D2, U>;
+__generic<T, U : Uniformity = Uniform> public typealias OTex3D = OTex<T, D3, U>;
 
 __generic<T, U : Uniformity> public extension Tex<T, D1, U> {
 	public T load(u32 pixel, u32 mip = 0) {

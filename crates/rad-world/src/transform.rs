@@ -2,7 +2,7 @@ use vek::{Mat4, Quaternion, Vec3};
 
 use crate::{rad_world, RadComponent};
 
-#[derive(Copy, Clone, RadComponent)]
+#[derive(Copy, Clone, Debug, RadComponent)]
 #[uuid("efcddf51-d15c-434b-bff4-1a0fe18ba53b")]
 pub struct Transform {
 	pub position: Vec3<f32>,

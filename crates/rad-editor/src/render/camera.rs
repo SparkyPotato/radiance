@@ -77,10 +77,10 @@ impl CameraController {
 			return;
 		}
 
-		let yaw = Mat4::rotation_3d(self.yaw, Vec3::unit_y());
-		let forward = (yaw * Vec4::unit_z()).xyz();
+		let yaw = Mat4::identity().rotated_z(self.yaw);
+		let forward = (yaw * Vec4::unit_y()).xyz();
 		let right = (yaw * Vec4::unit_x()).xyz();
-		let states = [forward, -forward, right, -right, Vec3::unit_y(), -Vec3::unit_y()];
+		let states = [forward, -forward, right, -right, Vec3::unit_z(), -Vec3::unit_z()];
 		let dir = states
 			.iter()
 			.zip(self.states.iter())
@@ -101,8 +101,8 @@ impl CameraController {
 				let delta = Vec2::new(position.x as f32, position.y as _)
 					- Vec2::new(self.grabber.last_pos.x as _, self.grabber.last_pos.y as _);
 				let delta = Vec2::new(delta.x, delta.y) * 0.002;
-				self.pitch += delta.y;
-				self.yaw += delta.x;
+				self.pitch -= delta.y;
+				self.yaw -= delta.x;
 				self.pitch = self.pitch.clamp(-f32::FRAC_PI_2(), f32::FRAC_PI_2());
 			},
 			WindowEvent::KeyboardInput {
@@ -136,6 +136,6 @@ impl CameraController {
 	pub fn apply(&self, mut entity: EntityWrite<'_>) {
 		let t = entity.component_mut::<Transform>().unwrap();
 		t.position = self.pos;
-		t.rotation = Quaternion::identity().rotated_x(self.pitch).rotated_y(self.yaw);
+		t.rotation = Quaternion::identity().rotated_x(self.pitch).rotated_z(self.yaw);
 	}
 }

@@ -146,6 +146,13 @@ impl Asset for World {
 		uuid!("aac9bce6-582b-422b-b56c-2048cc0c4a2f")
 	}
 
+	fn unloaded() -> Self
+	where
+		Self: Sized,
+	{
+		Self::new()
+	}
+
 	fn load(mut data: Box<dyn AssetView>) -> Result<Self, io::Error>
 	where
 		Self: Sized,

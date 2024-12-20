@@ -5,12 +5,12 @@ use vek::Vec3;
 pub enum LightType {
 	Point,
 	Directional,
+	Sky,
 }
 
 #[derive(RadComponent)]
 #[uuid("69a570e9-032e-4ca0-aa96-92e9cc4a950c")]
 pub struct LightComponent {
-	pub color: Vec3<f32>,
-	pub intensity: f32,
 	pub ty: LightType,
+	pub radiance: Vec3<f32>,
 }

@@ -8,8 +8,10 @@ use rad_renderer::{
 	assets::mesh::Mesh,
 	components::{
 		camera::{CameraComponent, PrimaryViewComponent},
+		light::{LightComponent, LightType},
 		mesh::MeshComponent,
 	},
+	vek::Vec3,
 	WorldRenderer,
 };
 use rad_world::{serde::DoNotSerialize, tick::Tick, Entity, EntityWrite, World};
@@ -64,5 +66,9 @@ impl WorldContext {
 			.insert(PrimaryViewComponent(CameraComponent::default()))
 			.insert(DoNotSerialize)
 			.id();
+		self.edit.spawn_empty().insert(LightComponent {
+			ty: LightType::Sky,
+			radiance: Vec3::broadcast(0.2),
+		});
 	}
 }

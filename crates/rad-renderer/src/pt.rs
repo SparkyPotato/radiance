@@ -16,7 +16,7 @@ use vek::Vec2;
 
 use crate::{
 	mesh::CameraData,
-	scene::{GpuInstance, GpuTransform},
+	scene::{GpuInstance, GpuLight, GpuTransform},
 	PrimaryViewData,
 };
 
@@ -37,11 +37,14 @@ pub struct RenderInfo {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
+	lights: GpuPtr<GpuLight>,
 	camera: GpuPtr<CameraData>,
 	out: StorageImageId,
 	seed: u32,
 	as_: GpuPtr<u8>,
 	samples: u32,
+	light_count: u32,
+	sky_light: u32,
 	_pad: u32,
 }
 
@@ -119,6 +122,7 @@ impl PathTracer {
 				.ptr()
 				.offset(info.data.scene.as_offset as _);
 			let instances = pass.get(info.data.scene.instances).ptr();
+			let lights = pass.get(info.data.scene.lights).ptr();
 			let mut camera = pass.get(camera);
 			unsafe { camera.data.as_mut() }
 				.write(bytes_of(&CameraData::new(
@@ -131,11 +135,14 @@ impl PathTracer {
 				&mut pass,
 				&PushConstants {
 					instances,
+					lights,
 					camera: camera.ptr(),
 					out: out.storage_id.unwrap(),
 					seed: thread_rng().next_u32(),
 					as_,
 					samples: self.samples,
+					light_count: info.data.scene.light_count,
+					sky_light: info.data.scene.sky_light,
 					_pad: 0,
 				},
 				vk::Extent2D::default().width(out.size.width).height(out.size.height),

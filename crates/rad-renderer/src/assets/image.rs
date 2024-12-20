@@ -40,6 +40,16 @@ impl Asset for Image {
 		uuid!("e68fac6b-41d0-48c5-a5ff-3e6cfe9b53f0")
 	}
 
+	fn unloaded() -> Self
+	where
+		Self: Sized,
+	{
+		Self {
+			image: resource::Image::default(),
+			view: ImageView::default(),
+		}
+	}
+
 	fn load(mut view: Box<dyn AssetView>) -> Result<Self, std::io::Error>
 	where
 		Self: Sized,

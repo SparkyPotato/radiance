@@ -86,37 +86,27 @@ public struct Transform {
 	}
 }
 
-public struct Material {
-	public OTex2D<f32x4> base_color;
+public struct Material<U : Uniformity = Uniform> {
+	public OTex2D<f32x4, U> base_color;
 	public f32x4 base_color_factor;
-	public OTex2D<f32x4> metallic_roughness;
+	public OTex2D<f32x4, U> metallic_roughness;
 	public f32 metallic_factor;
 	public f32 roughness_factor;
-	public OTex2D<f32x4> normal;
-	public OTex2D<f32x4> emissive;
+	public OTex2D<f32x4, U> normal;
+	public OTex2D<f32x4, U> emissive;
 	public f32x3 emissive_factor;
 }
 
-public struct Instance {
+public struct Instance<U : Uniformity = Uniform> {
 	public Transform transform;
 	public Transform last_updated_transform;
 	public Aabb aabb;
 	public u64 update_frame;
 	public u8* mesh;
 	public Vertex* raw_mesh;
-	public Material* material;
+	public Material<U>* material;
 	public u32 raw_vertex_count;
-
-	public __init(NewInstance instance) {
-		this.transform = instance.transform;
-		this.last_updated_transform = instance.transform;
-		this.aabb = instance.aabb;
-		this.mesh = instance.mesh;
-		this.raw_mesh = instance.raw_mesh;
-		this.material = instance.material;
-		this.raw_vertex_count = instance.raw_vertex_count;
-		this.update_frame = 0;
-	}
+	public u32 raw_tri_count;
 
 	public BvhNode node(u32 offset) {
 		return *(BvhNode*)(this.mesh + offset);
@@ -133,16 +123,6 @@ public struct Instance {
 			return this.transform;
 		}
 	}
-}
-
-public struct NewInstance {
-	public Transform transform;
-	public Aabb aabb;
-	public u8* mesh;
-	public Vertex* raw_mesh;
-	public Material* material;
-	public u64 as;
-	public u32 raw_vertex_count;
 }
 
 public struct Meshlet {
@@ -166,6 +146,19 @@ public struct Meshlet {
 	}
 }
 
+public enum LightType {
+	Point,
+	Directional,
+	Emissive,
+	Sky,
+}
+
+public struct Light {
+	public LightType ty;
+	public f32x3 radiance;	  // x value is bitcasted u32 if emissive.
+	public f32x3 pos_or_dir;  // pos for point, dir for directional.
+}
+
 public struct Camera {
 	public Transform transform;
 	public f32 w;
@@ -176,9 +169,9 @@ public struct Camera {
 		// clang-format off
 		return {
 			w,   0.f, 0.f, 0.f,
-			0.f, h,   0.f, 0.f,
+			0.f, 0.f, h,   0.f,
 			0.f, 0.f, 0.f, near,
-			0.f, 0.f, 1.f, 0.f,
+			0.f, 1.f, 0.f, 0.f,
 		};
 		// clang-format on
 	}
@@ -191,8 +184,8 @@ public struct Camera {
 		// clang-format off
 		return {
 			1.f / w, 0.f,     0.f,        0.f,
-			0.f,     1.f / h, 0.f,        0.f,
 			0.f,     0.f,     0.f,        1.f,
+			0.f,     1.f / h, 0.f,        0.f,
 			0.f,     0.f,     1.f / near, 0.f,
 		};
 		// clang-format on
@@ -208,21 +201,5 @@ public struct Camera {
 
 	public f32x4x4 inv_view_proj() {
 		return mul(this.inv_view(), this.inv_proj());
-	}
-
-	f32x4x4 sus_perspective_matrix() {
-		// clang-format off
-		return f32x4x4(
-			1.f / w, 0.f, 0.f, 0.f,
-			0.f, 1.f / h, 0.f, 0.f,
-			0.f, 0.f, 0.997893f, -0.00110877f,
-			0.f, 0.f, -0.110877f, 0.110988f
-		);
-		// clang-format on
-	}
-
-	public f32x3 camera_ray(f32x2 uv) {
-		let clip = f32x2(uv.x, -uv.y) * 2.f - 1.f;
-		return normalize(mul(this.sus_perspective_matrix(), f32x4(clip, 1.f, 1.f)).xyz);
 	}
 }

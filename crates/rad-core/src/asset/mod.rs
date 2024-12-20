@@ -15,7 +15,7 @@ use crate::asset::aref::{ARef, AWeak};
 
 pub mod aref;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Pod, Zeroable)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Pod, Zeroable)]
 #[serde(transparent)]
 #[repr(transparent)]
 pub struct AssetId(Uuid);
@@ -179,6 +179,10 @@ impl<T: ?Sized + AssetView> AssetView for Box<T> {
 
 pub trait Asset: Any + Send + Sync {
 	fn uuid() -> Uuid
+	where
+		Self: Sized;
+
+	fn unloaded() -> Self
 	where
 		Self: Sized;
 

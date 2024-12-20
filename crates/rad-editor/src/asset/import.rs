@@ -27,11 +27,15 @@ use rad_renderer::{
 		material::Material,
 		mesh::{GpuVertex, Mesh, MeshData},
 	},
-	components::{camera::CameraComponent, mesh::MeshComponent},
+	components::{
+		camera::CameraComponent,
+		light::{LightComponent, LightType},
+		mesh::MeshComponent,
+	},
 	vek::{Mat4, Quaternion, Vec2, Vec3},
 };
 use rad_world::{transform::Transform, World};
-use rayon::iter::{ParallelBridge, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use tracing::{span, trace_span, Level};
 
 use crate::asset::fs::FsAssetSystem;
@@ -89,10 +93,9 @@ impl GltfImporter {
 		let sys: &Arc<FsAssetSystem> = Engine::get().asset_source().unwrap();
 
 		let prog = AtomicUsize::new(0);
-		let images: Vec<_> = self
-			.gltf
-			.images()
-			.par_bridge()
+		let images: Vec<_> = self.gltf.images().collect();
+		let images: Vec<_> = images
+			.into_par_iter()
 			.map(|image| {
 				let id = AssetId::new();
 				let name = image
@@ -135,15 +138,14 @@ impl GltfImporter {
 					.ratio(total),
 				);
 
-				Engine::get().asset::<Image>(id)
+				Ok::<_, io::Error>(ARef::unloaded(id))
 			})
 			.collect::<Result<_, _>>()?;
 
 		let prog = AtomicUsize::new(0);
-		let materials: Vec<_> = self
-			.gltf
-			.materials()
-			.par_bridge()
+		let materials: Vec<_> = self.gltf.materials().collect();
+		let materials: Vec<_> = materials
+			.into_par_iter()
 			.map(|mat| {
 				let id = AssetId::new();
 				let name = mat.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
@@ -161,15 +163,14 @@ impl GltfImporter {
 					.ratio(total),
 				);
 
-				Ok::<_, io::Error>(ARef::new(id, mat))
+				Ok::<_, io::Error>(ARef::unloaded(id))
 			})
 			.collect::<Result<_, _>>()?;
 
 		let prog = AtomicUsize::new(0);
-		let meshes: Vec<_> = self
-			.gltf
-			.meshes()
-			.par_bridge()
+		let meshes: Vec<_> = self.gltf.meshes().collect();
+		let meshes: Vec<_> = meshes
+			.into_par_iter()
 			.map(|mesh| {
 				let name = mesh.name().map(|x| x.to_string());
 				let prims = self.conv_to_meshes(mesh, &materials).map_err(io::Error::other)?;
@@ -187,7 +188,7 @@ impl GltfImporter {
 						};
 						let path = Path::new("meshes").join(&name);
 						Mesh::import(&name, m, sys.create(&path, id, Mesh::uuid())?)?;
-						Engine::get().asset::<Mesh>(id)
+						Ok::<_, io::Error>(ARef::unloaded(id))
 					})
 					.collect::<Result<Vec<_>, _>>()?;
 
@@ -290,7 +291,16 @@ impl GltfImporter {
 
 	fn node(&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[Vec<ARef<Mesh>>], out: &mut World) {
 		// let name = node.name().unwrap_or("unnamed node").to_string();
-		let this_transform = Mat4::from_col_arrays(node.transform().matrix());
+
+		// gltf is X- right, Y up, Z in
+		// we are X right, Y in, Z up
+		let basis_change = Mat4::new(
+			1.0, 0.0, 0.0, 0.0, //
+			0.0, 0.0, -1.0, 0.0, //
+			0.0, 1.0, 0.0, 0.0, //
+			0.0, 0.0, 0.0, 1.0, //
+		);
+		let this_transform = basis_change * Mat4::from_col_arrays(node.transform().matrix());
 		let transform = transform * this_transform;
 		let (p, r, s) = gltf::scene::Transform::Matrix {
 			matrix: transform.into_col_arrays(),
@@ -298,14 +308,26 @@ impl GltfImporter {
 		.decomposed();
 
 		let mut entity = out.spawn_empty();
-		entity.insert(Transform {
+		let t = Transform {
 			position: p.into(),
 			rotation: Quaternion::from_vec4(r.into()),
 			scale: s.into(),
-		});
+		};
+		entity.insert(t);
 
 		if let Some(mesh) = node.mesh() {
 			entity.insert(MeshComponent::new(&meshes[mesh.index()].clone()));
+		}
+
+		if let Some(light) = node.light() {
+			entity.insert(LightComponent {
+				ty: match light.kind() {
+					gltf::khr_lights_punctual::Kind::Directional => LightType::Directional,
+					gltf::khr_lights_punctual::Kind::Point => LightType::Point,
+					_ => LightType::Directional,
+				},
+				radiance: Vec3::from(light.color()) * light.intensity(),
+			});
 		}
 
 		if let Some(Projection::Perspective(p)) = node.camera().as_ref().map(|x| x.projection()) {

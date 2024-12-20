@@ -82,15 +82,17 @@ impl FsAssetSystem {
 
 	pub fn open(&self, root: PathBuf) { *self.root.write() = Some(root) }
 
-	pub fn create(&self, path: &Path, id: AssetId, ty: Uuid) -> Result<Box<dyn AssetView>, io::Error> {
-		let header = AssetHeader { id, ty };
-		self.add_asset(path, header);
-
+	pub fn create(&self, rel_path: &Path, id: AssetId, ty: Uuid) -> Result<Box<dyn AssetView>, io::Error> {
 		let path = self
-			.abs_path(path)
+			.abs_path(rel_path)
 			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
 		fs::create_dir_all(path.parent().unwrap())?;
-		FsAssetView::create(&path, id, ty).map(|x| Box::new(x) as Box<_>)
+		let view = FsAssetView::create(&path, id, ty).map(|x| Box::new(x) as Box<_>);
+
+		let header = AssetHeader { id, ty };
+		self.add_asset(rel_path, header);
+
+		view
 	}
 
 	pub fn dir(&self) -> impl Deref<Target = Dir> + '_ { self.dir.read() }
