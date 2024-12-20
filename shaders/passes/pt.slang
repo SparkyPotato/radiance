@@ -247,6 +247,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 
 	for (int i = 0; i < 10; i++) {
 		let h = trace_ray(ray);
+		return h.hasValue ? f32x3(1.f) : f32x3(0.f);
 		if (!h.hasValue) {
 			if (specular)
 				L += b * sample_sky(ray.dir);

@@ -120,7 +120,7 @@ impl Default for GraphicsPipelineDesc<'_> {
 			rasterizer_discard_enable: 0,
 			polygon_mode: vk::PolygonMode::FILL,
 			cull_mode: vk::CullModeFlags::BACK,
-			front_face: vk::FrontFace::CLOCKWISE,
+			front_face: vk::FrontFace::COUNTER_CLOCKWISE,
 			depth_bias_enable: 0,
 			depth_bias_constant_factor: 0.0,
 			depth_bias_clamp: 0.0,

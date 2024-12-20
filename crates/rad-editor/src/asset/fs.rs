@@ -5,6 +5,7 @@ use std::{
 	ops::Deref,
 	path::{Path, PathBuf},
 	sync::Arc,
+	time::SystemTime,
 };
 
 use bytemuck::{Pod, Zeroable};
@@ -12,6 +13,7 @@ use parking_lot::RwLock;
 use rad_core::asset::{AssetId, AssetSource, AssetView};
 use rad_world::Uuid;
 use rustc_hash::{FxHashMap, FxHashSet};
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 #[derive(Copy, Clone, Pod, Zeroable)]
@@ -55,12 +57,19 @@ impl Dir {
 	}
 }
 
+#[derive(Default, Serialize, Deserialize)]
+#[serde(transparent)]
+struct ImportPaths {
+	paths: FxHashMap<PathBuf, AssetId>,
+}
+
 #[derive(Default)]
 pub struct FsAssetSystem {
 	root: RwLock<Option<PathBuf>>,
 	assets: RwLock<FxHashMap<AssetId, PathBuf>>,
 	by_type: RwLock<FxHashMap<Uuid, FxHashSet<AssetId>>>,
 	dir: RwLock<Dir>,
+	paths: RwLock<ImportPaths>,
 }
 
 impl FsAssetSystem {
@@ -82,7 +91,13 @@ impl FsAssetSystem {
 
 	pub fn open(&self, root: PathBuf) { *self.root.write() = Some(root) }
 
-	pub fn create(&self, rel_path: &Path, id: AssetId, ty: Uuid) -> Result<Box<dyn AssetView>, io::Error> {
+	pub fn create(
+		&self, rel_path: &Path, id: AssetId, ty: Uuid, from: Option<PathBuf>,
+	) -> Result<Box<dyn AssetView>, io::Error> {
+		if let Some(from) = from {
+			self.paths.write().paths.insert(from, id);
+		}
+		let _ = self.write_imports();
 		let path = self
 			.abs_path(rel_path)
 			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
@@ -93,6 +108,17 @@ impl FsAssetSystem {
 		self.add_asset(rel_path, header);
 
 		view
+	}
+
+	pub fn import_source_of(&self, path: &Path) -> Option<(AssetId, SystemTime)> {
+		let &id = self.paths.read().paths.get(path)?;
+		let mtime = self.assets.read().get(&id).map(|x| {
+			x.metadata()
+				.ok()
+				.and_then(|x| x.modified().ok())
+				.unwrap_or(SystemTime::UNIX_EPOCH)
+		})?;
+		Some((id, mtime))
 	}
 
 	pub fn dir(&self) -> impl Deref<Target = Dir> + '_ { self.dir.read() }
@@ -112,6 +138,7 @@ impl FsAssetSystem {
 			root: RwLock::new(r),
 			..Default::default()
 		};
+		let _ = new.load_imports();
 		for entry in w.into_iter().filter_map(|x| x.ok()) {
 			let path = entry.path();
 			let is_file = path.is_file();
@@ -128,6 +155,7 @@ impl FsAssetSystem {
 		*self.assets.write() = new.assets.into_inner();
 		*self.by_type.write() = new.by_type.into_inner();
 		*self.dir.write() = new.dir.into_inner();
+		*self.paths.write() = new.paths.into_inner();
 	}
 
 	fn add_asset(&self, rel_path: &Path, asset: AssetHeader) {
@@ -158,6 +186,33 @@ impl FsAssetSystem {
 			.read()
 			.as_ref()
 			.map(|x| x.join(rel_path).with_added_extension("radass"))
+	}
+
+	fn load_imports(&self) -> Result<(), io::Error> {
+		let root = self.root.read();
+		let path = root
+			.as_ref()
+			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
+		let path = path.join(".imports.json");
+		let imports = if path.exists() {
+			let file = fs::File::open(&path)?;
+			serde_json::from_reader(file)?
+		} else {
+			ImportPaths::default()
+		};
+		*self.paths.write() = imports;
+		Ok(())
+	}
+
+	fn write_imports(&self) -> Result<(), io::Error> {
+		let root = self.root.read();
+		let path = root
+			.as_ref()
+			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
+		let path = path.join(".imports.json");
+		let file = fs::File::create(&path)?;
+		serde_json::to_writer_pretty(file, &*self.paths.read())?;
+		Ok(())
 	}
 }
 

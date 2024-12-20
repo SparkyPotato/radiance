@@ -1,11 +1,12 @@
 use std::{
-	fs::File,
+	fs::{self, File},
 	io::{self, BufReader},
 	path::{Path, PathBuf},
 	sync::{
 		atomic::{AtomicUsize, Ordering},
 		Arc,
 	},
+	time::SystemTime,
 };
 
 use bytemuck::from_bytes;
@@ -36,7 +37,7 @@ use rad_renderer::{
 };
 use rad_world::{transform::Transform, World};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
-use tracing::{span, trace_span, Level};
+use tracing::{info, span, trace_span, Level};
 
 use crate::asset::fs::FsAssetSystem;
 
@@ -97,6 +98,24 @@ impl GltfImporter {
 		let images: Vec<_> = images
 			.into_par_iter()
 			.map(|image| {
+				let meta_path = match image.source() {
+					Source::Uri { uri, .. } => fs::canonicalize(self.base.join(uri)).ok(),
+					_ => None,
+				};
+				if let Some(ref p) = meta_path {
+					if let Some((id, modified)) = sys.import_source_of(&p) {
+						if modified
+							>= p.metadata()
+								.ok()
+								.and_then(|x| x.modified().ok())
+								.unwrap_or(SystemTime::UNIX_EPOCH)
+						{
+							info!("skipping image {}", p.display());
+							return Ok(ARef::unloaded(id));
+						}
+					}
+				}
+
 				let id = AssetId::new();
 				let name = image
 					.name()
@@ -125,7 +144,7 @@ impl GltfImporter {
 						is_normal_map: false,
 						is_srgb: true,
 					},
-					sys.create(&path, id, Image::uuid())?,
+					sys.create(&path, id, Image::uuid(), meta_path)?,
 				)?;
 				let old = prog.fetch_add(1, Ordering::Relaxed);
 				progress(
@@ -151,7 +170,7 @@ impl GltfImporter {
 				let name = mat.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
 				let path = Path::new("materials").join(&name);
 				let mat = self.material(&name, mat, &images);
-				mat.save(&mut sys.create(&path, id, Material::uuid())?)?;
+				mat.save(&mut sys.create(&path, id, Material::uuid(), None)?)?;
 				let old = prog.fetch_add(1, Ordering::Relaxed);
 				progress(
 					ImportProgress {
@@ -187,7 +206,7 @@ impl GltfImporter {
 							format!("{name}-{i}")
 						};
 						let path = Path::new("meshes").join(&name);
-						Mesh::import(&name, m, sys.create(&path, id, Mesh::uuid())?)?;
+						Mesh::import(&name, m, sys.create(&path, id, Mesh::uuid(), None)?)?;
 						Ok::<_, io::Error>(ARef::unloaded(id))
 					})
 					.collect::<Result<Vec<_>, _>>()?;
@@ -213,7 +232,7 @@ impl GltfImporter {
 			let name = scene.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
 			let path = Path::new("scenes").join(&name);
 			let world = self.scene(&name, scene, &meshes).map_err(io::Error::other)?;
-			world.save(sys.create(&path, id, World::uuid())?.as_mut())?;
+			world.save(sys.create(&path, id, World::uuid(), None)?.as_mut())?;
 			let old = prog.fetch_add(1, Ordering::Relaxed);
 			progress(
 				ImportProgress {
@@ -292,6 +311,11 @@ impl GltfImporter {
 	fn node(&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[Vec<ARef<Mesh>>], out: &mut World) {
 		// let name = node.name().unwrap_or("unnamed node").to_string();
 
+		let this_transform = Mat4::from_col_arrays(node.transform().matrix());
+		let transform = transform * this_transform;
+
+		let mut entity = out.spawn_empty();
+
 		// gltf is X- right, Y up, Z in
 		// we are X right, Y in, Z up
 		let basis_change = Mat4::new(
@@ -300,20 +324,15 @@ impl GltfImporter {
 			0.0, 1.0, 0.0, 0.0, //
 			0.0, 0.0, 0.0, 1.0, //
 		);
-		let this_transform = basis_change * Mat4::from_col_arrays(node.transform().matrix());
-		let transform = transform * this_transform;
 		let (p, r, s) = gltf::scene::Transform::Matrix {
-			matrix: transform.into_col_arrays(),
+			matrix: (basis_change * transform).into_col_arrays(),
 		}
 		.decomposed();
-
-		let mut entity = out.spawn_empty();
-		let t = Transform {
+		entity.insert(Transform {
 			position: p.into(),
 			rotation: Quaternion::from_vec4(r.into()),
 			scale: s.into(),
-		};
-		entity.insert(t);
+		});
 
 		if let Some(mesh) = node.mesh() {
 			entity.insert(MeshComponent::new(&meshes[mesh.index()].clone()));
