@@ -795,7 +795,8 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 				let mut subresource = usage.subresource();
 				while let Some((&pass, usage)) = usages.peek() {
 					let as_next = usage.as_next(prev_access);
-					if usage.is_write() || as_next.image_layout != prev_access.image_layout {
+					// TODO: don't care about image layouts for buffers
+					if usage.is_write() || as_next.image_layout != next_prev_access.image_layout {
 						// We've hit a write, stop merging now.
 						// Note that read -> read layout transitions are also writes.
 						break;

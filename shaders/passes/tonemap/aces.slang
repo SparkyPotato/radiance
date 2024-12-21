@@ -1,13 +1,16 @@
 import graph;
 import graph.util;
+import graph.util.color;
 
 struct PushConstants {
 	Tex2D<f32x4> input;
+	f32* avg_lum;
 };
 
 [vk::push_constant]
 PushConstants Constants;
 
+// Don't rember where I stole this from, but:
 // The code in this file was originally written by Stephen Hill (@self_shadow), who deserves all
 // credit for coming up with this fit and implementing it. Buy him a beer next time you see him. :)
 
@@ -28,6 +31,10 @@ f32x3 RRTAndODTFit(f32x3 v) {
 }
 
 f32x3 ACESFitted(f32x3 color) {
+	var yxy = rgb_to_Yxy(color);
+	yxy.x /= (9.6f * *Constants.avg_lum + 0.0001f);
+	color = Yxy_to_rgb(yxy);
+
 	color = mul(ACESInputMat, color);
 
 	// Apply RRT and ODT

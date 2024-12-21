@@ -75,7 +75,7 @@ void update(u32 id: SV_DispatchThreadID) {
 			let as_instance = &Constants.as_instances[update.instance];
 			*instance = update.data.to_instance();
 			as_instance->transform = instance->transform.vk_mat();
-			as_instance->instanceCustomIndexAndMask = (0xff << 24) | id;
+			as_instance->instanceCustomIndexAndMask = 0xff << 24;
 			as_instance->instanceShaderBindingTableRecordOffsetAndFlags = 0;
 			as_instance->accelerationStructureReference = update.data.as;
 			break;

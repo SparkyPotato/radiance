@@ -1,7 +1,9 @@
+use egui_plot::{Bar, BarChart, HPlacement, Plot, VPlacement};
 use rad_graph::device::{Device, HotreloadStatus};
 use rad_renderer::{
 	debug::mesh::DebugVis,
 	mesh::{CullStats, PassStats},
+	tonemap::exposure::ExposureStats,
 };
 use rad_ui::egui::{ComboBox, Context, DragValue, Ui, Window};
 
@@ -53,7 +55,7 @@ impl DebugWindow {
 		}
 	}
 
-	pub fn render(&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>) {
+	pub fn render(&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>, exp: Option<ExposureStats>) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut sel = self.render_mode as usize;
 			ComboBox::from_label("render mode")
@@ -110,6 +112,29 @@ impl DebugWindow {
 				Self::pass_stats(ui, stats.early);
 				ui.label("late");
 				Self::pass_stats(ui, stats.late);
+			}
+
+			if let Some(exp) = exp {
+				ui.label(format!("luminance: {:.2}", exp.luminance));
+
+				Plot::new("exposure histogram")
+					.allow_zoom(false)
+					.allow_scroll(false)
+					.allow_drag(false)
+					.allow_boxed_zoom(false)
+					.show_background(false)
+					.show_grid(false)
+					.x_axis_position(VPlacement::Bottom)
+					.y_axis_position(HPlacement::Left)
+					.show(ui, |ui| {
+						ui.bar_chart(BarChart::new(
+							exp.histogram
+								.into_iter()
+								.enumerate()
+								.map(|(i, x)| Bar::new(i as _, x as _).width(1.0))
+								.collect(),
+						));
+					});
 			}
 		});
 	}

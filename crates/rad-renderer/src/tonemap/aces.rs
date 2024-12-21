@@ -2,8 +2,8 @@ use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
-	graph::{Frame, ImageDesc, ImageUsage, ImageUsageType, Res, Shader},
-	resource::{ImageView, Subresource},
+	graph::{BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, Res, Shader},
+	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
 	util::{
 		pass::{Attachment, Load},
 		render::FullscreenPass,
@@ -19,7 +19,8 @@ pub struct AcesTonemap {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	input: ImageId,
-	exposure: f32,
+	_pad: u32,
+	avg_lum: GpuPtr<f32>,
 }
 
 impl AcesTonemap {
@@ -37,7 +38,9 @@ impl AcesTonemap {
 	}
 
 	/// `highlights` must be sorted.
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>) -> Res<ImageView> {
+	pub fn run<'pass>(
+		&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, avg_lum: Res<BufferHandle>,
+	) -> Res<ImageView> {
 		let mut pass = frame.pass("aces tonemap");
 
 		pass.reference(
@@ -47,6 +50,12 @@ impl AcesTonemap {
 				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
 				view_type: Some(vk::ImageViewType::TYPE_2D),
 				subresource: Subresource::default(),
+			},
+		);
+		pass.reference(
+			avg_lum,
+			BufferUsage {
+				usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
 			},
 		);
 		let desc = pass.desc(input);
@@ -67,9 +76,14 @@ impl AcesTonemap {
 
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
+			let avg_lum = pass.get(avg_lum).ptr();
 			self.pass.run(
 				&mut pass,
-				&PushConstants { input, exposure: 0.0 },
+				&PushConstants {
+					input,
+					_pad: 0,
+					avg_lum,
+				},
 				&[Attachment {
 					image: out,
 					load: Load::Clear(vk::ClearValue {

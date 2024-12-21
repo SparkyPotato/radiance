@@ -23,6 +23,7 @@ bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 bytemuck = { version = "1.15.0", features = ["derive"] }
 crossbeam-channel = "0.5.13"
 egui = { version = "0.30.0" }
+egui_plot = { version = "0.30.0" }
 egui-winit = { version = "0.30.0" }
 gltf = { version = "1.4.1", features = ["KHR_lights_punctual"] }
 gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", features = ["vulkan", "visualizer"] }

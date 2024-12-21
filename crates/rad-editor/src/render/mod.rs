@@ -4,7 +4,7 @@ use rad_renderer::{
 	debug::mesh::DebugMesh,
 	mesh::{self, VisBuffer},
 	pt::{self, PathTracer},
-	tonemap::aces::AcesTonemap,
+	tonemap::{aces::AcesTonemap, exposure::ExposureCalc},
 	vek::Vec2,
 };
 use rad_ui::{
@@ -28,6 +28,7 @@ pub struct Renderer {
 	pub debug_window: DebugWindow,
 	visbuffer: VisBuffer,
 	pt: PathTracer,
+	exposure: ExposureCalc,
 	aces: AcesTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
@@ -41,6 +42,7 @@ impl Renderer {
 			debug_window: DebugWindow::new(),
 			visbuffer: VisBuffer::new(device)?,
 			pt: PathTracer::new(device)?,
+			exposure: ExposureCalc::new(device)?,
 			aces: AcesTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
@@ -55,7 +57,7 @@ impl Renderer {
 	pub fn render<'pass>(
 		&'pass mut self, window: &Window, frame: &mut Frame<'pass, '_>, ctx: &Context, world: &'pass mut WorldContext,
 	) {
-		let stats = CentralPanel::default()
+		let (stats, exp) = CentralPanel::default()
 			.show(ctx, |ui| {
 				let rect = ui.available_rect_before_wrap();
 				let size = rect.size();
@@ -73,7 +75,7 @@ impl Renderer {
 				let vis = self.debug_window.debug_vis();
 				let data = world.renderer().update(frame, self.frame);
 
-				let (img, stats) = match self.debug_window.render_mode() {
+				let (img, stats, exp) = match self.debug_window.render_mode() {
 					RenderMode::Path => {
 						let hdr = self.pt.run(
 							frame,
@@ -82,8 +84,9 @@ impl Renderer {
 								size: Vec2::new(size.x as u32, size.y as u32),
 							},
 						);
-						let img = self.aces.run(frame, hdr);
-						(img, None)
+						let (lum, exp) = self.exposure.run(frame, hdr, ui.input(|x| x.stable_dt));
+						let img = self.aces.run(frame, hdr, lum);
+						(img, None, Some(exp))
 					},
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(
@@ -95,16 +98,16 @@ impl Renderer {
 							},
 						);
 						let img = self.debug.run(frame, vis, visbuffer, [].into_iter());
-						(img, Some(visbuffer.stats))
+						(img, Some(visbuffer.stats), None)
 					},
 				};
 				ui.put(rect, Image::new((to_texture_id(img), size)));
 
-				stats
+				(stats, exp)
 			})
 			.inner;
 
-		self.debug_window.render(frame.device(), ctx, stats);
+		self.debug_window.render(frame.device(), ctx, stats, exp);
 
 		self.frame += 1;
 	}

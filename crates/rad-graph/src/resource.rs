@@ -108,6 +108,8 @@ impl Default for BufferHandle {
 
 impl BufferHandle {
 	pub fn ptr<T: NoUninit>(&self) -> GpuPtr<T> { GpuPtr(self.addr, PhantomData) }
+
+	pub fn size(&self) -> u64 { self.data.len() as _ }
 }
 
 /// A buffer.

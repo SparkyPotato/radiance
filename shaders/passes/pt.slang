@@ -79,7 +79,7 @@ Optional<Hit> trace_ray(Ray ray) {
 	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray.to_rt());
 	while (q.Proceed());
 	if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-		let instance = Constants.instances[q.CommittedRayInstanceCustomIndex()];
+		let instance = Constants.instances[q.CommittedRayInstanceId()];
 		let tri = q.CommittedRayPrimitiveIndex();
 		let iptr = (u32*)(instance.raw_mesh + instance.raw_vertex_count);
 		let indices = u32x3(iptr[tri * 3], iptr[tri * 3 + 1], iptr[tri * 3 + 2]);
@@ -101,12 +101,12 @@ Optional<Hit> trace_ray(Ray ray) {
 		let em = mat->emissive.get();
 		let white = f32x4(1.f);
 		let met_rough = mr.load(mr.pixel_of_uv(uv), white).xy;
-		// let emissive = em.load(em.pixel_of_uv(uv), white).xyz * mat->emissive_factor;
+		let emissive = em.load(em.pixel_of_uv(uv), white).xyz * mat->emissive_factor;
 
 		Hit h = {};
 		h.position = position;
 		h.normal = f32x3(0.f, 0.f, 1.f);
-		h.emissive = f32x3(0.f);
+		h.emissive = emissive;
 		h.from_shading_basis = gen_basis(normal);
 		h.to_shading_basis = transpose(h.from_shading_basis);
 		h.params.base_color = (bc.load(bc.pixel_of_uv(uv), white) * mat->base_color_factor).xyz;
@@ -151,7 +151,6 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			return { L, wi, 1e10f, pdf };
 		}
 		case LightType.Emissive: {
-			return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
 			let i = asuint(light.radiance.x);
 			let instance = Constants.instances[i];
 
@@ -196,8 +195,7 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 }
 
 LightSample sample_one_light(inout Rng rng, Hit hit) {
-	// let n = f32(Constants.light_count);
-	let n = 0.f;
+	let n = f32(Constants.light_count);
 	if (n == 0)
 		return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
 
@@ -247,7 +245,6 @@ f32x3 li(inout Rng rng, Ray ray) {
 
 	for (int i = 0; i < 10; i++) {
 		let h = trace_ray(ray);
-		return h.hasValue ? f32x3(1.f) : f32x3(0.f);
 		if (!h.hasValue) {
 			if (specular)
 				L += b * sample_sky(ray.dir);

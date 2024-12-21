@@ -455,8 +455,8 @@ impl<'a> DeviceBuilder<'a> {
 			// khr::ray_tracing_pipeline::NAME,
 			// khr::ray_tracing_maintenance1::NAME,
 			khr::deferred_host_operations::NAME,
-			khr::maintenance5::NAME,
-			khr::maintenance6::NAME,
+			// khr::maintenance5::NAME,
+			// khr::maintenance6::NAME,
 		]);
 		extensions
 	}

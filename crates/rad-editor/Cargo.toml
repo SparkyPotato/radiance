@@ -13,6 +13,7 @@ rad-window = { path = "../rad-window" }
 rad-world = { path = "../rad-world" }
 
 bytemuck = { workspace = true }
+egui_plot = { workspace = true }
 gltf = { workspace = true }
 parking_lot = { workspace = true }
 rayon = { workspace = true }

@@ -69,4 +69,3 @@ public f32 print(f32x2 uv, f32x2 start_uv, f32x2 vFontSize, f32 fValue, f32 fMax
 	vStringCharCoords.y = 1.f - vStringCharCoords.y;
 	return print(vStringCharCoords, fValue, fMaxDigits, fDecimalPlaces);
 }
-
