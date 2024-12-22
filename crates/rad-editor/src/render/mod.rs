@@ -115,7 +115,7 @@ impl Renderer {
 	pub unsafe fn destroy(self) {
 		let device = Engine::get().global();
 		self.visbuffer.destroy(device);
-		self.pt.destroy(device);
+		self.pt.destroy();
 		self.exposure.destroy();
 		self.aces.destroy();
 		self.debug.destroy();

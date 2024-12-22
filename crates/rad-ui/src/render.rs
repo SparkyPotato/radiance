@@ -19,6 +19,7 @@ use rad_graph::{
 		descriptor::{ImageId, SamplerId},
 		Device,
 		GraphicsPipelineDesc,
+		SamplerDesc,
 		ShaderInfo,
 	},
 	graph::{
@@ -69,10 +70,10 @@ pub struct ScreenDescriptor {
 
 pub struct Renderer {
 	images: FxHashMap<u64, (Image, Vec2<u32>, ImageView, SamplerId)>,
-	samplers: FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>,
 	pass: RenderPass<PushConstantsStatic>,
 	vertex_size: u64,
 	index_size: u64,
+	default_sampler: SamplerId,
 }
 
 struct PassIO {
@@ -120,10 +121,10 @@ impl Renderer {
 
 		Ok(Self {
 			images: FxHashMap::default(),
-			samplers: FxHashMap::default(),
 			pass,
 			vertex_size: VERTEX_BUFFER_START_CAPACITY,
 			index_size: INDEX_BUFFER_START_CAPACITY,
+			default_sampler: device.sampler(SamplerDesc::default()),
 		})
 	}
 
@@ -221,12 +222,6 @@ impl Renderer {
 			view.destroy(device);
 			image.destroy(device);
 		}
-		for (_, (sampler, id)) in self.samplers {
-			unsafe {
-				device.device().destroy_sampler(sampler, None);
-				device.descriptors().return_sampler(id);
-			}
-		}
 		self.pass.destroy();
 	}
 
@@ -281,14 +276,7 @@ impl Renderer {
 									pass.pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
 								}
 							};
-							let sampler = self.samplers[&TextureOptions {
-								magnification: TextureFilter::Linear,
-								minification: TextureFilter::Linear,
-								mipmap_mode: None,
-								wrap_mode: TextureWrapMode::ClampToEdge,
-							}]
-								.1;
-							(image, sampler)
+							(image, self.default_sampler)
 						},
 					};
 					pass.push(
@@ -408,12 +396,7 @@ impl Renderer {
 			Entry::Occupied(mut x) => {
 				let curr_size = x.get().1;
 				if Vec2::max(curr_size, size) != curr_size {
-					let (image, _, view, _) = x.insert(Self::make_image(
-						&mut self.samplers,
-						frame.device(),
-						size,
-						delta.options,
-					));
+					let (image, _, view, _) = x.insert(Self::make_image(frame.device(), size, delta.options));
 					frame.delete(image);
 					frame.delete(view);
 				}
@@ -421,21 +404,13 @@ impl Renderer {
 				(i.handle(), i.desc())
 			},
 			Entry::Vacant(x) => {
-				let i = x.insert(Self::make_image(
-					&mut self.samplers,
-					frame.device(),
-					size,
-					delta.options,
-				));
+				let i = x.insert(Self::make_image(frame.device(), size, delta.options));
 				(i.0.handle(), i.0.desc())
 			},
 		}
 	}
 
-	fn make_image(
-		samplers: &mut FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>, device: &Device, size: Vec2<u32>,
-		opts: TextureOptions,
-	) -> (Image, Vec2<u32>, ImageView, SamplerId) {
+	fn make_image(device: &Device, size: Vec2<u32>, opts: TextureOptions) -> (Image, Vec2<u32>, ImageView, SamplerId) {
 		let extent = vk::Extent3D {
 			width: size.x,
 			height: size.y,
@@ -470,14 +445,12 @@ impl Renderer {
 		)
 		.unwrap();
 
-		let id = Self::get_sampler(samplers, device, opts);
+		let id = Self::get_sampler(device, opts);
 
 		(image, size, view, id)
 	}
 
-	fn get_sampler(
-		samplers: &mut FxHashMap<TextureOptions, (vk::Sampler, SamplerId)>, device: &Device, opts: TextureOptions,
-	) -> SamplerId {
+	fn get_sampler(device: &Device, opts: TextureOptions) -> SamplerId {
 		fn map_filter(filter: TextureFilter) -> vk::Filter {
 			match filter {
 				TextureFilter::Nearest => vk::Filter::NEAREST,
@@ -493,26 +466,18 @@ impl Renderer {
 			}
 		}
 
-		samplers
-			.entry(opts)
-			.or_insert_with(|| unsafe {
-				let sampler = device
-					.device()
-					.create_sampler(
-						&vk::SamplerCreateInfo::default()
-							.mag_filter(map_filter(opts.magnification))
-							.min_filter(map_filter(opts.minification))
-							.address_mode_u(map_repeat(opts.wrap_mode))
-							.address_mode_v(map_repeat(opts.wrap_mode))
-							.address_mode_w(map_repeat(opts.wrap_mode))
-							.mipmap_mode(vk::SamplerMipmapMode::LINEAR),
-						None,
-					)
-					.unwrap();
-				let id = device.descriptors().get_sampler(device, sampler);
-				(sampler, id)
-			})
-			.1
+		device.sampler(SamplerDesc {
+			mag_filter: map_filter(opts.magnification),
+			min_filter: map_filter(opts.minification),
+			mipmap_mode: match opts.mipmap_mode {
+				Some(TextureFilter::Nearest) | None => vk::SamplerMipmapMode::NEAREST,
+				Some(TextureFilter::Linear) => vk::SamplerMipmapMode::LINEAR,
+			},
+			address_mode_u: map_repeat(opts.wrap_mode),
+			address_mode_v: map_repeat(opts.wrap_mode),
+			address_mode_w: map_repeat(opts.wrap_mode),
+			..Default::default()
+		})
 	}
 }
 

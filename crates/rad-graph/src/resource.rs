@@ -526,12 +526,9 @@ impl Resource for ImageView {
 
 			let (id, storage_id) = match desc.usage {
 				ImageViewUsage::None => (None, None),
-				ImageViewUsage::Sampled => (Some(device.descriptors().get_image(device, view)), None),
-				ImageViewUsage::Storage => (None, Some(device.descriptors().get_storage_image(device, view))),
-				ImageViewUsage::Both => (
-					Some(device.descriptors().get_image(device, view)),
-					Some(device.descriptors().get_storage_image(device, view)),
-				),
+				ImageViewUsage::Sampled => (Some(device.image_id(view)), None),
+				ImageViewUsage::Storage => (None, Some(device.storage_image_id(view))),
+				ImageViewUsage::Both => (Some(device.image_id(view)), Some(device.storage_image_id(view))),
 			};
 
 			Ok(Self {
@@ -547,10 +544,10 @@ impl Resource for ImageView {
 	unsafe fn destroy(self, device: &Device) {
 		unsafe {
 			if let Some(id) = self.id {
-				device.descriptors().return_image(id);
+				device.return_image_id(id);
 			}
 			if let Some(id) = self.storage_id {
-				device.descriptors().return_storage_image(id);
+				device.return_storage_image_id(id);
 			}
 			device.device().destroy_image_view(self.view, None);
 		}

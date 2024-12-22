@@ -243,7 +243,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 					vk::PipelineBindPoint::GRAPHICS,
 					device.layout(),
 					0,
-					&[device.descriptors().set()],
+					&[device.descriptor_set()],
 					&[],
 				);
 				dev.cmd_bind_descriptor_sets(
@@ -251,7 +251,7 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 					vk::PipelineBindPoint::COMPUTE,
 					device.layout(),
 					0,
-					&[device.descriptors().set()],
+					&[device.descriptor_set()],
 					&[],
 				);
 			}

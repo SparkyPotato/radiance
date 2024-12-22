@@ -4,6 +4,7 @@ use rad_graph::{
 	device::{
 		descriptor::{SamplerId, StorageImageId},
 		Device,
+		SamplerDesc,
 		ShaderInfo,
 	},
 	graph::{
@@ -26,8 +27,7 @@ use vek::Vec2;
 
 pub struct HzbGen {
 	pass: ComputePass<PushConstants>,
-	hzb_sample: vk::Sampler,
-	hzb_sample_id: SamplerId,
+	hzb_sample: SamplerId,
 }
 
 #[repr(C)]
@@ -51,39 +51,28 @@ struct PassIO {
 
 impl HzbGen {
 	pub fn new(device: &Device) -> Result<Self> {
-		unsafe {
-			let hzb_sample = device.device().create_sampler(
-				&vk::SamplerCreateInfo::default()
-					.min_filter(vk::Filter::LINEAR)
-					.mag_filter(vk::Filter::LINEAR)
-					.mipmap_mode(vk::SamplerMipmapMode::NEAREST)
-					.address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-					.address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-					.address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-					.max_lod(vk::LOD_CLAMP_NONE)
-					.push_next(
-						&mut vk::SamplerReductionModeCreateInfo::default()
-							.reduction_mode(vk::SamplerReductionMode::MIN),
-					),
-				None,
-			)?;
-			let hzb_sample_id = device.descriptors().get_sampler(device, hzb_sample);
-
-			Ok(Self {
-				pass: ComputePass::new(
-					device,
-					ShaderInfo {
-						shader: "passes.mesh.hzb.main",
-						spec: &[],
-					},
-				)?,
-				hzb_sample,
-				hzb_sample_id,
-			})
-		}
+		Ok(Self {
+			pass: ComputePass::new(
+				device,
+				ShaderInfo {
+					shader: "passes.mesh.hzb.main",
+					spec: &[],
+				},
+			)?,
+			hzb_sample: device.sampler(SamplerDesc {
+				mag_filter: vk::Filter::LINEAR,
+				min_filter: vk::Filter::LINEAR,
+				mipmap_mode: vk::SamplerMipmapMode::NEAREST,
+				address_mode_u: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+				address_mode_v: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+				address_mode_w: vk::SamplerAddressMode::CLAMP_TO_EDGE,
+				reduction_mode: vk::SamplerReductionMode::MIN,
+				..Default::default()
+			}),
+		})
 	}
 
-	pub fn sampler(&self) -> SamplerId { self.hzb_sample_id }
+	pub fn sampler(&self) -> SamplerId { self.hzb_sample }
 
 	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, visbuffer: Res<ImageView>, out: Res<ImageView>) {
 		frame.start_region("generate hzb");
@@ -205,8 +194,6 @@ impl HzbGen {
 	pub fn destroy(self, device: &Device) {
 		unsafe {
 			self.pass.destroy();
-			device.device().destroy_sampler(self.hzb_sample, None);
-			device.descriptors().return_sampler(self.hzb_sample_id);
 		}
 	}
 }

@@ -14,7 +14,15 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, Raw
 use tracing::{info, trace, warn};
 
 use crate::{
-	device::{descriptor::Descriptors, shader::ShaderRuntime, Device, DeviceInner, QueueData, Queues},
+	device::{
+		descriptor::Descriptors,
+		sampler::Samplers,
+		shader::ShaderRuntime,
+		Device,
+		DeviceInner,
+		QueueData,
+		Queues,
+	},
 	Error,
 	Result,
 };
@@ -128,6 +136,7 @@ impl<'a> DeviceBuilder<'a> {
 					allocator: ManuallyDrop::new(Mutex::new(allocator)),
 					shaders: ManuallyDrop::new(ShaderRuntime::new(&device, descriptors.layout())),
 					descriptors,
+					samplers: Mutex::new(Samplers::new()),
 					device,
 				}),
 			},

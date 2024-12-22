@@ -4,7 +4,7 @@ use std::{collections::VecDeque, num::NonZeroU32, sync::Mutex};
 
 use ash::vk;
 
-use crate::{device::Device, Result};
+use crate::Result;
 
 /// An ID representing a sampled image, for use by a shader.
 ///
@@ -67,12 +67,12 @@ impl Descriptors {
 	/// Get a `PipelineLayout` that should be used when making pipelines.
 	pub fn layout(&self) -> vk::PipelineLayout { self.layout }
 
-	pub fn get_image(&self, device: &Device, image: vk::ImageView) -> ImageId {
+	pub fn get_image(&self, device: &ash::Device, image: vk::ImageView) -> ImageId {
 		let mut inner = self.inner.lock().unwrap();
 
 		let index = inner.sampled_images.get_index();
 		unsafe {
-			device.device().update_descriptor_sets(
+			device.update_descriptor_sets(
 				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
 					.dst_binding(0)
@@ -88,12 +88,12 @@ impl Descriptors {
 		ImageId(index)
 	}
 
-	pub fn get_storage_image(&self, device: &Device, image: vk::ImageView) -> StorageImageId {
+	pub fn get_storage_image(&self, device: &ash::Device, image: vk::ImageView) -> StorageImageId {
 		let mut inner = self.inner.lock().unwrap();
 
 		let index = inner.storage_images.get_index();
 		unsafe {
-			device.device().update_descriptor_sets(
+			device.update_descriptor_sets(
 				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
 					.dst_binding(1)
@@ -109,12 +109,12 @@ impl Descriptors {
 		StorageImageId(index)
 	}
 
-	pub fn get_sampler(&self, device: &Device, sampler: vk::Sampler) -> SamplerId {
+	pub fn get_sampler(&self, device: &ash::Device, sampler: vk::Sampler) -> SamplerId {
 		let mut inner = self.inner.lock().unwrap();
 
 		let index = inner.samplers.get_index();
 		unsafe {
-			device.device().update_descriptor_sets(
+			device.update_descriptor_sets(
 				&[vk::WriteDescriptorSet::default()
 					.dst_set(self.set)
 					.dst_binding(2)

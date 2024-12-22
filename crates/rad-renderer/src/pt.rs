@@ -6,6 +6,7 @@ use rad_graph::{
 	device::{
 		descriptor::{SamplerId, StorageImageId},
 		Device,
+		SamplerDesc,
 		ShaderInfo,
 	},
 	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, Res},
@@ -27,8 +28,7 @@ use crate::{
 // TODO: reset on world edit.
 pub struct PathTracer {
 	pass: FullscreenPass<PushConstants>,
-	sampler: vk::Sampler,
-	sampler_id: SamplerId,
+	sampler: SamplerId,
 	cached: Option<(WorldId, GpuTransform, Vec2<u32>)>,
 	samples: u32,
 }
@@ -56,20 +56,6 @@ struct PushConstants {
 
 impl PathTracer {
 	pub fn new(device: &Device) -> Result<Self> {
-		// TODO: cringe
-		let sampler = unsafe {
-			device.device().create_sampler(
-				&vk::SamplerCreateInfo::default()
-					.mag_filter(vk::Filter::LINEAR)
-					.min_filter(vk::Filter::LINEAR)
-					.mipmap_mode(vk::SamplerMipmapMode::NEAREST)
-					.address_mode_u(vk::SamplerAddressMode::REPEAT)
-					.address_mode_v(vk::SamplerAddressMode::REPEAT)
-					.address_mode_w(vk::SamplerAddressMode::REPEAT),
-				None,
-			)?
-		};
-
 		Ok(Self {
 			pass: FullscreenPass::new(
 				device,
@@ -79,8 +65,7 @@ impl PathTracer {
 				},
 				&[],
 			)?,
-			sampler,
-			sampler_id: device.descriptors().get_sampler(device, sampler),
+			sampler: device.sampler(SamplerDesc::default()),
 			cached: None,
 			samples: 0,
 		})
@@ -161,7 +146,7 @@ impl PathTracer {
 					lights,
 					camera: camera.ptr(),
 					as_,
-					sampler: self.sampler_id,
+					sampler: self.sampler,
 					out: out.storage_id.unwrap(),
 					seed: thread_rng().next_u32(),
 					samples: self.samples,
@@ -176,11 +161,5 @@ impl PathTracer {
 		(out, s)
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
-		self.pass.destroy();
-		unsafe {
-			device.device().destroy_sampler(self.sampler, None);
-			device.descriptors().return_sampler(self.sampler_id);
-		}
-	}
+	pub unsafe fn destroy(self) { self.pass.destroy(); }
 }

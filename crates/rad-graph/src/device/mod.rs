@@ -22,16 +22,23 @@ pub use crate::device::{
 		SyncStage,
 		Transfer,
 	},
+	sampler::SamplerDesc,
 	shader::{ComputePipeline, GraphicsPipeline, GraphicsPipelineDesc, HotreloadStatus, ShaderInfo},
 };
 use crate::{
-	device::{descriptor::Descriptors, queue::QueueData, shader::ShaderRuntime},
+	device::{
+		descriptor::{Descriptors, SamplerId},
+		queue::QueueData,
+		sampler::Samplers,
+		shader::ShaderRuntime,
+	},
 	Result,
 };
 
 pub mod descriptor;
 mod init;
 mod queue;
+mod sampler;
 mod shader;
 
 struct DeviceInner {
@@ -45,6 +52,7 @@ struct DeviceInner {
 	allocator: ManuallyDrop<Mutex<Allocator>>,
 	shaders: ManuallyDrop<ShaderRuntime>,
 	descriptors: Descriptors,
+	samplers: Mutex<Samplers>,
 	instance: ash::Instance,
 	entry: ash::Entry,
 }
@@ -88,7 +96,29 @@ impl Device {
 
 	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.inner.allocator.lock().unwrap() }
 
-	pub fn descriptors(&self) -> &Descriptors { &self.inner.descriptors }
+	pub fn descriptor_set(&self) -> vk::DescriptorSet { self.inner.descriptors.set() }
+
+	pub fn image_id(&self, image: vk::ImageView) -> descriptor::ImageId {
+		self.inner.descriptors.get_image(&self.inner.device, image)
+	}
+
+	pub fn return_image_id(&self, id: descriptor::ImageId) { self.inner.descriptors.return_image(id) }
+
+	pub fn storage_image_id(&self, image: vk::ImageView) -> descriptor::StorageImageId {
+		self.inner.descriptors.get_storage_image(&self.inner.device, image)
+	}
+
+	pub fn return_storage_image_id(&self, id: descriptor::StorageImageId) {
+		self.inner.descriptors.return_storage_image(id)
+	}
+
+	pub fn sampler(&self, desc: SamplerDesc) -> SamplerId {
+		self.inner
+			.samplers
+			.lock()
+			.unwrap()
+			.get(&self.inner.device, &self.inner.descriptors, desc)
+	}
 
 	pub fn queue_families(&self) -> Queues<u32> { self.inner.queues.map_ref(|data| data.family()) }
 
@@ -112,6 +142,7 @@ impl Drop for DeviceInner {
 			// Drop the allocator before the device.
 			ManuallyDrop::drop(&mut self.allocator);
 			ManuallyDrop::drop(&mut self.shaders);
+			self.samplers.get_mut().unwrap().cleanup(&self.device);
 			self.descriptors.cleanup(&self.device);
 			self.queues.map_ref(|x| x.destroy(&self.device));
 
