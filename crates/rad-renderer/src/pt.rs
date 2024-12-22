@@ -1,7 +1,5 @@
-use std::io::Write;
-
 use ash::vk;
-use bytemuck::{bytes_of, NoUninit};
+use bytemuck::NoUninit;
 use rad_graph::{
 	device::{
 		descriptor::{SamplerId, StorageImageId},
@@ -124,6 +122,16 @@ impl PathTracer {
 			if pass.is_uninit(out) {
 				self.samples = 0;
 			}
+			pass.write(
+				camera,
+				0,
+				&[CameraData::new(
+					info.size.x as f32 / info.size.y as f32,
+					info.data.camera,
+					info.data.transform,
+				)],
+			);
+
 			let out = pass.get(out);
 			let as_ = pass
 				.get(info.data.scene.as_)
@@ -131,14 +139,7 @@ impl PathTracer {
 				.offset(info.data.scene.as_offset as _);
 			let instances = pass.get(info.data.scene.instances).ptr();
 			let lights = pass.get(info.data.scene.lights).ptr();
-			let mut camera = pass.get(camera);
-			unsafe { camera.data.as_mut() }
-				.write(bytes_of(&CameraData::new(
-					info.size.x as f32 / info.size.y as f32,
-					info.data.camera,
-					info.data.transform,
-				)))
-				.unwrap();
+			let camera = pass.get(camera);
 			self.pass.run_empty(
 				&mut pass,
 				&PushConstants {

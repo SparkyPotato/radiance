@@ -1,5 +1,5 @@
 use ash::vk;
-use bytemuck::{from_bytes, NoUninit};
+use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
 	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, Res},
@@ -23,13 +23,13 @@ struct PushConstants {
 pub struct ExposureCalc {
 	histogram: ComputePass<PushConstants>,
 	average: ComputePass<PushConstants>,
-	read_histogram: [f32; 256],
+	read_histogram: [u32; 256],
 	exposure: f32,
 }
 
 pub struct ExposureStats {
 	pub exposure: f32,
-	pub histogram: [f32; 256],
+	pub histogram: [u32; 256],
 }
 
 impl ExposureCalc {
@@ -52,7 +52,7 @@ impl ExposureCalc {
 					spec: &[],
 				},
 			)?,
-			read_histogram: [0.0; 256],
+			read_histogram: [0; 256],
 			exposure: 0.0,
 		})
 	}
@@ -91,18 +91,9 @@ impl ExposureCalc {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		// TODO: stop using direct commands here and in mesh/setup.rs
-		pass.build(move |mut pass| unsafe {
-			let buf = pass.get(histogram);
-			pass.device
-				.device()
-				.cmd_fill_buffer(pass.buf, buf.buffer, 0, buf.size(), 0);
-			if pass.is_uninit(exp) {
-				let buf = pass.get(exp);
-				pass.device
-					.device()
-					.cmd_fill_buffer(pass.buf, buf.buffer, 0, buf.size(), 0);
-			}
+		pass.build(move |mut pass| {
+			pass.zero(histogram);
+			pass.zero_if_uninit(exp);
 		});
 
 		let inp_usage = ImageUsage {
@@ -210,43 +201,12 @@ impl ExposureCalc {
 
 		let ret_exp = *exposure;
 		let hist = *read_histogram;
-		pass.build(move |mut pass| unsafe {
-			let exp = pass.get(exp);
-			let histogram = pass.get(histogram);
+		pass.build(move |mut pass| {
+			pass.copy_full_buffer(histogram, histogram_read, 0);
+			*read_histogram = pass.readback(histogram_read, 0);
 
-			let uninit = pass.is_uninit(histogram_read);
-			let read = pass.get(histogram_read);
-			pass.device.device().cmd_copy_buffer(
-				pass.buf,
-				histogram.buffer,
-				read.buffer,
-				&[vk::BufferCopy {
-					src_offset: 0,
-					dst_offset: 0,
-					size: histogram_size,
-				}],
-			);
-			if !uninit {
-				let total = (size.width * size.height) as f32;
-				let hist: &[u32; 256] = from_bytes(&read.data.as_ref()[..histogram_size as usize]);
-				*read_histogram = hist.map(|x| x as f32 / total);
-			}
-
-			let uninit = pass.is_uninit(exp_read);
-			let read = pass.get(exp_read);
-			pass.device.device().cmd_copy_buffer(
-				pass.buf,
-				exp.buffer,
-				read.buffer,
-				&[vk::BufferCopy {
-					src_offset: 0,
-					dst_offset: 0,
-					size: exp_size,
-				}],
-			);
-			if !uninit {
-				*exposure = *from_bytes(&read.data.as_ref()[..exp_size as usize]);
-			}
+			pass.copy_full_buffer(exp, exp_read, 0);
+			*exposure = pass.readback(exp_read, 0);
 		});
 
 		(

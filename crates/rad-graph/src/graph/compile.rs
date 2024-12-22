@@ -153,6 +153,7 @@ impl<'graph> Resource<'graph> {
 
 /// A map from virtual resources to (aliased) concrete resources.
 pub struct ResourceMap<'graph> {
+	virtual_res: Vec<VirtualResourceData<'graph>, &'graph Arena>,
 	resource_map: Vec<u32, &'graph Arena>,
 	resources: Vec<Resource<'graph>, &'graph Arena>,
 	buffers: Vec<u32, &'graph Arena>,
@@ -160,18 +161,6 @@ pub struct ResourceMap<'graph> {
 }
 
 impl<'graph> ResourceMap<'graph> {
-	unsafe fn new(
-		resource_map: Vec<u32, &'graph Arena>, resources: Vec<Resource<'graph>, &'graph Arena>,
-		buffers: Vec<u32, &'graph Arena>, images: Vec<u32, &'graph Arena>,
-	) -> Self {
-		Self {
-			resource_map,
-			resources,
-			buffers,
-			images,
-		}
-	}
-
 	fn map_res(&self, res: u32) -> u32 {
 		*self
 			.resource_map
@@ -214,6 +203,10 @@ impl<'graph> ResourceMap<'graph> {
 	pub fn get(&mut self, res: u32) -> &'_ mut Resource<'graph> {
 		let i = self.map_res(res) as usize;
 		unsafe { self.resources.get_unchecked_mut(i) }
+	}
+
+	pub fn get_virtual(&mut self, res: u32) -> &'_ VirtualResourceData<'graph> {
+		unsafe { self.virtual_res.get_unchecked(res as usize) }
 	}
 }
 
@@ -258,7 +251,7 @@ impl<'graph> ResourceAliaser<'graph> {
 			&& data.desc.persist.is_none()
 	}
 
-	fn try_merge_buffer(&mut self, data: BufferData<'graph>, lifetime: ResourceLifetime) {
+	fn try_merge_buffer(&mut self, data: &BufferData<'graph>, lifetime: ResourceLifetime) {
 		if Self::is_buffer_merge_candidate(&data) {
 			for &i in self.buffers.iter() {
 				let res = &mut self.resources[i as usize];
@@ -267,7 +260,7 @@ impl<'graph> ResourceAliaser<'graph> {
 				// If the lifetimes aren't overlapping, merge.
 				if res_lifetime.independent(lifetime) && Self::is_buffer_merge_candidate(&res) {
 					res.desc.size = res.desc.size.max(data.desc.size);
-					res.usages.extend(data.usages);
+					res.usages.extend(data.usages.iter().map(|(k, v)| (*k, v.clone())));
 					*res_lifetime = res_lifetime.union(lifetime);
 					self.resource_map.push(i);
 					return;
@@ -275,14 +268,14 @@ impl<'graph> ResourceAliaser<'graph> {
 			}
 		}
 		self.buffers.push(self.resources.len() as _);
-		self.push(Resource::Buffer(data), lifetime);
+		self.push(Resource::Buffer(data.clone()), lifetime);
 	}
 
 	fn is_image_merge_candidate(data: &ImageData) -> bool {
 		data.handle.0 == vk::Image::null() && data.desc.persist.is_none()
 	}
 
-	fn try_merge_image(&mut self, data: ImageData<'graph>, lifetime: ResourceLifetime) {
+	fn try_merge_image(&mut self, data: &ImageData<'graph>, lifetime: ResourceLifetime) {
 		if Self::is_image_merge_candidate(&data) {
 			for &i in self.images.get(&data.desc).into_iter().flatten() {
 				let res = &mut self.resources[i as usize];
@@ -295,7 +288,7 @@ impl<'graph> ResourceAliaser<'graph> {
 						data.usages.first_key_value().unwrap().1.format,
 					) && Self::is_image_merge_candidate(&res)
 				{
-					res.usages.extend(data.usages);
+					res.usages.extend(data.usages.iter().map(|(k, v)| (*k, v.clone())));
 					*res_lifetime = res_lifetime.union(lifetime);
 					self.resource_map.push(i);
 					return;
@@ -306,18 +299,21 @@ impl<'graph> ResourceAliaser<'graph> {
 			.entry(data.desc)
 			.or_insert_with(|| Vec::new_in(self.resources.allocator()))
 			.push(self.resources.len() as _);
-		self.push(Resource::Image(data), lifetime);
+		self.push(Resource::Image(data.clone()), lifetime);
 	}
 
-	fn add(&mut self, resource: VirtualResourceData<'graph>) {
+	fn add(&mut self, resource: &VirtualResourceData<'graph>) {
 		match resource.ty {
 			VirtualResourceType::Data(p) => self.push(Resource::Data(p, DataState::Uninit), resource.lifetime),
-			VirtualResourceType::Buffer(data) => self.try_merge_buffer(data, resource.lifetime),
-			VirtualResourceType::Image(data) => self.try_merge_image(data, resource.lifetime),
+			VirtualResourceType::Buffer(ref data) => self.try_merge_buffer(data, resource.lifetime),
+			VirtualResourceType::Image(ref data) => self.try_merge_image(data, resource.lifetime),
 		}
 	}
 
-	fn finish(mut self, device: &Device, graph: &mut RenderGraph) -> ResourceMap<'graph> {
+	fn finish(
+		mut self, device: &Device, graph: &mut RenderGraph,
+		virtual_res: Vec<VirtualResourceData<'graph>, &'graph Arena>,
+	) -> ResourceMap<'graph> {
 		let alloc = *self.resources.allocator();
 		let mut buffers = Vec::new_in(alloc);
 		let mut images = Vec::new_in(alloc);
@@ -419,7 +415,13 @@ impl<'graph> ResourceAliaser<'graph> {
 			}
 		}
 
-		unsafe { ResourceMap::new(self.resource_map, self.resources, buffers, images) }
+		ResourceMap {
+			virtual_res,
+			resource_map: self.resource_map,
+			resources: self.resources,
+			buffers,
+			images,
+		}
 	}
 }
 
@@ -864,12 +866,12 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 			let _e = span.enter();
 
 			self.virtual_resources
-				.into_iter()
+				.iter()
 				.fold(ResourceAliaser::new(arena), |mut a, r| {
 					a.add(r);
 					a
 				})
-				.finish(device, self.graph)
+				.finish(device, self.graph, self.virtual_resources)
 		};
 
 		let sync = {

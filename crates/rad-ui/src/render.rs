@@ -1,7 +1,7 @@
-use std::{collections::hash_map::Entry, io::Write};
+use std::collections::hash_map::Entry;
 
 use ash::vk;
-use bytemuck::{bytes_of, cast_slice, NoUninit};
+use bytemuck::NoUninit;
 use egui::{
 	epaint::{ImageDelta, Primitive, Vertex},
 	ClippedPrimitive,
@@ -24,7 +24,6 @@ use rad_graph::{
 	},
 	graph::{
 		self,
-		util::{ByteReader, ImageStage},
 		BufferDesc,
 		BufferLoc,
 		BufferUsage,
@@ -50,9 +49,10 @@ use rad_graph::{
 		Subresource,
 	},
 	util::{
-		pass::{Attachment, Load},
+		pass::{Attachment, ImageCopy, Load},
 		pipeline::{default_blend, no_cull, simple_blend},
 		render::RenderPass,
+		staging::ByteReader,
 	},
 	Result,
 };
@@ -212,7 +212,7 @@ impl Renderer {
 			}
 		}
 
-		pass.build(move |ctx| unsafe { self.execute(ctx, PassIO { vertex, index, out }, &tris, &screen) });
+		pass.build(move |pass| self.execute(pass, PassIO { vertex, index, out }, &tris, &screen));
 	}
 
 	/// # Safety
@@ -225,18 +225,15 @@ impl Renderer {
 		self.pass.destroy();
 	}
 
-	unsafe fn execute(
-		&mut self, mut pass: PassContext, io: PassIO, tris: &[ClippedPrimitive], screen: &ScreenDescriptor,
-	) {
-		let vertex = pass.get(io.vertex);
-		let index = pass.get(io.index);
-		Self::generate_buffers(vertex, index, tris);
+	fn execute(&mut self, mut pass: PassContext, io: PassIO, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
+		Self::generate_buffers(&mut pass, io.vertex, io.index, tris);
 
+		let vertex_buffer = pass.get(io.vertex).ptr();
 		let mut pass = self.pass.start(
 			&mut pass,
 			&PushConstantsStatic {
 				screen_size: screen.physical_size.map(|x| x as f32) / screen.scaling,
-				vertex_buffer: vertex.ptr(),
+				vertex_buffer,
 			},
 			&[Attachment {
 				image: io.out,
@@ -253,6 +250,7 @@ impl Renderer {
 		pass.bind_index_res(io.index, 0, vk::IndexType::UINT32);
 
 		let mut start_index = 0;
+		let mut start_vertex = 0;
 		for prim in tris {
 			match &prim.primitive {
 				Primitive::Mesh(m) => {
@@ -269,10 +267,12 @@ impl Renderer {
 						},
 						TextureId::User(x) => {
 							let masked = x & !(1 << 63);
-							let image = if masked != x {
-								ImageId::from_raw(masked as _)
-							} else {
-								pass.pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
+							let image = unsafe {
+								if masked != x {
+									ImageId::from_raw(masked as _)
+								} else {
+									pass.pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
+								}
 							};
 							(image, self.default_sampler)
 						},
@@ -281,32 +281,30 @@ impl Renderer {
 						std::mem::size_of::<PushConstantsStatic>(),
 						&PushConstantsDynamic { image, sampler },
 					);
-					pass.draw_indexed(m.indices.len() as u32, 1, start_index, 0);
+					pass.draw_indexed(m.indices.len() as u32, 1, start_index, start_vertex, 0);
 					start_index += m.indices.len() as u32;
+					start_vertex += m.vertices.len() as u32;
 				},
 				Primitive::Callback(_) => panic!("Callback not supported"),
 			}
 		}
 	}
 
-	unsafe fn generate_buffers(mut vertex: BufferHandle, mut index: BufferHandle, tris: &[ClippedPrimitive]) {
+	fn generate_buffers(
+		pass: &mut PassContext, vertex: Res<BufferHandle>, index: Res<BufferHandle>, tris: &[ClippedPrimitive],
+	) {
 		let span = span!(Level::TRACE, "upload ui buffers");
 		let _e = span.enter();
 
-		let mut vertices_written = 0;
-		let mut vertex_slice = vertex.data.as_mut();
-		let mut index_slice = index.data.as_mut();
-
+		let mut vertices = 0;
+		let mut indices = 0;
 		for prim in tris.iter() {
 			match &prim.primitive {
 				Primitive::Mesh(m) => {
-					vertex_slice.write_all(cast_slice(&m.vertices)).unwrap();
-
-					for i in m.indices.iter() {
-						index_slice.write_all(bytes_of(&(i + vertices_written))).unwrap();
-					}
-
-					vertices_written += m.vertices.len() as u32;
+					pass.write(vertex, vertices * std::mem::size_of::<Vertex>(), &m.vertices);
+					pass.write(index, indices * std::mem::size_of::<u32>(), &m.indices);
+					vertices += m.vertices.len();
+					indices += m.indices.len();
 				},
 				Primitive::Callback(_) => panic!("Callback not supported"),
 			}
@@ -329,7 +327,7 @@ impl Renderer {
 
 				let (handle, desc) = self.get_image_for(frame, x, &data);
 				let pos = data.pos.unwrap_or([0, 0]);
-				let stage = ImageStage {
+				let stage = ImageCopy {
 					row_stride: 0,
 					plane_stride: 0,
 					subresource: Subresource::default(),

@@ -1,5 +1,5 @@
 use ash::{ext, vk};
-use bytemuck::{cast_slice, NoUninit, Pod, Zeroable};
+use bytemuck::{NoUninit, Pod, Zeroable};
 use rad_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, ShaderInfo},
 	graph::{BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassBuilder, PassContext, Res},
@@ -344,24 +344,12 @@ impl VisBuffer {
 			&self.no_debug
 		};
 		let mesh = &self.mesh;
-		pass.build(move |ctx| p.execute(mesh, ctx, io));
+		pass.build(move |pass| p.execute(mesh, pass, io));
 
 		let mut pass = frame.pass("zero render queue");
 		let zero = res.mesh_zero(&mut pass);
-		pass.build(move |mut ctx| unsafe {
-			let zero = ctx.get(zero);
-			ctx.device.device().cmd_update_buffer(
-				ctx.buf,
-				zero.buffer,
-				std::mem::size_of::<u32>() as u64 * 2,
-				cast_slice(&[0u32]),
-			);
-			ctx.device.device().cmd_update_buffer(
-				ctx.buf,
-				zero.buffer,
-				std::mem::size_of::<u32>() as u64 * 6,
-				cast_slice(&[0u32]),
-			);
+		pass.build(move |mut pass| {
+			pass.update_buffer(zero, std::mem::size_of::<u32>() * 2, &[0u32, 0, 0, 0, 0]);
 		});
 		frame.end_region();
 
@@ -380,7 +368,7 @@ impl VisBuffer {
 		res.visbuffer(&mut pass);
 		res.debug(&mut pass);
 		io.early = false;
-		pass.build(move |ctx| p.execute(mesh, ctx, io));
+		pass.build(move |pass| p.execute(mesh, pass, io));
 		frame.end_region();
 
 		self.hzb_gen.run(frame, visbuffer, res.hzb);
@@ -398,14 +386,14 @@ impl VisBuffer {
 		}
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
+	pub unsafe fn destroy(self) {
 		self.early_instance_cull.destroy();
 		self.late_instance_cull.destroy();
 		self.early_bvh_cull.destroy();
 		self.late_bvh_cull.destroy();
 		self.early_meshlet_cull.destroy();
 		self.late_meshlet_cull.destroy();
-		self.hzb_gen.destroy(device);
+		self.hzb_gen.destroy();
 		self.no_debug.destroy();
 		self.debug.destroy();
 	}

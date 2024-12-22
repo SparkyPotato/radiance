@@ -191,7 +191,7 @@ impl HzbGen {
 		self.pass.dispatch(&mut pass, &push, x, y, 1);
 	}
 
-	pub fn destroy(self, device: &Device) {
+	pub fn destroy(self) {
 		unsafe {
 			self.pass.destroy();
 		}

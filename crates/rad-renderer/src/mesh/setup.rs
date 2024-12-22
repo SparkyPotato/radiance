@@ -1,7 +1,5 @@
-use std::io::Write;
-
 use ash::vk;
-use bytemuck::{bytes_of, checked::from_bytes, NoUninit, PodInOption, ZeroableInOption};
+use bytemuck::{NoUninit, PodInOption, ZeroableInOption};
 use rad_graph::{
 	device::descriptor::{SamplerId, StorageImageId},
 	graph::{
@@ -272,7 +270,7 @@ impl Setup {
 	pub fn run<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, hzb_sampler: SamplerId,
 	) -> Resources {
-		let (mut needs_clear, prev) = match &mut self.inner {
+		let (needs_clear, prev) = match &mut self.inner {
 			Some(Persistent { id, camera, transform }) => {
 				let prev = *transform;
 				*transform = info.data.transform;
@@ -338,7 +336,7 @@ impl Setup {
 		let count = 1024 * 1024u32;
 		let desc = BufferDesc {
 			size: (count as u64 * 2 + 9) * std::mem::size_of::<u32>() as u64,
-			loc: BufferLoc::Upload,
+			loc: BufferLoc::GpuOnly,
 			persist: None,
 		};
 		let usage = BufferUsage {
@@ -400,86 +398,37 @@ impl Setup {
 			DebugRes { overdraw, hwsw }
 		});
 
-		pass.build(move |mut pass| unsafe {
-			needs_clear |= pass.is_uninit(hzb);
-
-			let dev = pass.device.device();
-			let buf = pass.buf;
-			let mut writer = pass.get(camera).data.as_mut();
+		pass.build(move |mut pass| {
 			let aspect = res.x as f32 / res.y as f32;
-			let cd = CameraData::new(aspect, cam, transform);
-			let prev_cd = CameraData::new(aspect, cam, prev);
-			writer.write(bytes_of(&cd)).unwrap();
-			writer.write(bytes_of(&prev_cd)).unwrap();
+			pass.write(
+				camera,
+				0,
+				&[
+					CameraData::new(aspect, cam, transform),
+					CameraData::new(aspect, cam, prev),
+				],
+			);
 
-			if needs_clear {
-				dev.cmd_clear_color_image(
-					buf,
-					pass.get(hzb).image,
-					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-					&vk::ClearColorValue::default(),
-					&[vk::ImageSubresourceRange::default()
-						.aspect_mask(vk::ImageAspectFlags::COLOR)
-						.base_mip_level(0)
-						.level_count(vk::REMAINING_MIP_LEVELS)
-						.base_array_layer(0)
-						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
-				);
+			if needs_clear | pass.is_uninit(hzb) {
+				pass.zero(hzb);
 			}
-			dev.cmd_clear_color_image(
-				buf,
-				pass.get(visbuffer).image,
-				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-				&vk::ClearColorValue {
+			pass.clear_image(
+				visbuffer,
+				vk::ClearColorValue {
 					uint32: [u32::MAX, 0, 0, 0],
 				},
-				&[vk::ImageSubresourceRange::default()
-					.aspect_mask(vk::ImageAspectFlags::COLOR)
-					.base_mip_level(0)
-					.level_count(vk::REMAINING_MIP_LEVELS)
-					.base_array_layer(0)
-					.layer_count(vk::REMAINING_ARRAY_LAYERS)],
 			);
 			if let Some(d) = debug {
-				dev.cmd_clear_color_image(
-					buf,
-					pass.get(d.overdraw).image,
-					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-					&vk::ClearColorValue::default(),
-					&[vk::ImageSubresourceRange::default()
-						.aspect_mask(vk::ImageAspectFlags::COLOR)
-						.base_mip_level(0)
-						.level_count(vk::REMAINING_MIP_LEVELS)
-						.base_array_layer(0)
-						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
-				);
-				dev.cmd_clear_color_image(
-					buf,
-					pass.get(d.hwsw).image,
-					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-					&vk::ClearColorValue::default(),
-					&[vk::ImageSubresourceRange::default()
-						.aspect_mask(vk::ImageAspectFlags::COLOR)
-						.base_mip_level(0)
-						.level_count(vk::REMAINING_MIP_LEVELS)
-						.base_array_layer(0)
-						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
-				);
+				pass.zero(d.overdraw);
+				pass.zero(d.hwsw);
 			}
 
-			for b in bvh_queues
-				.into_iter()
-				.chain(Some(meshlet_queue))
-				.chain(Some(meshlet_render))
-			{
-				dev.cmd_update_buffer(buf, pass.get(b).buffer, 0, bytes_of(&[count, 0, 0, 1, 1, 0, 0, 1, 1]));
+			for b in bvh_queues.into_iter().chain([meshlet_queue, meshlet_render]) {
+				pass.update_buffer(b, 0, &[count, 0, 0, 1, 1, 0, 0, 1, 1]);
 			}
-			dev.cmd_update_buffer(buf, pass.get(late_instances).buffer, 0, bytes_of(&[0, 0, 1, 1]));
+			pass.update_buffer(late_instances, 0, &[0u32, 0, 1, 1]);
 
-			if !pass.is_uninit(stats) {
-				let data = pass.get(stats).data.as_ref();
-				self.stats = *from_bytes(&data[..std::mem::size_of_val(&self.stats)]);
-			}
+			self.stats = pass.readback(stats, 0);
 		});
 
 		Resources {

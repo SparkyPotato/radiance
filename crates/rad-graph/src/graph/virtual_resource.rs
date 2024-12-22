@@ -241,7 +241,11 @@ impl VirtualResource for BufferHandle {
 	type Desc = BufferDesc;
 	type Usage<'a> = BufferUsage<'a>;
 
-	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc { ty.ty.buffer().desc }
+	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
+		let mut d = ty.ty.buffer().desc;
+		d.persist = None;
+		d
+	}
 
 	unsafe fn from_res(_: u32, res: &mut Resource, _: &mut Caches, _: &Device) -> Self { res.buffer().handle }
 
@@ -274,7 +278,11 @@ impl VirtualResource for ImageView {
 	type Desc = ImageDesc;
 	type Usage<'a> = ImageUsage<'a>;
 
-	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc { ty.ty.image().desc }
+	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
+		let mut d = ty.ty.image().desc;
+		d.persist = None;
+		d
+	}
 
 	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self {
 		let image = res.image();

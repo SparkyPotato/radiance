@@ -46,7 +46,6 @@ use crate::{
 mod cache;
 mod compile;
 mod frame_data;
-pub mod util;
 mod virtual_resource;
 
 pub const FRAMES_IN_FLIGHT: usize = 2;
@@ -343,6 +342,14 @@ pub struct PassContext<'frame, 'graph> {
 }
 
 impl<'frame, 'graph> PassContext<'frame, 'graph> {
+	pub fn desc<T: VirtualResource>(&mut self, res: Res<T>) -> T::Desc {
+		let id = res.id.wrapping_sub(self.base_id);
+		unsafe {
+			let data = self.resource_map.get_virtual(id as u32);
+			T::desc(data)
+		}
+	}
+
 	/// Get a reference to transient CPU-side data output by another pass.
 	pub fn get_data_ref<T: 'frame>(&mut self, id: RefId<T>) -> &'frame T {
 		let id = id.id.wrapping_sub(self.base_id);
