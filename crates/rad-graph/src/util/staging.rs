@@ -110,20 +110,14 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	fn exec_buffer_stage(
 		mut pass: PassContext, staging: Res<BufferHandle>, dst: Res<BufferHandle>, offset: u64, data: &[u8],
 	) {
-		unsafe {
-			let mut staging = pass.get(staging);
-			staging.data.as_mut()[..data.len()].copy_from_slice(data);
-		}
+		pass.write(staging, 0, data);
 		pass.copy_buffer(staging, dst, 0, offset as _, data.len());
 	}
 
 	fn exec_image_stage(
 		mut pass: PassContext, staging: Res<BufferHandle>, dst: Res<ImageView>, stage: ImageCopy, data: &[u8],
 	) {
-		unsafe {
-			let mut staging = pass.get(staging);
-			staging.data.as_mut()[..data.len()].copy_from_slice(data);
-		}
-		pass.copy_buffer_to_image(staging, dst, stage);
+		pass.write(staging, 0, data);
+		pass.copy_buffer_to_image(staging, dst, 0, stage);
 	}
 }

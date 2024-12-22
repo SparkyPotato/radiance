@@ -1,5 +1,5 @@
 use ash::{ext, vk};
-use bytemuck::{cast_slice, NoUninit, Pod, Zeroable};
+use bytemuck::{NoUninit, Pod, Zeroable};
 use rad_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, ShaderInfo},
 	graph::{BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassBuilder, PassContext, Res},
@@ -120,7 +120,7 @@ pub struct VisBuffer {
 }
 
 #[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
+#[derive(Copy, Clone, Pod, Zeroable)]
 pub struct CameraData {
 	transform: GpuTransform,
 	w: f32,
@@ -349,8 +349,8 @@ impl VisBuffer {
 		let mut pass = frame.pass("zero render queue");
 		let zero = res.mesh_zero(&mut pass);
 		pass.build(move |mut pass| {
-			pass.update_buffer(zero, std::mem::size_of::<u32>() * 2, &0u32);
-			pass.update_buffer(zero, std::mem::size_of::<u32>() * 6, &0u32);
+			pass.update_buffer(zero, std::mem::size_of::<u32>() * 2, &[0u32]);
+			pass.update_buffer(zero, std::mem::size_of::<u32>() * 6, &[0u32]);
 		});
 		frame.end_region();
 

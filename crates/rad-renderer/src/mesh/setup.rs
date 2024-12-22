@@ -1,7 +1,5 @@
-use std::io::Write;
-
 use ash::vk;
-use bytemuck::{bytes_of, checked::from_bytes, NoUninit, PodInOption, ZeroableInOption};
+use bytemuck::{NoUninit, PodInOption, ZeroableInOption};
 use rad_graph::{
 	device::descriptor::{SamplerId, StorageImageId},
 	graph::{
@@ -272,7 +270,7 @@ impl Setup {
 	pub fn run<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, hzb_sampler: SamplerId,
 	) -> Resources {
-		let (mut needs_clear, prev) = match &mut self.inner {
+		let (needs_clear, prev) = match &mut self.inner {
 			Some(Persistent { id, camera, transform }) => {
 				let prev = *transform;
 				*transform = info.data.transform;
@@ -400,16 +398,18 @@ impl Setup {
 			DebugRes { overdraw, hwsw }
 		});
 
-		pass.build(move |mut pass| unsafe {
-			let mut writer = pass.get(camera).data.as_mut();
+		pass.build(move |mut pass| {
 			let aspect = res.x as f32 / res.y as f32;
-			let cd = CameraData::new(aspect, cam, transform);
-			let prev_cd = CameraData::new(aspect, cam, prev);
-			writer.write(bytes_of(&cd)).unwrap();
-			writer.write(bytes_of(&prev_cd)).unwrap();
+			pass.write(
+				camera,
+				0,
+				&[
+					CameraData::new(aspect, cam, transform),
+					CameraData::new(aspect, cam, prev),
+				],
+			);
 
-			needs_clear |= pass.is_uninit(hzb);
-			if needs_clear {
+			if needs_clear | pass.is_uninit(hzb) {
 				pass.zero(hzb);
 			}
 			pass.clear_image(
@@ -423,19 +423,12 @@ impl Setup {
 				pass.zero(d.hwsw);
 			}
 
-			for b in bvh_queues
-				.into_iter()
-				.chain(Some(meshlet_queue))
-				.chain(Some(meshlet_render))
-			{
+			for b in bvh_queues.into_iter().chain([meshlet_queue, meshlet_render]) {
 				pass.update_buffer(b, 0, &[count, 0, 0, 1, 1, 0, 0, 1, 1]);
 			}
 			pass.update_buffer(late_instances, 0, &[0u32, 0, 1, 1]);
 
-			if !pass.is_uninit(stats) {
-				let data = pass.get(stats).data.as_ref();
-				self.stats = *from_bytes(&data[..std::mem::size_of_val(&self.stats)]);
-			}
+			self.stats = pass.readback(stats, 0);
 		});
 
 		Resources {

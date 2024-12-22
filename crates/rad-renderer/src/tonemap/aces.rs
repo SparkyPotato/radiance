@@ -62,8 +62,6 @@ impl AcesTonemap {
 		let out = pass.resource(
 			ImageDesc {
 				format: vk::Format::R8G8B8A8_SRGB,
-				// TODO: this should be removed by the desc function.
-				persist: None,
 				..desc
 			},
 			ImageUsage {

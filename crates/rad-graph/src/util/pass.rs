@@ -1,10 +1,10 @@
 use ash::vk;
-use bytemuck::{bytes_of, NoUninit};
+use bytemuck::{bytes_of, cast_slice, from_bytes, NoUninit, Pod};
 
 use crate::{
 	arena::IteratorAlloc,
 	device::{ComputePipeline, GraphicsPipeline},
-	graph::{PassContext, Res, VirtualResource},
+	graph::{BufferLoc, PassContext, Res, VirtualResource},
 	resource::{BufferHandle, ImageView, Subresource},
 };
 
@@ -94,12 +94,12 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		}
 	}
 
-	pub fn update_buffer(&mut self, res: Res<BufferHandle>, offset: usize, data: &impl NoUninit) {
+	pub fn update_buffer(&mut self, res: Res<BufferHandle>, offset: usize, data: &[impl NoUninit]) {
 		unsafe {
 			let res = self.get(res);
 			self.device
 				.device()
-				.cmd_update_buffer(self.buf, res.buffer, offset as _, bytes_of(data));
+				.cmd_update_buffer(self.buf, res.buffer, offset as _, cast_slice(data));
 		}
 	}
 
@@ -123,10 +123,13 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 	}
 
 	pub fn copy_full_buffer(&mut self, src: Res<BufferHandle>, dst: Res<BufferHandle>, dst_offset: usize) {
-		self.copy_buffer(src, dst, 0, dst_offset, vk::WHOLE_SIZE as _);
+		let size = self.desc(src).size;
+		self.copy_buffer(src, dst, 0, dst_offset, size as _);
 	}
 
-	pub fn copy_buffer_to_image(&mut self, src: Res<BufferHandle>, dst: Res<ImageView>, copy: ImageCopy) {
+	pub fn copy_buffer_to_image(
+		&mut self, src: Res<BufferHandle>, dst: Res<ImageView>, src_offset: usize, copy: ImageCopy,
+	) {
 		let src = self.get(src);
 		let dst = self.get(dst);
 		unsafe {
@@ -141,7 +144,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 					.dst_image(dst.image)
 					.dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
 					.regions(&[vk::BufferImageCopy2::default()
-						.buffer_offset(0)
+						.buffer_offset(src_offset as _)
 						.buffer_row_length(copy.row_stride)
 						.buffer_image_height(copy.plane_stride)
 						.image_subresource(vk::ImageSubresourceLayers {
@@ -154,6 +157,32 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 						.image_extent(copy.extent)]),
 			);
 		}
+	}
+
+	pub fn write(&mut self, res: Res<BufferHandle>, offset: usize, data: &[impl NoUninit]) {
+		debug_assert!(
+			self.desc(res).loc == BufferLoc::Upload,
+			"can only `write` to upload buffers. use `update_buffer` otherwise"
+		);
+		let res = self.get(res);
+		let data: &[u8] = cast_slice(data);
+		unsafe {
+			std::ptr::copy_nonoverlapping(data.as_ptr(), res.data.as_mut_ptr().add(offset), data.len());
+		}
+	}
+
+	pub fn readback<T: Pod>(&mut self, res: Res<BufferHandle>, offset: usize) -> T {
+		debug_assert!(
+			self.desc(res).loc == BufferLoc::Readback,
+			"can only `readback` from readback buffers"
+		);
+
+		if self.is_uninit(res) {
+			return T::zeroed();
+		}
+
+		let res = self.get(res);
+		unsafe { *from_bytes(&res.data.as_ref()[offset..][..std::mem::size_of::<T>()]) }
 	}
 
 	pub fn dispatch(&mut self, x: u32, y: u32, z: u32) {
@@ -320,14 +349,16 @@ impl RenderPass<'_, '_, '_> {
 		}
 	}
 
-	pub fn draw_indexed(&mut self, indices: u32, instances: u32, first_index: u32, first_instance: u32) {
+	pub fn draw_indexed(
+		&mut self, indices: u32, instances: u32, first_index: u32, first_vertex: u32, first_instance: u32,
+	) {
 		unsafe {
 			self.pass.device.device().cmd_draw_indexed(
 				self.pass.buf,
 				indices,
 				instances,
 				first_index,
-				0,
+				first_vertex as _,
 				first_instance,
 			);
 		}
