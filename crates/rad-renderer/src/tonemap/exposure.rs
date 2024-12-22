@@ -1,9 +1,8 @@
-use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
-	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, Res},
-	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
+	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, Res},
+	resource::{BufferHandle, GpuPtr, ImageView},
 	sync::Shader,
 	util::compute::ComputePass,
 	Result,
@@ -71,49 +70,22 @@ impl ExposureCalc {
 		let exp_size = std::mem::size_of::<f32>() as u64;
 
 		let mut pass = frame.pass("zero histogram");
-		let histogram = pass.resource(
-			BufferDesc {
-				size: histogram_size,
-				loc: BufferLoc::GpuOnly,
-				persist: None,
-			},
-			BufferUsage {
-				usages: &[BufferUsageType::TransferWrite],
-			},
-		);
+		let histogram = pass.resource(BufferDesc::gpu(histogram_size), BufferUsage::transfer_write());
 		let exp = pass.resource(
 			BufferDesc {
-				size: exp_size,
-				loc: BufferLoc::GpuOnly,
 				persist: Some("exposure"),
+				..BufferDesc::gpu(exp_size)
 			},
-			BufferUsage {
-				usages: &[BufferUsageType::TransferWrite],
-			},
+			BufferUsage::transfer_write(),
 		);
 		pass.build(move |mut pass| {
 			pass.zero(histogram);
 			pass.zero_if_uninit(exp);
 		});
 
-		let inp_usage = ImageUsage {
-			format: vk::Format::UNDEFINED,
-			usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Compute)],
-			view_type: Some(vk::ImageViewType::TYPE_2D),
-			subresource: Subresource::default(),
-		};
-
 		let mut pass = frame.pass("generate histogram");
-		pass.reference(input, inp_usage);
-		pass.reference(
-			histogram,
-			BufferUsage {
-				usages: &[
-					BufferUsageType::ShaderStorageRead(Shader::Compute),
-					BufferUsageType::ShaderStorageWrite(Shader::Compute),
-				],
-			},
-		);
+		pass.reference(input, ImageUsage::sampled_2d(Shader::Compute));
+		pass.reference(histogram, BufferUsage::read_write(Shader::Compute));
 
 		let size = pass.desc(input).size;
 		pass.build(move |mut pass| {
@@ -136,22 +108,9 @@ impl ExposureCalc {
 		});
 
 		let mut pass = frame.pass("calculate exposure");
-		pass.reference(input, inp_usage);
-		pass.reference(
-			histogram,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(Shader::Compute)],
-			},
-		);
-		pass.reference(
-			exp,
-			BufferUsage {
-				usages: &[
-					BufferUsageType::ShaderStorageRead(Shader::Compute),
-					BufferUsageType::ShaderStorageWrite(Shader::Compute),
-				],
-			},
-		);
+		pass.reference(input, ImageUsage::sampled_2d(Shader::Compute));
+		pass.reference(histogram, BufferUsage::read(Shader::Compute));
+		pass.reference(exp, BufferUsage::read_write(Shader::Compute));
 
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
@@ -174,30 +133,16 @@ impl ExposureCalc {
 		});
 
 		let mut pass = frame.pass("readback exposure");
-		let usage = BufferUsage {
-			usages: &[BufferUsageType::TransferWrite],
-		};
 		let histogram_read = pass.resource(
-			BufferDesc {
-				size: histogram_size,
-				loc: BufferLoc::Readback,
-				persist: Some("histogram readback"),
-			},
-			usage,
+			BufferDesc::readback(histogram_size, "histogram readback"),
+			BufferUsage::transfer_write(),
 		);
 		let exp_read = pass.resource(
-			BufferDesc {
-				size: exp_size,
-				loc: BufferLoc::Readback,
-				persist: Some("exposure readback"),
-			},
-			usage,
+			BufferDesc::readback(exp_size, "exposure readback"),
+			BufferUsage::transfer_write(),
 		);
-		let usage = BufferUsage {
-			usages: &[BufferUsageType::TransferRead],
-		};
-		pass.reference(histogram, usage);
-		pass.reference(exp, usage);
+		pass.reference(histogram, BufferUsage::transfer_read());
+		pass.reference(exp, BufferUsage::transfer_read());
 
 		let ret_exp = *exposure;
 		let hist = *read_histogram;

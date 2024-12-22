@@ -4,7 +4,6 @@ use rad_graph::{
 	device::descriptor::{SamplerId, StorageImageId},
 	graph::{
 		BufferDesc,
-		BufferLoc,
 		BufferUsage,
 		BufferUsageType,
 		Frame,
@@ -69,55 +68,27 @@ pub struct Resources {
 
 impl Resources {
 	pub fn instances(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
-		pass.reference(
-			self.scene.instances,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(Shader::Compute)],
-			},
-		);
+		pass.reference(self.scene.instances, BufferUsage::read(Shader::Compute));
 		self.scene.instances
 	}
 
 	pub fn instances_mesh(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
-		pass.reference(
-			self.scene.instances,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(Shader::Mesh)],
-			},
-		);
+		pass.reference(self.scene.instances, BufferUsage::read(Shader::Mesh));
 		self.scene.instances
 	}
 
 	pub fn camera(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
-		pass.reference(
-			self.camera,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(Shader::Compute)],
-			},
-		);
+		pass.reference(self.camera, BufferUsage::read(Shader::Compute));
 		self.camera
 	}
 
 	pub fn camera_mesh(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
-		pass.reference(
-			self.camera,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(Shader::Mesh)],
-			},
-		);
+		pass.reference(self.camera, BufferUsage::read(Shader::Mesh));
 		self.camera
 	}
 
 	pub fn hzb(&self, pass: &mut PassBuilder) -> Res<ImageView> {
-		pass.reference(
-			self.hzb,
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Compute)],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
-		);
+		pass.reference(self.hzb, ImageUsage::sampled_2d(Shader::Compute));
 		self.hzb
 	}
 
@@ -135,15 +106,7 @@ impl Resources {
 	}
 
 	pub fn output(&self, pass: &mut PassBuilder, buf: Res<BufferHandle>) -> Res<BufferHandle> {
-		pass.reference(
-			buf,
-			BufferUsage {
-				usages: &[
-					BufferUsageType::ShaderStorageRead(Shader::Compute),
-					BufferUsageType::ShaderStorageWrite(Shader::Compute),
-				],
-			},
-		);
+		pass.reference(buf, BufferUsage::read_write(Shader::Compute));
 		buf
 	}
 
@@ -176,22 +139,12 @@ impl Resources {
 	}
 
 	pub fn mesh_zero(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
-		pass.reference(
-			self.meshlet_render,
-			BufferUsage {
-				usages: &[BufferUsageType::TransferWrite],
-			},
-		);
+		pass.reference(self.meshlet_render, BufferUsage::transfer_write());
 		self.meshlet_render
 	}
 
 	pub fn stats(&self, pass: &mut PassBuilder) -> Res<BufferHandle> {
-		pass.reference(
-			self.stats,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageWrite(Shader::Compute)],
-			},
-		);
+		pass.reference(self.stats, BufferUsage::write(Shader::Compute));
 		self.stats
 	}
 
@@ -209,38 +162,14 @@ impl Resources {
 	}
 
 	pub fn visbuffer(&self, pass: &mut PassBuilder) -> Res<ImageView> {
-		pass.reference(
-			self.visbuffer,
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ShaderStorageWrite(Shader::Fragment)],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
-		);
+		pass.reference(self.visbuffer, ImageUsage::write_2d(Shader::Fragment));
 		self.visbuffer
 	}
 
 	pub fn debug(&self, pass: &mut PassBuilder) -> Option<DebugRes> {
 		if let Some(d) = self.debug {
-			pass.reference(
-				d.overdraw,
-				ImageUsage {
-					format: vk::Format::UNDEFINED,
-					usages: &[ImageUsageType::ShaderStorageWrite(Shader::Fragment)],
-					view_type: Some(vk::ImageViewType::TYPE_2D),
-					subresource: Subresource::default(),
-				},
-			);
-			pass.reference(
-				d.hwsw,
-				ImageUsage {
-					format: vk::Format::UNDEFINED,
-					usages: &[ImageUsageType::ShaderStorageWrite(Shader::Fragment)],
-					view_type: Some(vk::ImageViewType::TYPE_2D),
-					subresource: Subresource::default(),
-				},
-			);
+			pass.reference(d.overdraw, ImageUsage::write_2d(Shader::Fragment));
+			pass.reference(d.hwsw, ImageUsage::write_2d(Shader::Fragment));
 		}
 		self.debug
 	}
@@ -297,11 +226,7 @@ impl Setup {
 
 		let mut pass = frame.pass("setup cull buffers");
 		let camera = pass.resource(
-			BufferDesc {
-				size: std::mem::size_of::<CameraData>() as u64 * 2,
-				loc: BufferLoc::Upload,
-				persist: None,
-			},
+			BufferDesc::upload(std::mem::size_of::<CameraData>() as u64 * 2),
 			BufferUsage { usages: &[] },
 		);
 		let size = info.size.map(prev_pot);
@@ -334,30 +259,17 @@ impl Setup {
 		);
 
 		let count = 1024 * 1024u32;
-		let desc = BufferDesc {
-			size: (count as u64 * 2 + 9) * std::mem::size_of::<u32>() as u64,
-			loc: BufferLoc::GpuOnly,
-			persist: None,
-		};
-		let usage = BufferUsage {
-			usages: &[BufferUsageType::TransferWrite],
-		};
+		let usage = BufferUsage::transfer_write();
 		let late_instances = pass.resource(
-			BufferDesc {
-				size: ((info.data.scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _,
-				..desc
-			},
+			BufferDesc::gpu(((info.data.scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _),
 			usage,
 		);
+		let desc = BufferDesc::gpu((count as u64 * 2 + 9) * std::mem::size_of::<u32>() as u64);
 		let bvh_queues = [(); 2].map(|_| pass.resource(desc, usage));
 		let meshlet_queue = pass.resource(desc, usage);
 		let meshlet_render = pass.resource(desc, usage);
 		let stats = pass.resource(
-			BufferDesc {
-				size: std::mem::size_of::<CullStats>() as u64,
-				loc: BufferLoc::Readback,
-				persist: Some("cull stats readback"),
-			},
+			BufferDesc::readback(std::mem::size_of::<CullStats>() as u64, "cull stats readback"),
 			BufferUsage { usages: &[] },
 		);
 
@@ -373,12 +285,7 @@ impl Setup {
 			samples: vk::SampleCountFlags::TYPE_1,
 			persist: None,
 		};
-		let usage = ImageUsage {
-			format: vk::Format::UNDEFINED,
-			usages: &[ImageUsageType::TransferWrite],
-			view_type: None,
-			subresource: Subresource::default(),
-		};
+		let usage = ImageUsage::transfer_write();
 		let visbuffer = pass.resource(desc, usage);
 		let debug = info.debug_info.then(|| {
 			let overdraw = pass.resource(

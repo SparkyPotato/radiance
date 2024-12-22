@@ -2,20 +2,8 @@ use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
 	device::{Device, ShaderInfo},
-	graph::{
-		BufferDesc,
-		BufferLoc,
-		BufferUsage,
-		BufferUsageType,
-		Frame,
-		ImageDesc,
-		ImageUsage,
-		ImageUsageType,
-		PassContext,
-		Res,
-		Shader,
-	},
-	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
+	graph::{BufferDesc, BufferUsage, Frame, ImageDesc, ImageUsage, PassContext, Res, Shader},
+	resource::{BufferHandle, GpuPtr, ImageView},
 	util::{
 		pass::{Attachment, Load},
 		render::FullscreenPass,
@@ -102,11 +90,8 @@ impl DebugMesh {
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("debug mesh");
 
-		let usage = BufferUsage {
-			usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
-		};
-		pass.reference(output.scene.instances, usage);
-		pass.reference(output.camera, usage);
+		pass.reference(output.scene.instances, BufferUsage::read(Shader::Fragment));
+		pass.reference(output.camera, BufferUsage::read(Shader::Fragment));
 		output.reader.add(&mut pass, Shader::Fragment, true);
 
 		let desc = pass.desc(output.reader.visbuffer);
@@ -115,24 +100,13 @@ impl DebugMesh {
 				format: vk::Format::R8G8B8A8_SRGB,
 				..desc
 			},
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
+			ImageUsage::color_attachment(),
 		);
 
 		let highlight_buf = (highlights.len() > 0).then(|| {
 			pass.resource(
-				BufferDesc {
-					size: (std::mem::size_of::<u32>() * highlights.len()) as u64,
-					loc: BufferLoc::Upload,
-					persist: None,
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
-				},
+				BufferDesc::upload((std::mem::size_of::<u32>() * highlights.len()) as _),
+				BufferUsage::read(Shader::Fragment),
 			)
 		});
 

@@ -7,8 +7,8 @@ use rad_graph::{
 		SamplerDesc,
 		ShaderInfo,
 	},
-	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, Res},
-	resource::{GpuPtr, ImageView, Subresource},
+	graph::{BufferDesc, BufferUsage, Frame, ImageDesc, ImageUsage, Res},
+	resource::{GpuPtr, ImageView},
 	sync::Shader,
 	util::render::FullscreenPass,
 	Result,
@@ -72,19 +72,10 @@ impl PathTracer {
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> (Res<ImageView>, u32) {
 		let mut pass = frame.pass("path trace");
 
-		let usage = BufferUsage {
-			usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
-		};
-		pass.reference(info.data.scene.as_, usage);
-		pass.reference(info.data.scene.instances, usage);
-		let camera = pass.resource(
-			BufferDesc {
-				size: std::mem::size_of::<CameraData>() as _,
-				loc: BufferLoc::Upload,
-				persist: None,
-			},
-			usage,
-		);
+		let read = BufferUsage::read(Shader::Fragment);
+		pass.reference(info.data.scene.as_, read);
+		pass.reference(info.data.scene.instances, read);
+		let camera = pass.resource(BufferDesc::upload(std::mem::size_of::<CameraData>() as _), read);
 
 		let out = pass.resource(
 			ImageDesc {
@@ -99,15 +90,7 @@ impl PathTracer {
 				samples: vk::SampleCountFlags::TYPE_1,
 				persist: Some("path tracer accum"),
 			},
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[
-					ImageUsageType::ShaderStorageRead(Shader::Fragment),
-					ImageUsageType::ShaderStorageWrite(Shader::Fragment),
-				],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
+			ImageUsage::read_write_2d(Shader::Fragment),
 		);
 
 		if let Some(c) = self.cached {

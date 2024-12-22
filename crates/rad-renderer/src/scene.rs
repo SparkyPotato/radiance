@@ -8,7 +8,7 @@ use rad_core::{
 };
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
-	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, ExternalBuffer, Frame, Res},
+	graph::{BufferDesc, BufferUsage, BufferUsageType, ExternalBuffer, Frame, Res},
 	resource::{self, ASDesc, Buffer, BufferHandle, GpuPtr, Resource, AS},
 	sync::Shader,
 	util::compute::ComputePass,
@@ -327,36 +327,10 @@ impl SceneUpdater {
 			let old_as = std::mem::replace(as_instances, new_as);
 
 			let mut pass = frame.pass("copy meshes");
-			let src = pass.resource(
-				ExternalBuffer { handle: old.handle() },
-				BufferUsage {
-					usages: &[BufferUsageType::TransferRead],
-				},
-			);
-			let src_as = pass.resource(
-				ExternalBuffer {
-					handle: old_as.handle(),
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::TransferRead],
-				},
-			);
-			let dst = pass.resource(
-				ExternalBuffer {
-					handle: instances.handle(),
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::TransferWrite],
-				},
-			);
-			let dst_as = pass.resource(
-				ExternalBuffer {
-					handle: as_instances.handle(),
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::TransferWrite],
-				},
-			);
+			let src = pass.resource(ExternalBuffer::new(&old), BufferUsage::transfer_read());
+			let src_as = pass.resource(ExternalBuffer::new(&old_as), BufferUsage::transfer_read());
+			let dst = pass.resource(ExternalBuffer::new(instances), BufferUsage::transfer_write());
+			let dst_as = pass.resource(ExternalBuffer::new(as_instances), BufferUsage::transfer_write());
 			pass.build(move |mut pass| {
 				pass.copy_full_buffer(src, dst, 0);
 				pass.copy_full_buffer(src_as, dst_as, 0);
@@ -385,20 +359,8 @@ impl SceneUpdater {
 			let old = std::mem::replace(lights, new);
 
 			let mut pass = frame.pass("copy lights");
-			let src = pass.resource(
-				ExternalBuffer { handle: old.handle() },
-				BufferUsage {
-					usages: &[BufferUsageType::TransferRead],
-				},
-			);
-			let dst = pass.resource(
-				ExternalBuffer {
-					handle: lights.handle(),
-				},
-				BufferUsage {
-					usages: &[BufferUsageType::TransferWrite],
-				},
-			);
+			let src = pass.resource(ExternalBuffer::new(&old), BufferUsage::transfer_read());
+			let dst = pass.resource(ExternalBuffer::new(lights), BufferUsage::transfer_write());
 			pass.build(move |mut pass| pass.copy_full_buffer(src, dst, 0));
 			frame.delete(old);
 
@@ -425,38 +387,19 @@ impl SceneUpdater {
 			pass.reference(as_instances, usages);
 			(instances, as_instances)
 		} else {
-			let i = pass.resource(
-				ExternalBuffer {
-					handle: instances.handle(),
-				},
-				usages,
-			);
-			let a = pass.resource(
-				ExternalBuffer {
-					handle: as_instances.handle(),
-				},
-				usages,
-			);
+			let i = pass.resource(ExternalBuffer::new(instances), usages);
+			let a = pass.resource(ExternalBuffer::new(as_instances), usages);
 			(i, a)
 		};
 		let lights = if let Some(lights) = ls {
 			pass.reference(lights, usages);
 			lights
 		} else {
-			pass.resource(
-				ExternalBuffer {
-					handle: lights.handle(),
-				},
-				usages,
-			)
+			pass.resource(ExternalBuffer::new(lights), usages)
 		};
 		let update_buffer = (count > 0).then(|| {
 			pass.resource(
-				BufferDesc {
-					size: (count * std::mem::size_of::<GpuSceneUpdate>()) as _,
-					loc: BufferLoc::Upload,
-					persist: None,
-				},
+				BufferDesc::upload((count * std::mem::size_of::<GpuSceneUpdate>()) as u64),
 				usages,
 			)
 		});
@@ -545,11 +488,7 @@ impl SceneUpdater {
 			},
 		);
 		let scratch = pass.resource(
-			BufferDesc {
-				size: sinfo.build_scratch_size,
-				loc: BufferLoc::GpuOnly,
-				persist: None,
-			},
+			BufferDesc::gpu(sinfo.build_scratch_size),
 			BufferUsage {
 				usages: &[BufferUsageType::AccelerationStructureBuildScratch],
 			},

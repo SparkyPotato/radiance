@@ -31,7 +31,7 @@ pub use crate::graph::{
 	},
 };
 use crate::{
-	arena::{Arena, IteratorAlloc},
+	arena::{Arena, IteratorAlloc, ToOwnedAlloc},
 	device::Device,
 	graph::{
 		cache::{PersistentCache, ResourceCache, UniqueCache},
@@ -255,20 +255,23 @@ pub struct PassBuilder<'frame, 'pass, 'graph> {
 
 impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 	/// Read GPU data that another pass outputs.
-	pub fn reference<T: VirtualResource>(&mut self, id: Res<T>, usage: T::Usage<'_>) {
+	pub fn reference<T: VirtualResource>(
+		&mut self, id: Res<T>, usage: impl ToOwnedAlloc<Owned<&'graph Arena> = T::Usage<&'graph Arena>>,
+	) {
 		let id = id.id.wrapping_sub(self.frame.graph.resource_base_id);
 
 		unsafe {
 			let arena = self.frame.arena();
 			let res = self.frame.virtual_resources.get_unchecked_mut(id);
 			res.lifetime.end = self.frame.passes.len() as _;
-			T::add_read_usage(res, self.frame.passes.len() as _, usage, arena);
+			T::add_read_usage(res, self.frame.passes.len() as _, usage.to_owned_alloc(arena));
 		}
 	}
 
 	/// Output GPU data for other passes.
 	pub fn resource<D: VirtualResourceDesc>(
-		&mut self, desc: D, usage: <D::Resource as VirtualResource>::Usage<'_>,
+		&mut self, desc: D,
+		usage: impl ToOwnedAlloc<Owned<&'graph Arena> = <D::Resource as VirtualResource>::Usage<&'graph Arena>>,
 	) -> Res<D::Resource> {
 		let real_id = self.frame.virtual_resources.len();
 		let id = real_id.wrapping_add(self.frame.graph.resource_base_id);
@@ -276,10 +279,9 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		let arena = self.frame.arena();
 		let ty = desc.ty(
 			self.frame.passes.len() as _,
-			usage,
+			usage.to_owned_alloc(arena),
 			&mut self.frame.virtual_resources,
 			self.frame.graph.resource_base_id,
-			arena,
 		);
 
 		self.frame.virtual_resources.push(VirtualResourceData {

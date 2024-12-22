@@ -41,22 +41,22 @@ impl<K: Ord, V, A: Allocator + Clone> FromIteratorAlloc<(K, V), A> for BTreeMap<
 	}
 }
 
-pub trait ToOwnedAlloc<A> {
-	type Owned;
+pub trait ToOwnedAlloc {
+	type Owned<A: Allocator>;
 
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned;
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A>;
 }
 
-impl<T: Clone, A: Allocator> ToOwnedAlloc<A> for [T] {
-	type Owned = Vec<T, A>;
+impl<T: Clone> ToOwnedAlloc for [T] {
+	type Owned<A: Allocator> = Vec<T, A>;
 
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned { self.to_vec_in(alloc) }
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A> { self.to_vec_in(alloc) }
 }
 
-impl<A: Allocator, T: Clone> ToOwnedAlloc<A> for &'_ [T] {
-	type Owned = Vec<T, A>;
+impl<T: Clone> ToOwnedAlloc for &'_ [T] {
+	type Owned<A: Allocator> = Vec<T, A>;
 
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned { (**self).to_owned_alloc(alloc) }
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A> { (**self).to_owned_alloc(alloc) }
 }
 
 #[repr(C, align(8))]

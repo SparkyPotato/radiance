@@ -2,8 +2,8 @@ use ash::{ext, vk};
 use bytemuck::{NoUninit, Pod, Zeroable};
 use rad_graph::{
 	device::{descriptor::StorageImageId, Device, GraphicsPipelineDesc, ShaderInfo},
-	graph::{BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, PassBuilder, PassContext, Res},
-	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
+	graph::{BufferUsage, Frame, ImageUsage, PassBuilder, PassContext, Res},
+	resource::{BufferHandle, GpuPtr, ImageView},
 	sync::Shader,
 	util::{compute::ComputePass, render::RenderPass},
 	Result,
@@ -40,19 +40,9 @@ pub struct VisBufferReader {
 
 impl VisBufferReader {
 	pub fn add(&self, pass: &mut PassBuilder, shader: Shader, debug: bool) {
-		pass.reference(
-			self.queue,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(shader)],
-			},
-		);
+		pass.reference(self.queue, BufferUsage::read(shader));
 
-		let usage = ImageUsage {
-			format: vk::Format::UNDEFINED,
-			usages: &[ImageUsageType::ShaderStorageRead(Shader::Fragment)],
-			view_type: Some(vk::ImageViewType::TYPE_2D),
-			subresource: Subresource::default(),
-		};
+		let usage = ImageUsage::read_2d(shader);
 		pass.reference(self.visbuffer, usage);
 		if let Some(d) = self.debug
 			&& debug

@@ -7,18 +7,7 @@ use rad_graph::{
 		SamplerDesc,
 		ShaderInfo,
 	},
-	graph::{
-		BufferDesc,
-		BufferLoc,
-		BufferUsage,
-		BufferUsageType,
-		Frame,
-		ImageUsage,
-		ImageUsageType,
-		PassContext,
-		Res,
-		Shader,
-	},
+	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, PassContext, Res, Shader},
 	resource::{BufferHandle, GpuPtr, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
 	util::compute::ComputePass,
 	Result,
@@ -79,46 +68,15 @@ impl HzbGen {
 
 		let atomic = frame.stage_buffer_new(
 			"zero atomic",
-			BufferDesc {
-				size: 4,
-				loc: BufferLoc::GpuOnly,
-				persist: None,
-			},
+			BufferDesc::gpu(std::mem::size_of::<u32>() as _),
 			0,
 			&[0, 0, 0, 0],
 		);
 
 		let mut pass = frame.pass("run");
-		pass.reference(
-			visbuffer,
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ShaderStorageRead(Shader::Compute)],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
-		);
-		pass.reference(
-			out,
-			ImageUsage {
-				format: vk::Format::R32_SFLOAT,
-				usages: &[
-					ImageUsageType::ShaderStorageRead(Shader::Compute),
-					ImageUsageType::ShaderStorageWrite(Shader::Compute),
-				],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
-		);
-		pass.reference(
-			atomic,
-			BufferUsage {
-				usages: &[
-					BufferUsageType::ShaderStorageRead(Shader::Compute),
-					BufferUsageType::ShaderStorageWrite(Shader::Compute),
-				],
-			},
-		);
+		pass.reference(visbuffer, ImageUsage::read_2d(Shader::Compute));
+		pass.reference(out, ImageUsage::read_write_2d(Shader::Compute));
+		pass.reference(atomic, BufferUsage::read_write(Shader::Compute));
 
 		let desc = pass.desc(out);
 		let size = Vec2::new(desc.size.width, desc.size.height) * 2;

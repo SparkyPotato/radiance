@@ -2,8 +2,8 @@ use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
-	graph::{BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, Res, Shader},
-	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
+	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Res, Shader},
+	resource::{BufferHandle, GpuPtr, ImageView},
 	util::{
 		pass::{Attachment, Load},
 		render::FullscreenPass,
@@ -43,33 +43,15 @@ impl AcesTonemap {
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("aces tonemap");
 
-		pass.reference(
-			input,
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
-		);
-		pass.reference(
-			exp,
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
-			},
-		);
+		pass.reference(input, ImageUsage::sampled_2d(Shader::Fragment));
+		pass.reference(exp, BufferUsage::read(Shader::Fragment));
 		let desc = pass.desc(input);
 		let out = pass.resource(
 			ImageDesc {
 				format: vk::Format::R8G8B8A8_SRGB,
 				..desc
 			},
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
+			ImageUsage::color_attachment(),
 		);
 
 		pass.build(move |mut pass| {

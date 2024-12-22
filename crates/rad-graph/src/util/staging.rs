@@ -1,22 +1,9 @@
 use std::alloc::Allocator;
 
-use ash::vk;
 use bytemuck::{cast_slice, NoUninit};
 
 use crate::{
-	graph::{
-		BufferDesc,
-		BufferLoc,
-		BufferUsage,
-		BufferUsageType,
-		Frame,
-		ImageUsage,
-		ImageUsageType,
-		PassBuilder,
-		PassContext,
-		Res,
-		VirtualResourceDesc,
-	},
+	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, PassContext, Res, VirtualResourceDesc},
 	resource::{BufferHandle, ImageView},
 	util::pass::ImageCopy,
 };
@@ -33,13 +20,11 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	/// TODO: Allow using the transfer queue and use a staging buffer instead of an upload buffer.
 	pub fn stage_buffer(&mut self, name: &str, dst: Res<BufferHandle>, offset: u64, data: impl AsRef<[u8]> + 'pass) {
 		let mut pass = self.pass(name);
-		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		pass.reference(
-			dst,
-			BufferUsage {
-				usages: &[BufferUsageType::TransferWrite],
-			},
+		let staging = pass.resource(
+			BufferDesc::upload(data.as_ref().len() as _),
+			BufferUsage::transfer_read(),
 		);
+		pass.reference(dst, BufferUsage::transfer_write());
 		pass.build(move |pass| Self::exec_buffer_stage(pass, staging, dst, offset, data.as_ref()));
 	}
 
@@ -47,13 +32,11 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 		&mut self, name: &str, dst: D, offset: u64, data: impl AsRef<[u8]> + 'pass,
 	) -> Res<BufferHandle> {
 		let mut pass = self.pass(name);
-		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		let dst = pass.resource(
-			dst,
-			BufferUsage {
-				usages: &[BufferUsageType::TransferWrite],
-			},
+		let staging = pass.resource(
+			BufferDesc::upload(data.as_ref().len() as _),
+			BufferUsage::transfer_read(),
 		);
+		let dst = pass.resource(dst, BufferUsage::transfer_write());
 		pass.build(move |pass| Self::exec_buffer_stage(pass, staging, dst, offset, data.as_ref()));
 		dst
 	}
@@ -63,16 +46,11 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	/// Subresource mip count must be 1, and the strides can be 0 to imply tightly packed.
 	pub fn stage_image(&mut self, name: &str, dst: Res<ImageView>, stage: ImageCopy, data: impl AsRef<[u8]> + 'pass) {
 		let mut pass = self.pass(name);
-		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		pass.reference(
-			dst,
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::TransferWrite],
-				view_type: None,
-				subresource: stage.subresource,
-			},
+		let staging = pass.resource(
+			BufferDesc::upload(data.as_ref().len() as _),
+			BufferUsage::transfer_read(),
 		);
+		pass.reference(dst, ImageUsage::transfer_write());
 		pass.build(move |pass| Self::exec_image_stage(pass, staging, dst, stage, data.as_ref()));
 	}
 
@@ -80,31 +58,13 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 		&mut self, name: &str, desc: D, stage: ImageCopy, data: impl AsRef<[u8]> + 'pass,
 	) -> Res<ImageView> {
 		let mut pass = self.pass(name);
-		let staging = Self::make_staging_buffer(&mut pass, data.as_ref());
-		let dst = pass.resource(
-			desc,
-			ImageUsage {
-				format: vk::Format::UNDEFINED,
-				usages: &[ImageUsageType::TransferWrite],
-				view_type: None,
-				subresource: stage.subresource,
-			},
+		let staging = pass.resource(
+			BufferDesc::upload(data.as_ref().len() as _),
+			BufferUsage::transfer_read(),
 		);
+		let dst = pass.resource(desc, ImageUsage::transfer_write());
 		pass.build(move |pass| Self::exec_image_stage(pass, staging, dst, stage, data.as_ref()));
 		dst
-	}
-
-	fn make_staging_buffer(pass: &mut PassBuilder, data: &[u8]) -> Res<BufferHandle> {
-		pass.resource(
-			BufferDesc {
-				size: data.len() as _,
-				loc: BufferLoc::Upload,
-				persist: None,
-			},
-			BufferUsage {
-				usages: &[BufferUsageType::TransferRead],
-			},
-		)
 	}
 
 	fn exec_buffer_stage(

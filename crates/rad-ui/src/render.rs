@@ -25,13 +25,10 @@ use rad_graph::{
 	graph::{
 		self,
 		BufferDesc,
-		BufferLoc,
 		BufferUsage,
-		BufferUsageType,
 		ExternalImage,
 		Frame,
 		ImageUsage,
-		ImageUsageType,
 		PassContext,
 		Res,
 		Shader,
@@ -135,12 +132,7 @@ impl Renderer {
 		'graph: 'pass,
 	{
 		let imgs = self.generate_images(frame, delta);
-		let img_usage = ImageUsage {
-			format: vk::Format::R8G8B8A8_UNORM,
-			usages: &[ImageUsageType::ShaderReadSampledImage(Shader::Fragment)],
-			view_type: Some(vk::ImageViewType::TYPE_2D),
-			subresource: Subresource::default(),
-		};
+		let img_usage = ImageUsage::format_sampled_2d(vk::Format::R8G8B8A8_UNORM, Shader::Fragment);
 
 		let span = span!(Level::TRACE, "setup ui pass");
 		let _e = span.enter();
@@ -163,40 +155,14 @@ impl Renderer {
 		while vertex_size as u64 > self.vertex_size {
 			self.vertex_size *= 2;
 		}
-		let vertex = pass.resource(
-			BufferDesc {
-				size: self.vertex_size,
-				loc: BufferLoc::Upload,
-				persist: None,
-			},
-			BufferUsage {
-				usages: &[BufferUsageType::ShaderStorageRead(Shader::Vertex)],
-			},
-		);
+		let vertex = pass.resource(BufferDesc::upload(self.vertex_size), BufferUsage::read(Shader::Vertex));
 
 		let index_size = indices * std::mem::size_of::<u32>();
 		while index_size as u64 > self.index_size {
 			self.index_size *= 2;
 		}
-		let index = pass.resource(
-			BufferDesc {
-				size: self.index_size,
-				loc: BufferLoc::Upload,
-				persist: None,
-			},
-			BufferUsage {
-				usages: &[BufferUsageType::IndexBuffer],
-			},
-		);
-		let out = pass.resource(
-			out,
-			ImageUsage {
-				format: vk::Format::B8G8R8A8_UNORM,
-				usages: &[ImageUsageType::ColorAttachmentWrite],
-				view_type: Some(vk::ImageViewType::TYPE_2D),
-				subresource: Subresource::default(),
-			},
-		);
+		let index = pass.resource(BufferDesc::upload(self.index_size), BufferUsage::index());
+		let out = pass.resource(out, ImageUsage::format_color_attachment(vk::Format::B8G8R8A8_UNORM));
 
 		unsafe {
 			for tris in tris.iter() {

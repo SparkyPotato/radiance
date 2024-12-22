@@ -7,7 +7,7 @@ use crate::{
 	arena::{Arena, IteratorAlloc, ToOwnedAlloc},
 	device::Device,
 	graph::{compile::Resource, Caches, Res},
-	resource::{BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Subresource},
+	resource::{Buffer, BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Resource as _, Subresource},
 };
 
 /// The location of a GPU buffer.
@@ -28,10 +28,42 @@ pub struct BufferDesc {
 	pub persist: Option<&'static str>,
 }
 
+impl BufferDesc {
+	pub fn upload(size: u64) -> Self {
+		Self {
+			size,
+			loc: BufferLoc::Upload,
+			persist: None,
+		}
+	}
+
+	pub fn gpu(size: u64) -> Self {
+		Self {
+			size,
+			loc: BufferLoc::GpuOnly,
+			persist: None,
+		}
+	}
+
+	pub fn readback(size: u64, name: &'static str) -> Self {
+		Self {
+			size,
+			loc: BufferLoc::Readback,
+			persist: Some(name),
+		}
+	}
+}
+
 /// The usage of a buffer in a render pass.
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct BufferUsage<'a> {
 	pub usages: &'a [BufferUsageType],
+}
+
+#[doc(hidden)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct BufferUsageArray<const N: usize> {
+	pub usages: [BufferUsageType; N],
 }
 
 #[doc(hidden)]
@@ -40,10 +72,61 @@ pub struct BufferUsageOwned<A: Allocator> {
 	pub usages: Vec<BufferUsageType, A>,
 }
 
-impl<A: Allocator> ToOwnedAlloc<A> for BufferUsage<'_> {
-	type Owned = BufferUsageOwned<A>;
+impl BufferUsage<'_> {
+	pub fn read(shader: Shader) -> BufferUsageArray<1> {
+		BufferUsageArray {
+			usages: [BufferUsageType::ShaderStorageRead(shader)],
+		}
+	}
 
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned {
+	pub fn write(shader: Shader) -> BufferUsageArray<1> {
+		BufferUsageArray {
+			usages: [BufferUsageType::ShaderStorageWrite(shader)],
+		}
+	}
+
+	pub fn read_write(shader: Shader) -> BufferUsageArray<2> {
+		BufferUsageArray {
+			usages: [
+				BufferUsageType::ShaderStorageRead(shader),
+				BufferUsageType::ShaderStorageWrite(shader),
+			],
+		}
+	}
+
+	pub fn index() -> BufferUsageArray<1> {
+		BufferUsageArray {
+			usages: [BufferUsageType::IndexBuffer],
+		}
+	}
+
+	pub fn transfer_read() -> BufferUsageArray<1> {
+		BufferUsageArray {
+			usages: [BufferUsageType::TransferRead],
+		}
+	}
+
+	pub fn transfer_write() -> BufferUsageArray<1> {
+		BufferUsageArray {
+			usages: [BufferUsageType::TransferWrite],
+		}
+	}
+}
+
+impl ToOwnedAlloc for BufferUsage<'_> {
+	type Owned<A: Allocator> = BufferUsageOwned<A>;
+
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A> {
+		Self::Owned {
+			usages: self.usages.to_owned_alloc(alloc),
+		}
+	}
+}
+
+impl<const N: usize> ToOwnedAlloc for BufferUsageArray<N> {
+	type Owned<A: Allocator> = BufferUsageOwned<A>;
+
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A> {
 		Self::Owned {
 			usages: self.usages.to_owned_alloc(alloc),
 		}
@@ -79,6 +162,69 @@ pub struct ImageUsage<'a> {
 }
 
 #[doc(hidden)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+pub struct ImageUsageArray<const N: usize> {
+	pub format: vk::Format,
+	pub usages: [ImageUsageType; N],
+	pub view_type: Option<vk::ImageViewType>,
+	pub subresource: Subresource,
+}
+
+impl ImageUsage<'_> {
+	pub fn d2<const N: usize>(format: vk::Format, usages: [ImageUsageType; N]) -> ImageUsageArray<N> {
+		ImageUsageArray {
+			format,
+			usages,
+			view_type: Some(vk::ImageViewType::TYPE_2D),
+			subresource: Subresource::default(),
+		}
+	}
+
+	pub fn sampled_2d(shader: Shader) -> ImageUsageArray<1> { Self::format_sampled_2d(vk::Format::UNDEFINED, shader) }
+
+	pub fn format_sampled_2d(format: vk::Format, shader: Shader) -> ImageUsageArray<1> {
+		Self::d2(format, [ImageUsageType::ShaderReadSampledImage(shader)])
+	}
+
+	pub fn read_2d(shader: Shader) -> ImageUsageArray<1> {
+		Self::d2(vk::Format::UNDEFINED, [ImageUsageType::ShaderStorageRead(shader)])
+	}
+
+	pub fn write_2d(shader: Shader) -> ImageUsageArray<1> {
+		Self::d2(vk::Format::UNDEFINED, [ImageUsageType::ShaderStorageWrite(shader)])
+	}
+
+	pub fn read_write_2d(shader: Shader) -> ImageUsageArray<2> {
+		Self::d2(
+			vk::Format::UNDEFINED,
+			[
+				ImageUsageType::ShaderStorageRead(shader),
+				ImageUsageType::ShaderStorageWrite(shader),
+			],
+		)
+	}
+
+	pub fn color_attachment() -> ImageUsageArray<1> { Self::format_color_attachment(vk::Format::UNDEFINED) }
+
+	pub fn format_color_attachment(format: vk::Format) -> ImageUsageArray<1> {
+		Self::d2(format, [ImageUsageType::ColorAttachmentWrite])
+	}
+
+	pub fn no_view<const N: usize>(usages: [ImageUsageType; N]) -> ImageUsageArray<N> {
+		ImageUsageArray {
+			format: vk::Format::UNDEFINED,
+			usages,
+			view_type: None,
+			subresource: Subresource::default(),
+		}
+	}
+
+	pub fn transfer_read() -> ImageUsageArray<1> { Self::no_view([ImageUsageType::TransferRead]) }
+
+	pub fn transfer_write() -> ImageUsageArray<1> { Self::no_view([ImageUsageType::TransferWrite]) }
+}
+
+#[doc(hidden)]
 #[derive(Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ImageUsageOwned<A: Allocator> {
 	pub format: vk::Format,
@@ -87,10 +233,23 @@ pub struct ImageUsageOwned<A: Allocator> {
 	pub subresource: Subresource,
 }
 
-impl<A: Allocator> ToOwnedAlloc<A> for ImageUsage<'_> {
-	type Owned = ImageUsageOwned<A>;
+impl ToOwnedAlloc for ImageUsage<'_> {
+	type Owned<A: Allocator> = ImageUsageOwned<A>;
 
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned {
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A> {
+		Self::Owned {
+			format: self.format,
+			usages: self.usages.to_owned_alloc(alloc),
+			view_type: self.view_type,
+			subresource: self.subresource,
+		}
+	}
+}
+
+impl<const N: usize> ToOwnedAlloc for ImageUsageArray<N> {
+	type Owned<A: Allocator> = ImageUsageOwned<A>;
+
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A> {
 		Self::Owned {
 			format: self.format,
 			usages: self.usages.to_owned_alloc(alloc),
@@ -119,6 +278,10 @@ impl<A: Allocator> ImageUsageOwned<A> {
 pub struct ExternalBuffer {
 	/// The handle to the buffer. This is passed as-is to the render pass.
 	pub handle: BufferHandle,
+}
+
+impl ExternalBuffer {
+	pub fn new(buf: &Buffer) -> Self { Self { handle: buf.handle() } }
 }
 
 /// An image external to the render graph.
@@ -172,20 +335,20 @@ pub trait VirtualResourceDesc {
 	type Resource: VirtualResource;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: <Self::Resource as VirtualResource>::Usage<'_>,
-		resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, base_id: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: <Self::Resource as VirtualResource>::Usage<&'graph Arena>,
+		resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, base_id: usize,
 	) -> VirtualResourceType<'graph>;
 }
 
 pub trait VirtualResource {
-	type Usage<'a>;
+	type Usage<A: Allocator>;
 	type Desc;
 
 	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc;
 
 	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self;
 
-	unsafe fn add_read_usage<'a>(ty: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena);
+	unsafe fn add_read_usage<'a>(ty: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<&'a Arena>);
 }
 
 #[derive(Clone)]
@@ -239,7 +402,7 @@ impl<'graph> VirtualResourceType<'graph> {
 
 impl VirtualResource for BufferHandle {
 	type Desc = BufferDesc;
-	type Usage<'a> = BufferUsage<'a>;
+	type Usage<A: Allocator> = BufferUsageOwned<A>;
 
 	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
 		let mut d = ty.ty.buffer().desc;
@@ -249,11 +412,9 @@ impl VirtualResource for BufferHandle {
 
 	unsafe fn from_res(_: u32, res: &mut Resource, _: &mut Caches, _: &Device) -> Self { res.buffer().handle }
 
-	unsafe fn add_read_usage<'a>(
-		res: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena,
-	) {
+	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData<'a>, pass: u32, usage: BufferUsageOwned<&'a Arena>) {
 		let b = res.ty.buffer_mut();
-		b.usages.insert(pass, usage.to_owned_alloc(arena));
+		b.usages.insert(pass, usage);
 	}
 }
 
@@ -261,14 +422,15 @@ impl VirtualResourceDesc for BufferDesc {
 	type Resource = BufferHandle;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: BufferUsage<'_>, _: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
-		_: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: BufferUsageOwned<&'graph Arena>,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
 	) -> VirtualResourceType<'graph> {
+		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Buffer(BufferData {
 			desc: self,
 			handle: BufferHandle::default(),
 			uninit: true,
-			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			usages: iter::once((pass, write_usage)).collect_in(arena),
 			swapchain: None,
 		})
 	}
@@ -276,7 +438,7 @@ impl VirtualResourceDesc for BufferDesc {
 
 impl VirtualResource for ImageView {
 	type Desc = ImageDesc;
-	type Usage<'a> = ImageUsage<'a>;
+	type Usage<A: Allocator> = ImageUsageOwned<A>;
 
 	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
 		let mut d = ty.ty.image().desc;
@@ -328,9 +490,7 @@ impl VirtualResource for ImageView {
 		}
 	}
 
-	unsafe fn add_read_usage<'a>(
-		res: &mut VirtualResourceData<'a>, pass: u32, usage: Self::Usage<'_>, arena: &'a Arena,
-	) {
+	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData<'a>, pass: u32, usage: ImageUsageOwned<&'a Arena>) {
 		let image = res.ty.image_mut();
 		debug_assert!(
 			compatible_formats(image.desc.format, usage.format),
@@ -338,7 +498,7 @@ impl VirtualResource for ImageView {
 			image.desc.format,
 			usage.format
 		);
-		image.usages.insert(pass, usage.to_owned_alloc(arena));
+		image.usages.insert(pass, usage);
 	}
 }
 
@@ -346,14 +506,15 @@ impl VirtualResourceDesc for ImageDesc {
 	type Resource = ImageView;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: ImageUsage<'_>, _: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
-		_: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: ImageUsageOwned<&'graph Arena>,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
 	) -> VirtualResourceType<'graph> {
+		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Image(ImageData {
 			desc: self,
 			handle: Default::default(),
 			uninit: true,
-			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			usages: iter::once((pass, write_usage)).collect_in(arena),
 			swapchain: None,
 		})
 	}
@@ -363,9 +524,10 @@ impl VirtualResourceDesc for ExternalBuffer {
 	type Resource = BufferHandle;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: BufferUsage<'_>, _: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
-		_: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: BufferUsageOwned<&'graph Arena>,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
 	) -> VirtualResourceType<'graph> {
+		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Buffer(BufferData {
 			desc: BufferDesc {
 				size: self.handle.data.len() as _,
@@ -374,7 +536,7 @@ impl VirtualResourceDesc for ExternalBuffer {
 			},
 			handle: self.handle,
 			uninit: false,
-			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			usages: iter::once((pass, write_usage)).collect_in(arena),
 			swapchain: None,
 		})
 	}
@@ -384,8 +546,8 @@ impl VirtualResourceDesc for ExternalImage {
 	type Resource = ImageView;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: ImageUsage<'_>, _: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
-		_: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: ImageUsageOwned<&'graph Arena>,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
 	) -> VirtualResourceType<'graph> {
 		assert!(
 			compatible_formats(self.desc.format, write_usage.format),
@@ -393,11 +555,12 @@ impl VirtualResourceDesc for ExternalImage {
 			self.desc.format,
 			write_usage.format,
 		);
+		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Image(ImageData {
 			desc: self.desc,
 			handle: (self.handle, self.layout),
 			uninit: false,
-			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			usages: iter::once((pass, write_usage)).collect_in(arena),
 			swapchain: None,
 		})
 	}
@@ -407,9 +570,10 @@ impl VirtualResourceDesc for SwapchainImage {
 	type Resource = ImageView;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: <Self::Resource as VirtualResource>::Usage<'_>,
-		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: ImageUsageOwned<&'graph Arena>,
+		_: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, _: usize,
 	) -> VirtualResourceType<'graph> {
+		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Image(ImageData {
 			desc: ImageDesc {
 				size: vk::Extent3D {
@@ -425,7 +589,7 @@ impl VirtualResourceDesc for SwapchainImage {
 			},
 			handle: (self.handle, vk::ImageLayout::UNDEFINED),
 			uninit: false,
-			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			usages: iter::once((pass, write_usage)).collect_in(arena),
 			swapchain: Some((self.available, self.rendered)),
 		})
 	}
@@ -435,14 +599,15 @@ impl VirtualResourceDesc for Res<BufferHandle> {
 	type Resource = BufferHandle;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: BufferUsage<'_>, resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
-		base_id: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: BufferUsageOwned<&'graph Arena>,
+		resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, base_id: usize,
 	) -> VirtualResourceType<'graph> {
+		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Buffer(BufferData {
 			desc: unsafe { resources[self.id - base_id].ty.buffer_mut().desc.clone() },
 			handle: BufferHandle::default(),
 			uninit: true,
-			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			usages: iter::once((pass, write_usage)).collect_in(arena),
 			swapchain: None,
 		})
 	}
@@ -452,14 +617,15 @@ impl VirtualResourceDesc for Res<ImageView> {
 	type Resource = ImageView;
 
 	fn ty<'graph>(
-		self, pass: u32, write_usage: ImageUsage<'_>, resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>,
-		base_id: usize, arena: &'graph Arena,
+		self, pass: u32, write_usage: ImageUsageOwned<&'graph Arena>,
+		resources: &mut Vec<VirtualResourceData<'graph>, &'graph Arena>, base_id: usize,
 	) -> VirtualResourceType<'graph> {
+		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Image(ImageData {
 			desc: unsafe { resources[self.id - base_id].ty.image_mut().desc.clone() },
 			handle: Default::default(),
 			uninit: true,
-			usages: iter::once((pass, write_usage.to_owned_alloc(arena))).collect_in(arena),
+			usages: iter::once((pass, write_usage)).collect_in(arena),
 			swapchain: None,
 		})
 	}

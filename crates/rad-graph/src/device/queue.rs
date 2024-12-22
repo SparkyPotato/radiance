@@ -302,10 +302,10 @@ impl<A: Allocator> QueueWaitOwned<A> {
 	}
 }
 
-impl<A: Allocator> ToOwnedAlloc<A> for QueueWait<'_> {
-	type Owned = QueueWaitOwned<A>;
+impl ToOwnedAlloc for QueueWait<'_> {
+	type Owned<A: Allocator> = QueueWaitOwned<A>;
 
-	fn to_owned_alloc(&self, alloc: A) -> Self::Owned {
+	fn to_owned_alloc<A: Allocator>(&self, alloc: A) -> Self::Owned<A> {
 		Self::Owned {
 			graphics: self.graphics,
 			compute: self.compute,
