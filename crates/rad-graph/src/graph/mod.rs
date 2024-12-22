@@ -342,12 +342,6 @@ pub struct PassContext<'frame, 'graph> {
 }
 
 impl<'frame, 'graph> PassContext<'frame, 'graph> {
-	pub fn desc<T: VirtualResource>(&mut self, res: Res<T>) -> T::Desc {
-		let id = res.id.wrapping_sub(self.base_id);
-		let res = self.resource_map.get(id as u32);
-		unsafe { T::real_desc(res) }
-	}
-
 	/// Get a reference to transient CPU-side data output by another pass.
 	pub fn get_data_ref<T: 'frame>(&mut self, id: RefId<T>) -> &'frame T {
 		let id = id.id.wrapping_sub(self.base_id);

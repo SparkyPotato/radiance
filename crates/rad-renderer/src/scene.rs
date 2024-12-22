@@ -31,7 +31,7 @@ use crate::{
 	},
 };
 
-#[derive(Copy, Clone, Default, PartialEq, Pod, Zeroable)]
+#[derive(Copy, Clone, Default, PartialEq, NoUninit)]
 #[repr(C)]
 pub struct GpuTransform {
 	pub position: Vec3<f32>,

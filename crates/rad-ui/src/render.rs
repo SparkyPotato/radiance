@@ -1,7 +1,7 @@
-use std::collections::hash_map::Entry;
+use std::{collections::hash_map::Entry, io::Write};
 
 use ash::vk;
-use bytemuck::NoUninit;
+use bytemuck::{bytes_of, cast_slice, NoUninit};
 use egui::{
 	epaint::{ImageDelta, Primitive, Vertex},
 	ClippedPrimitive,
@@ -24,6 +24,7 @@ use rad_graph::{
 	},
 	graph::{
 		self,
+		util::{ByteReader, ImageStage},
 		BufferDesc,
 		BufferLoc,
 		BufferUsage,
@@ -49,10 +50,9 @@ use rad_graph::{
 		Subresource,
 	},
 	util::{
-		pass::{Attachment, ImageCopy, Load},
+		pass::{Attachment, Load},
 		pipeline::{default_blend, no_cull, simple_blend},
 		render::RenderPass,
-		staging::ByteReader,
 	},
 	Result,
 };
@@ -226,16 +226,17 @@ impl Renderer {
 	}
 
 	fn execute(&mut self, mut pass: PassContext, io: PassIO, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
+		let vertex = pass.get(io.vertex);
+		let index = pass.get(io.index);
 		unsafe {
-			Self::generate_buffers(&mut pass, io.vertex, io.index, tris);
+			Self::generate_buffers(vertex, index, tris);
 		}
 
-		let vertex_buffer = pass.get(io.vertex).ptr();
 		let mut pass = self.pass.start(
 			&mut pass,
 			&PushConstantsStatic {
 				screen_size: screen.physical_size.map(|x| x as f32) / screen.scaling,
-				vertex_buffer,
+				vertex_buffer: vertex.ptr(),
 			},
 			&[Attachment {
 				image: io.out,
@@ -251,7 +252,6 @@ impl Renderer {
 
 		pass.bind_index_res(io.index, 0, vk::IndexType::UINT32);
 
-		let mut start_vertex = 0;
 		let mut start_index = 0;
 		for prim in tris {
 			match &prim.primitive {
@@ -283,8 +283,7 @@ impl Renderer {
 						std::mem::size_of::<PushConstantsStatic>(),
 						&PushConstantsDynamic { image, sampler },
 					);
-					pass.draw_indexed(m.indices.len() as u32, 1, start_index, start_vertex, 0);
-					start_vertex += m.vertices.len() as u32;
+					pass.draw_indexed(m.indices.len() as u32, 1, start_index, 0);
 					start_index += m.indices.len() as u32;
 				},
 				Primitive::Callback(_) => panic!("Callback not supported"),
@@ -292,31 +291,24 @@ impl Renderer {
 		}
 	}
 
-	unsafe fn generate_buffers(
-		pass: &mut PassContext, vertex: Res<BufferHandle>, index: Res<BufferHandle>, tris: &[ClippedPrimitive],
-	) {
+	unsafe fn generate_buffers(mut vertex: BufferHandle, mut index: BufferHandle, tris: &[ClippedPrimitive]) {
 		let span = span!(Level::TRACE, "upload ui buffers");
 		let _e = span.enter();
 
 		let mut vertices_written = 0;
-		let mut indices_written = 0;
+		let mut vertex_slice = vertex.data.as_mut();
+		let mut index_slice = index.data.as_mut();
 
 		for prim in tris.iter() {
-			match prim.primitive {
-				Primitive::Mesh(ref m) => {
-					pass.write(
-						vertex,
-						vertices_written * std::mem::size_of::<Vertex>(),
-						m.vertices.as_slice(),
-					);
-					pass.write(
-						index,
-						indices_written * std::mem::size_of::<u32>(),
-						m.indices.as_slice(),
-					);
+			match &prim.primitive {
+				Primitive::Mesh(m) => {
+					vertex_slice.write_all(cast_slice(&m.vertices)).unwrap();
 
-					vertices_written += m.vertices.len();
-					indices_written += m.indices.len();
+					for i in m.indices.iter() {
+						index_slice.write_all(bytes_of(&(i + vertices_written))).unwrap();
+					}
+
+					vertices_written += m.vertices.len() as u32;
 				},
 				Primitive::Callback(_) => panic!("Callback not supported"),
 			}
@@ -339,7 +331,7 @@ impl Renderer {
 
 				let (handle, desc) = self.get_image_for(frame, x, &data);
 				let pos = data.pos.unwrap_or([0, 0]);
-				let stage = ImageCopy {
+				let stage = ImageStage {
 					row_stride: 0,
 					plane_stride: 0,
 					subresource: Subresource::default(),

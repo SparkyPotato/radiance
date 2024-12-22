@@ -1,5 +1,5 @@
 use ash::vk;
-use bytemuck::NoUninit;
+use bytemuck::{from_bytes, NoUninit};
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
 	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, Frame, ImageUsage, ImageUsageType, Res},
@@ -23,13 +23,13 @@ struct PushConstants {
 pub struct ExposureCalc {
 	histogram: ComputePass<PushConstants>,
 	average: ComputePass<PushConstants>,
+	read_histogram: [f32; 256],
 	exposure: f32,
-	read_histogram: [u32; 256],
 }
 
 pub struct ExposureStats {
 	pub exposure: f32,
-	pub histogram: [u32; 256],
+	pub histogram: [f32; 256],
 }
 
 impl ExposureCalc {
@@ -52,7 +52,7 @@ impl ExposureCalc {
 					spec: &[],
 				},
 			)?,
-			read_histogram: [0; 256],
+			read_histogram: [0.0; 256],
 			exposure: 0.0,
 		})
 	}
@@ -204,10 +204,18 @@ impl ExposureCalc {
 		let hist = *read_histogram;
 		pass.build(move |mut pass| {
 			pass.copy_full_buffer(histogram, histogram_read, 0);
-			*read_histogram = pass.readback(histogram_read, 0);
+			if !pass.is_uninit(histogram_read) {
+				let read = pass.get(histogram_read);
+				let total = (size.width * size.height) as f32;
+				let hist: &[u32; 256] = from_bytes(unsafe { &read.data.as_ref()[..histogram_size as usize] });
+				*read_histogram = hist.map(|x| x as f32 / total);
+			}
 
 			pass.copy_full_buffer(exp, exp_read, 0);
-			*exposure = pass.readback(exp_read, 0);
+			if !pass.is_uninit(exp_read) {
+				let read = pass.get(exp_read);
+				*exposure = *from_bytes(unsafe { &read.data.as_ref()[..exp_size as usize] });
+			}
 		});
 
 		(
