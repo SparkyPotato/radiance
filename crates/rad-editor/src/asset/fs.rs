@@ -78,6 +78,7 @@ impl FsAssetSystem {
 			root: RwLock::new(std::env::args().nth(1).map(PathBuf::from)),
 			..Default::default()
 		});
+		let _ = this.load_imports();
 		let a = this.clone();
 		// TODO: yuck
 		std::thread::spawn(move || loop {
@@ -138,7 +139,6 @@ impl FsAssetSystem {
 			root: RwLock::new(r),
 			..Default::default()
 		};
-		let _ = new.load_imports();
 		for entry in w.into_iter().filter_map(|x| x.ok()) {
 			let path = entry.path();
 			let is_file = path.is_file();
@@ -155,7 +155,6 @@ impl FsAssetSystem {
 		*self.assets.write() = new.assets.into_inner();
 		*self.by_type.write() = new.by_type.into_inner();
 		*self.dir.write() = new.dir.into_inner();
-		*self.paths.write() = new.paths.into_inner();
 	}
 
 	fn add_asset(&self, rel_path: &Path, asset: AssetHeader) {

@@ -20,7 +20,7 @@ pub struct AcesTonemap {
 struct PushConstants {
 	input: ImageId,
 	_pad: u32,
-	avg_lum: GpuPtr<f32>,
+	exp: GpuPtr<f32>,
 }
 
 impl AcesTonemap {
@@ -39,7 +39,7 @@ impl AcesTonemap {
 
 	/// `highlights` must be sorted.
 	pub fn run<'pass>(
-		&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, avg_lum: Res<BufferHandle>,
+		&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, exp: Res<BufferHandle>,
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("aces tonemap");
 
@@ -53,7 +53,7 @@ impl AcesTonemap {
 			},
 		);
 		pass.reference(
-			avg_lum,
+			exp,
 			BufferUsage {
 				usages: &[BufferUsageType::ShaderStorageRead(Shader::Fragment)],
 			},
@@ -76,14 +76,10 @@ impl AcesTonemap {
 
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
-			let avg_lum = pass.get(avg_lum).ptr();
+			let exp = pass.get(exp).ptr();
 			self.pass.run(
 				&mut pass,
-				&PushConstants {
-					input,
-					_pad: 0,
-					avg_lum,
-				},
+				&PushConstants { input, _pad: 0, exp },
 				&[Attachment {
 					image: out,
 					load: Load::Clear(vk::ClearValue {

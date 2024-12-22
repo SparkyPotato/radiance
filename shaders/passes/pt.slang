@@ -2,6 +2,7 @@ module pt;
 
 import graph;
 import graph.util;
+import graph.util.color;
 import graph.util.rng;
 import asset;
 import passes.bsdf;
@@ -10,9 +11,10 @@ struct PushConstants {
 	Instance<NonUniform>* instances;
 	Light* lights;
 	Camera* camera;
+	AS as;
+	Sampler sampler;
 	STex2D<f32x3> output;
 	Rng rng;
-	AS as;
 	u32 samples;
 	u32 light_count;
 	u32 sky_light;
@@ -95,13 +97,14 @@ Optional<Hit> trace_ray(Ray ray) {
 		let position = mul(tmat, f32x4(bary.x * v0.position + bary.y * v1.position + bary.z * v2.position, 1.f)).xyz;
 		let normal = normalize(mul(tmat, f32x4(bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal, 0.f)).xyz);
 
+		let s = Constants.sampler;
 		let bc = mat->base_color.get();
 		let mr = mat->metallic_roughness.get();
 		let nm = mat->normal.get();
 		let em = mat->emissive.get();
 		let white = f32x4(1.f);
-		let met_rough = mr.load(mr.pixel_of_uv(uv), white).xy;
-		let emissive = em.load(em.pixel_of_uv(uv), white).xyz * mat->emissive_factor;
+		let met_rough = mr.sample(s, uv, white).xy;
+		let emissive = em.sample(s, uv, white).xyz * mat->emissive_factor;
 
 		Hit h = {};
 		h.position = position;
@@ -109,7 +112,7 @@ Optional<Hit> trace_ray(Ray ray) {
 		h.emissive = emissive;
 		h.from_shading_basis = gen_basis(normal);
 		h.to_shading_basis = transpose(h.from_shading_basis);
-		h.params.base_color = (bc.load(bc.pixel_of_uv(uv), white) * mat->base_color_factor).xyz;
+		h.params.base_color = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
 		h.params.roughness = met_rough.y * mat->roughness_factor;
 		h.params.metallic = met_rough.x * mat->metallic_factor;
 		h.params.rel_ior = 1.5f;
@@ -243,7 +246,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 	f32x3 b = f32x3(1.f);
 	var specular = true;
 
-	for (int i = 0; i < 10; i++) {
+	for (int bounces = 0; bounces < 10; bounces++) {
 		let h = trace_ray(ray);
 		if (!h.hasValue) {
 			if (specular)
@@ -256,11 +259,35 @@ f32x3 li(inout Rng rng, Ray ray) {
 			L += b * hit.emissive;
 
 		let wo = hit.to_shading(-ray.dir);
-		L += b * estimate_with_light_sample(rng, hit, wo);
-		let es = estimate_with_bsdf_sample(rng, hit, wo);
-		b *= es.b;
-		ray = es.r;
-		specular = es.spec;
+
+		let ls = sample_one_light(rng, hit);
+		if (any(ls.L > 0.f) && ls.pdf > 0) {
+			let f = dot(ls.wi, hit.normal) * hit.params.base_color / PI;
+			if (any(f > 0.f)) {
+				let unshadowed = is_unshadowed(hit, ls);
+				L += f32(unshadowed) * ls.L * b * f / ls.pdf;
+			}
+		}
+
+		let wi = rng.sample_cos_hemi();
+		ray.dir = hit.from_shading(wi);
+		ray.origin = hit.ray_origin();
+		b *= dot(wi, hit.normal) * hit.params.base_color / PI;
+
+		// L += b * estimate_with_light_sample(rng, hit, wo);
+		// let es = estimate_with_bsdf_sample(rng, hit, wo);
+		// b *= es.b;
+		// ray = es.r;
+		// specular = es.spec;
+
+		specular = false;
+
+		if (bounces > 3) {
+			let q = max(0.05f, 1.f - luminance(b));
+			if (rng.sample() < q)
+				break;
+			b /= 1.f - q;
+		}
 	}
 
 	return L;

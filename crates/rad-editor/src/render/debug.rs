@@ -55,7 +55,9 @@ impl DebugWindow {
 		}
 	}
 
-	pub fn render(&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>, exp: Option<ExposureStats>) {
+	pub fn render(
+		&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>, pt: Option<(ExposureStats, u32)>,
+	) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut sel = self.render_mode as usize;
 			ComboBox::from_label("render mode")
@@ -114,8 +116,10 @@ impl DebugWindow {
 				Self::pass_stats(ui, stats.late);
 			}
 
-			if let Some(exp) = exp {
-				ui.label(format!("luminance: {:.2}", exp.luminance));
+			if let Some((exp, samples)) = pt {
+				ui.label(format!("samples: {}", samples));
+
+				ui.label(format!("exposure: {:.2}", exp.exposure));
 
 				Plot::new("exposure histogram")
 					.allow_zoom(false)
@@ -124,8 +128,15 @@ impl DebugWindow {
 					.allow_boxed_zoom(false)
 					.show_background(false)
 					.show_grid(false)
+					.show_x(false)
+					.show_y(false)
 					.x_axis_position(VPlacement::Bottom)
 					.y_axis_position(HPlacement::Left)
+					.auto_bounds([false, true].into())
+					.include_x(0.0)
+					.include_x(255.0)
+					.x_axis_formatter(|_, _| "".to_string())
+					.y_axis_formatter(|_, _| "".to_string())
 					.show(ui, |ui| {
 						ui.bar_chart(BarChart::new(
 							exp.histogram

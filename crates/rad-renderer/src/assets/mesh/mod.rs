@@ -88,7 +88,7 @@ pub struct Mesh {
 }
 
 impl Mesh {
-	pub fn import(name: &str, import: import::MeshData, mut into: Box<dyn AssetView>) -> Result<(), io::Error> {
+	pub fn import(name: &str, import: import::MeshData, mut into: Box<dyn AssetView + '_>) -> Result<(), io::Error> {
 		let data = import::import(name, import);
 		into.clear()?;
 		bincode::encode_into_std_write(data, &mut into.new_section()?, bincode::config::standard()).map_err(

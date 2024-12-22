@@ -13,26 +13,29 @@ use rad_graph::{
 #[repr(C)]
 struct PushConstants {
 	histogram: GpuPtr<u32>,
-	avg_lum: GpuPtr<f32>,
+	exp: GpuPtr<f32>,
 	input: ImageId,
-	min_log_lum: f32,
-	inv_log_lum_range: f32,
+	min_exp: f32,
+	inv_exp_range: f32,
 	lerp_coeff: f32,
 }
 
 pub struct ExposureCalc {
 	histogram: ComputePass<PushConstants>,
 	average: ComputePass<PushConstants>,
-	read_histogram: [u32; 256],
+	read_histogram: [f32; 256],
 	exposure: f32,
 }
 
 pub struct ExposureStats {
-	pub luminance: f32,
-	pub histogram: [u32; 256],
+	pub exposure: f32,
+	pub histogram: [f32; 256],
 }
 
 impl ExposureCalc {
+	pub const MAX_EXPOSURE: f32 = 17.0;
+	pub const MIN_EXPOSURE: f32 = -6.0;
+
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
 			histogram: ComputePass::new(
@@ -49,7 +52,7 @@ impl ExposureCalc {
 					spec: &[],
 				},
 			)?,
-			read_histogram: [0; 256],
+			read_histogram: [0.0; 256],
 			exposure: 0.0,
 		})
 	}
@@ -65,7 +68,7 @@ impl ExposureCalc {
 		} = self;
 
 		let histogram_size = std::mem::size_of::<u32>() as u64 * 256;
-		let avg_lum_size = std::mem::size_of::<f32>() as u64;
+		let exp_size = std::mem::size_of::<f32>() as u64;
 
 		let mut pass = frame.pass("zero histogram");
 		let histogram = pass.resource(
@@ -78,11 +81,11 @@ impl ExposureCalc {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		let avg_lum = pass.resource(
+		let exp = pass.resource(
 			BufferDesc {
-				size: avg_lum_size,
+				size: exp_size,
 				loc: BufferLoc::GpuOnly,
-				persist: Some("average luminance"),
+				persist: Some("exposure"),
 			},
 			BufferUsage {
 				usages: &[BufferUsageType::TransferWrite],
@@ -94,8 +97,8 @@ impl ExposureCalc {
 			pass.device
 				.device()
 				.cmd_fill_buffer(pass.buf, buf.buffer, 0, buf.size(), 0);
-			if pass.is_uninit(avg_lum) {
-				let buf = pass.get(avg_lum);
+			if pass.is_uninit(exp) {
+				let buf = pass.get(exp);
 				pass.device
 					.device()
 					.cmd_fill_buffer(pass.buf, buf.buffer, 0, buf.size(), 0);
@@ -122,9 +125,6 @@ impl ExposureCalc {
 		);
 
 		let size = pass.desc(input).size;
-		let min_log_lum = -8.0;
-		let max_log_lum = 3.5;
-		let inv_log_lum_range = 1.0 / (max_log_lum - min_log_lum);
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
 			let histogram = pass.get(histogram).ptr();
@@ -132,11 +132,11 @@ impl ExposureCalc {
 				&mut pass,
 				&PushConstants {
 					histogram,
-					avg_lum: GpuPtr::null(),
+					exp: GpuPtr::null(),
 					input,
 					lerp_coeff: 0.0,
-					min_log_lum,
-					inv_log_lum_range,
+					min_exp: Self::MIN_EXPOSURE,
+					inv_exp_range: 1.0 / (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE),
 				},
 				(size.width + 15) >> 4,
 				(size.height + 15) >> 4,
@@ -153,7 +153,7 @@ impl ExposureCalc {
 			},
 		);
 		pass.reference(
-			avg_lum,
+			exp,
 			BufferUsage {
 				usages: &[
 					BufferUsageType::ShaderStorageRead(Shader::Compute),
@@ -165,15 +165,15 @@ impl ExposureCalc {
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
 			let histogram = pass.get(histogram).ptr();
-			let avg_lum = pass.get(avg_lum).ptr();
+			let exp = pass.get(exp).ptr();
 			average.dispatch(
 				&mut pass,
 				&PushConstants {
 					histogram,
-					avg_lum,
+					exp,
 					input,
-					min_log_lum,
-					inv_log_lum_range,
+					min_exp: Self::MIN_EXPOSURE,
+					inv_exp_range: 1.0 / (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE),
 					lerp_coeff: (1.0 - (-dt).exp()).clamp(0.0, 1.0),
 				},
 				1,
@@ -194,9 +194,9 @@ impl ExposureCalc {
 			},
 			usage,
 		);
-		let avg_lum_read = pass.resource(
+		let exp_read = pass.resource(
 			BufferDesc {
-				size: avg_lum_size,
+				size: exp_size,
 				loc: BufferLoc::Readback,
 				persist: Some("exposure readback"),
 			},
@@ -206,12 +206,12 @@ impl ExposureCalc {
 			usages: &[BufferUsageType::TransferRead],
 		};
 		pass.reference(histogram, usage);
-		pass.reference(avg_lum, usage);
+		pass.reference(exp, usage);
 
-		let exp = *exposure;
+		let ret_exp = *exposure;
 		let hist = *read_histogram;
 		pass.build(move |mut pass| unsafe {
-			let avg_lum = pass.get(avg_lum);
+			let exp = pass.get(exp);
 			let histogram = pass.get(histogram);
 
 			let uninit = pass.is_uninit(histogram_read);
@@ -227,32 +227,39 @@ impl ExposureCalc {
 				}],
 			);
 			if !uninit {
-				*read_histogram = *from_bytes(&read.data.as_ref()[..histogram_size as usize]);
+				let total = (size.width * size.height) as f32;
+				let hist: &[u32; 256] = from_bytes(&read.data.as_ref()[..histogram_size as usize]);
+				*read_histogram = hist.map(|x| x as f32 / total);
 			}
 
-			let uninit = pass.is_uninit(avg_lum_read);
-			let read = pass.get(avg_lum_read);
+			let uninit = pass.is_uninit(exp_read);
+			let read = pass.get(exp_read);
 			pass.device.device().cmd_copy_buffer(
 				pass.buf,
-				avg_lum.buffer,
+				exp.buffer,
 				read.buffer,
 				&[vk::BufferCopy {
 					src_offset: 0,
 					dst_offset: 0,
-					size: avg_lum_size,
+					size: exp_size,
 				}],
 			);
 			if !uninit {
-				*exposure = *from_bytes(&read.data.as_ref()[..avg_lum_size as usize]);
+				*exposure = *from_bytes(&read.data.as_ref()[..exp_size as usize]);
 			}
 		});
 
 		(
-			avg_lum,
+			exp,
 			ExposureStats {
-				luminance: exp,
+				exposure: ret_exp,
 				histogram: hist,
 			},
 		)
+	}
+
+	pub unsafe fn destroy(self) {
+		self.histogram.destroy();
+		self.average.destroy();
 	}
 }

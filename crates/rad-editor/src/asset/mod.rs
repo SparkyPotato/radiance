@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rad_core::{asset::Asset, Engine};
-use rad_renderer::assets::{image::Image, mesh::Mesh};
+use rad_renderer::assets::{image::Image, material::Material, mesh::Mesh};
 use rad_ui::{
 	egui::{Button, Context, Grid, Key, KeyboardShortcut, Modifiers, RichText, ScrollArea, TopBottomPanel},
 	icons::{self, icon},
@@ -167,6 +167,7 @@ impl AssetTray {
 											let is_world = header.ty == World::uuid();
 											let is_mesh = header.ty == Mesh::uuid();
 											let is_image = header.ty == Image::uuid();
+											let is_mat = header.ty == Material::uuid();
 											ui.vertical_centered(|ui| {
 												let i = if is_world {
 													icons::MAP
@@ -174,6 +175,8 @@ impl AssetTray {
 													icons::CUBE
 												} else if is_image {
 													icons::IMAGE
+												} else if is_mat {
+													icons::BRUSH
 												} else {
 													icons::FILE
 												};
@@ -190,6 +193,10 @@ impl AssetTray {
 													} else if is_image {
 														if let Ok(image) = Engine::get().asset(header.id) {
 															self.image_previewer.add_preview(image);
+														}
+													} else if is_mat {
+														if let Err(e) = world.open_material(header.id) {
+															error!("failed to open material: {:?}", e);
 														}
 													}
 												}

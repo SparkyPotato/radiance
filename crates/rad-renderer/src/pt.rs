@@ -3,7 +3,11 @@ use std::io::Write;
 use ash::vk;
 use bytemuck::{bytes_of, NoUninit};
 use rad_graph::{
-	device::{descriptor::StorageImageId, Device, ShaderInfo},
+	device::{
+		descriptor::{SamplerId, StorageImageId},
+		Device,
+		ShaderInfo,
+	},
 	graph::{BufferDesc, BufferLoc, BufferUsage, BufferUsageType, Frame, ImageDesc, ImageUsage, ImageUsageType, Res},
 	resource::{GpuPtr, ImageView, Subresource},
 	sync::Shader,
@@ -23,6 +27,8 @@ use crate::{
 // TODO: reset on world edit.
 pub struct PathTracer {
 	pass: FullscreenPass<PushConstants>,
+	sampler: vk::Sampler,
+	sampler_id: SamplerId,
 	cached: Option<(WorldId, GpuTransform, Vec2<u32>)>,
 	samples: u32,
 }
@@ -39,17 +45,31 @@ struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
 	lights: GpuPtr<GpuLight>,
 	camera: GpuPtr<CameraData>,
+	as_: GpuPtr<u8>,
+	sampler: SamplerId,
 	out: StorageImageId,
 	seed: u32,
-	as_: GpuPtr<u8>,
 	samples: u32,
 	light_count: u32,
 	sky_light: u32,
-	_pad: u32,
 }
 
 impl PathTracer {
 	pub fn new(device: &Device) -> Result<Self> {
+		// TODO: cringe
+		let sampler = unsafe {
+			device.device().create_sampler(
+				&vk::SamplerCreateInfo::default()
+					.mag_filter(vk::Filter::LINEAR)
+					.min_filter(vk::Filter::LINEAR)
+					.mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+					.address_mode_u(vk::SamplerAddressMode::REPEAT)
+					.address_mode_v(vk::SamplerAddressMode::REPEAT)
+					.address_mode_w(vk::SamplerAddressMode::REPEAT),
+				None,
+			)?
+		};
+
 		Ok(Self {
 			pass: FullscreenPass::new(
 				device,
@@ -59,12 +79,14 @@ impl PathTracer {
 				},
 				&[],
 			)?,
+			sampler,
+			sampler_id: device.descriptors().get_sampler(device, sampler),
 			cached: None,
 			samples: 0,
 		})
 	}
 
-	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> Res<ImageView> {
+	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> (Res<ImageView>, u32) {
 		let mut pass = frame.pass("path trace");
 
 		let usage = BufferUsage {
@@ -112,6 +134,7 @@ impl PathTracer {
 		}
 		self.cached = Some((info.data.id, info.data.transform, info.size));
 
+		let s = self.samples;
 		pass.build(move |mut pass| {
 			if pass.is_uninit(out) {
 				self.samples = 0;
@@ -137,21 +160,27 @@ impl PathTracer {
 					instances,
 					lights,
 					camera: camera.ptr(),
+					as_,
+					sampler: self.sampler_id,
 					out: out.storage_id.unwrap(),
 					seed: thread_rng().next_u32(),
-					as_,
 					samples: self.samples,
 					light_count: info.data.scene.light_count,
 					sky_light: info.data.scene.sky_light,
-					_pad: 0,
 				},
 				vk::Extent2D::default().width(out.size.width).height(out.size.height),
 			);
 			self.samples += 1;
 		});
 
-		out
+		(out, s)
 	}
 
-	pub unsafe fn destroy(self) { self.pass.destroy(); }
+	pub unsafe fn destroy(self, device: &Device) {
+		self.pass.destroy();
+		unsafe {
+			device.device().destroy_sampler(self.sampler, None);
+			device.descriptors().return_sampler(self.sampler_id);
+		}
+	}
 }

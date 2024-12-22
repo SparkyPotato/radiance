@@ -4,7 +4,7 @@ import graph.util.color;
 
 struct PushConstants {
 	Tex2D<f32x4> input;
-	f32* avg_lum;
+	f32* exp;
 };
 
 [vk::push_constant]
@@ -32,7 +32,8 @@ f32x3 RRTAndODTFit(f32x3 v) {
 
 f32x3 ACESFitted(f32x3 color) {
 	var yxy = rgb_to_Yxy(color);
-	yxy.x /= (9.6f * *Constants.avg_lum + 0.0001f);
+	let l_max = 1.2f * exp2(*Constants.exp);
+	yxy.x /= l_max + 0.0001f;
 	color = Yxy_to_rgb(yxy);
 
 	color = mul(ACESInputMat, color);

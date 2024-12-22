@@ -4,6 +4,7 @@ use crate::fonts::ICONS;
 
 pub const ARROW_UP: &str = "\u{f062}";
 
+pub const BRUSH: &str = "\u{f55d}";
 pub const FILE: &str = "\u{f15b}";
 pub const FOLDER: &str = "\u{f07b}";
 pub const MAP: &str = "\u{f279}";

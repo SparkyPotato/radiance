@@ -57,7 +57,7 @@ impl Renderer {
 	pub fn render<'pass>(
 		&'pass mut self, window: &Window, frame: &mut Frame<'pass, '_>, ctx: &Context, world: &'pass mut WorldContext,
 	) {
-		let (stats, exp) = CentralPanel::default()
+		let (stats, pt) = CentralPanel::default()
 			.show(ctx, |ui| {
 				let rect = ui.available_rect_before_wrap();
 				let size = rect.size();
@@ -77,16 +77,16 @@ impl Renderer {
 
 				let (img, stats, exp) = match self.debug_window.render_mode() {
 					RenderMode::Path => {
-						let hdr = self.pt.run(
+						let (hdr, s) = self.pt.run(
 							frame,
 							pt::RenderInfo {
 								data,
 								size: Vec2::new(size.x as u32, size.y as u32),
 							},
 						);
-						let (lum, exp) = self.exposure.run(frame, hdr, ui.input(|x| x.stable_dt));
-						let img = self.aces.run(frame, hdr, lum);
-						(img, None, Some(exp))
+						let (exp, exp_s) = self.exposure.run(frame, hdr, ui.input(|x| x.stable_dt));
+						let img = self.aces.run(frame, hdr, exp);
+						(img, None, Some((exp_s, s)))
 					},
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(
@@ -107,8 +107,17 @@ impl Renderer {
 			})
 			.inner;
 
-		self.debug_window.render(frame.device(), ctx, stats, exp);
+		self.debug_window.render(frame.device(), ctx, stats, pt);
 
 		self.frame += 1;
+	}
+
+	pub unsafe fn destroy(self) {
+		let device = Engine::get().global();
+		self.visbuffer.destroy(device);
+		self.pt.destroy(device);
+		self.exposure.destroy();
+		self.aces.destroy();
+		self.debug.destroy();
 	}
 }
