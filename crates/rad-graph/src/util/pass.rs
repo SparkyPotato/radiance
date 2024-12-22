@@ -4,9 +4,51 @@ use bytemuck::{bytes_of, NoUninit};
 use crate::{
 	arena::IteratorAlloc,
 	device::{ComputePipeline, GraphicsPipeline},
-	graph::{PassContext, Res},
-	resource::{BufferHandle, ImageView},
+	graph::{PassContext, Res, VirtualResource},
+	resource::{BufferHandle, ImageView, Subresource},
 };
+
+pub trait ZeroableResource: VirtualResource {
+	fn zero(&mut self, pass: &mut PassContext);
+}
+
+impl ZeroableResource for BufferHandle {
+	fn zero(&mut self, pass: &mut PassContext) {
+		unsafe {
+			pass.device
+				.device()
+				.cmd_fill_buffer(pass.buf, self.buffer, 0, vk::WHOLE_SIZE, 0);
+		}
+	}
+}
+
+impl ZeroableResource for ImageView {
+	fn zero(&mut self, pass: &mut PassContext) {
+		unsafe {
+			pass.device.device().cmd_clear_color_image(
+				pass.buf,
+				self.image,
+				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+				&vk::ClearColorValue::default(),
+				&[vk::ImageSubresourceRange::default()
+					.aspect_mask(vk::ImageAspectFlags::COLOR)
+					.base_mip_level(0)
+					.level_count(vk::REMAINING_MIP_LEVELS)
+					.base_array_layer(0)
+					.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+			);
+		}
+	}
+}
+
+#[derive(Copy, Clone)]
+pub struct ImageCopy {
+	pub row_stride: u32,
+	pub plane_stride: u32,
+	pub subresource: Subresource,
+	pub offset: vk::Offset3D,
+	pub extent: vk::Extent3D,
+}
 
 impl<'frame, 'graph> PassContext<'frame, 'graph> {
 	pub fn bind_compute(&mut self, pipe: &ComputePipeline) { pipe.bind(self.device, self.buf); }
@@ -19,6 +61,97 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 				vk::ShaderStageFlags::ALL,
 				offset as _,
 				bytes_of(value),
+			);
+		}
+	}
+
+	pub fn zero(&mut self, res: Res<impl ZeroableResource>) {
+		let mut res = self.get(res);
+		res.zero(self);
+	}
+
+	pub fn zero_if_uninit(&mut self, res: Res<impl ZeroableResource>) {
+		if self.is_uninit(res) {
+			self.zero(res);
+		}
+	}
+
+	pub fn clear_image(&mut self, res: Res<ImageView>, value: vk::ClearColorValue) {
+		unsafe {
+			let res = self.get(res);
+			self.device.device().cmd_clear_color_image(
+				self.buf,
+				res.image,
+				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+				&value,
+				&[vk::ImageSubresourceRange::default()
+					.aspect_mask(vk::ImageAspectFlags::COLOR)
+					.base_mip_level(0)
+					.level_count(vk::REMAINING_MIP_LEVELS)
+					.base_array_layer(0)
+					.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+			);
+		}
+	}
+
+	pub fn update_buffer(&mut self, res: Res<BufferHandle>, offset: usize, data: &impl NoUninit) {
+		unsafe {
+			let res = self.get(res);
+			self.device
+				.device()
+				.cmd_update_buffer(self.buf, res.buffer, offset as _, bytes_of(data));
+		}
+	}
+
+	pub fn copy_buffer(
+		&mut self, src: Res<BufferHandle>, dst: Res<BufferHandle>, src_offset: usize, dst_offset: usize, size: usize,
+	) {
+		unsafe {
+			let src = self.get(src);
+			let dst = self.get(dst);
+			self.device.device().cmd_copy_buffer(
+				self.buf,
+				src.buffer,
+				dst.buffer,
+				&[vk::BufferCopy {
+					src_offset: src_offset as _,
+					dst_offset: dst_offset as _,
+					size: size as _,
+				}],
+			);
+		}
+	}
+
+	pub fn copy_full_buffer(&mut self, src: Res<BufferHandle>, dst: Res<BufferHandle>, dst_offset: usize) {
+		self.copy_buffer(src, dst, 0, dst_offset, vk::WHOLE_SIZE as _);
+	}
+
+	pub fn copy_buffer_to_image(&mut self, src: Res<BufferHandle>, dst: Res<ImageView>, copy: ImageCopy) {
+		let src = self.get(src);
+		let dst = self.get(dst);
+		unsafe {
+			assert!(
+				copy.subresource.mip_count == 1 || copy.subresource.mip_count == vk::REMAINING_MIP_LEVELS,
+				"Only one mip can be copied in a single command"
+			);
+			self.device.device().cmd_copy_buffer_to_image2(
+				self.buf,
+				&vk::CopyBufferToImageInfo2::default()
+					.src_buffer(src.buffer)
+					.dst_image(dst.image)
+					.dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+					.regions(&[vk::BufferImageCopy2::default()
+						.buffer_offset(0)
+						.buffer_row_length(copy.row_stride)
+						.buffer_image_height(copy.plane_stride)
+						.image_subresource(vk::ImageSubresourceLayers {
+							aspect_mask: copy.subresource.aspect,
+							mip_level: copy.subresource.first_mip,
+							base_array_layer: copy.subresource.first_layer,
+							layer_count: copy.subresource.layer_count,
+						})
+						.image_offset(copy.offset)
+						.image_extent(copy.extent)]),
 			);
 		}
 	}

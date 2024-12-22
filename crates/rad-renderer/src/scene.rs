@@ -357,29 +357,9 @@ impl SceneUpdater {
 					usages: &[BufferUsageType::TransferWrite],
 				},
 			);
-			pass.build(move |mut pass| unsafe {
-				let src = pass.get(src);
-				let src_as = pass.get(src_as);
-				let dst = pass.get(dst);
-				let dst_as = pass.get(dst_as);
-				pass.device.device().cmd_copy_buffer(
-					pass.buf,
-					src.buffer,
-					dst.buffer,
-					&[vk::BufferCopy::default()
-						.src_offset(0)
-						.dst_offset(0)
-						.size(*cap as u64 * std::mem::size_of::<GpuInstance>() as u64)],
-				);
-				pass.device.device().cmd_copy_buffer(
-					pass.buf,
-					src_as.buffer,
-					dst_as.buffer,
-					&[vk::BufferCopy::default()
-						.src_offset(0)
-						.dst_offset(0)
-						.size(*cap as u64 * std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u64)],
-				);
+			pass.build(move |mut pass| {
+				pass.copy_full_buffer(src, dst, 0);
+				pass.copy_full_buffer(src_as, dst_as, 0);
 			});
 			frame.delete(old);
 			frame.delete(old_as);
@@ -419,19 +399,7 @@ impl SceneUpdater {
 					usages: &[BufferUsageType::TransferWrite],
 				},
 			);
-			pass.build(move |mut pass| unsafe {
-				let src = pass.get(src);
-				let dst = pass.get(dst);
-				pass.device.device().cmd_copy_buffer(
-					pass.buf,
-					src.buffer,
-					dst.buffer,
-					&[vk::BufferCopy::default()
-						.src_offset(0)
-						.dst_offset(0)
-						.size(*light_cap as u64 * std::mem::size_of::<GpuLight>() as u64)],
-				);
-			});
+			pass.build(move |mut pass| pass.copy_full_buffer(src, dst, 0));
 			frame.delete(old);
 
 			Some(dst)
@@ -494,14 +462,16 @@ impl SceneUpdater {
 		});
 
 		let count = count as _;
-		pass.build(move |mut pass| unsafe {
+		pass.build(move |mut pass| {
 			if let Some(update_buffer) = update_buffer {
 				let update_buf = pass.get(update_buffer);
 				let ptr = Huh(update_buf.data.as_ptr() as _);
-				updates.par_drain(..).enumerate().for_each(|(i, u)| {
-					let ptr = &ptr;
-					ptr.0.add(i).write(u);
-				});
+				unsafe {
+					updates.par_drain(..).enumerate().for_each(|(i, u)| {
+						let ptr = &ptr;
+						ptr.0.add(i).write(u);
+					});
+				}
 
 				let push = PushConstants {
 					instances: pass.get(instances).ptr(),
