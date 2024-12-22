@@ -348,9 +348,20 @@ impl VisBuffer {
 
 		let mut pass = frame.pass("zero render queue");
 		let zero = res.mesh_zero(&mut pass);
-		pass.build(move |mut pass| {
-			pass.update_buffer(zero, std::mem::size_of::<u32>() * 2, &0u32);
-			pass.update_buffer(zero, std::mem::size_of::<u32>() * 6, &0u32);
+		pass.build(move |mut ctx| unsafe {
+			let zero = ctx.get(zero);
+			ctx.device.device().cmd_update_buffer(
+				ctx.buf,
+				zero.buffer,
+				std::mem::size_of::<u32>() as u64 * 2,
+				cast_slice(&[0u32]),
+			);
+			ctx.device.device().cmd_update_buffer(
+				ctx.buf,
+				zero.buffer,
+				std::mem::size_of::<u32>() as u64 * 6,
+				cast_slice(&[0u32]),
+			);
 		});
 		frame.end_region();
 

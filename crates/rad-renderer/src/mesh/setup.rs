@@ -401,6 +401,10 @@ impl Setup {
 		});
 
 		pass.build(move |mut pass| unsafe {
+			needs_clear |= pass.is_uninit(hzb);
+
+			let dev = pass.device.device();
+			let buf = pass.buf;
 			let mut writer = pass.get(camera).data.as_mut();
 			let aspect = res.x as f32 / res.y as f32;
 			let cd = CameraData::new(aspect, cam, transform);
@@ -408,19 +412,59 @@ impl Setup {
 			writer.write(bytes_of(&cd)).unwrap();
 			writer.write(bytes_of(&prev_cd)).unwrap();
 
-			needs_clear |= pass.is_uninit(hzb);
 			if needs_clear {
-				pass.zero(hzb);
+				dev.cmd_clear_color_image(
+					buf,
+					pass.get(hzb).image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&vk::ClearColorValue::default(),
+					&[vk::ImageSubresourceRange::default()
+						.aspect_mask(vk::ImageAspectFlags::COLOR)
+						.base_mip_level(0)
+						.level_count(vk::REMAINING_MIP_LEVELS)
+						.base_array_layer(0)
+						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+				);
 			}
-			pass.clear_image(
-				visbuffer,
-				vk::ClearColorValue {
+			dev.cmd_clear_color_image(
+				buf,
+				pass.get(visbuffer).image,
+				vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+				&vk::ClearColorValue {
 					uint32: [u32::MAX, 0, 0, 0],
 				},
+				&[vk::ImageSubresourceRange::default()
+					.aspect_mask(vk::ImageAspectFlags::COLOR)
+					.base_mip_level(0)
+					.level_count(vk::REMAINING_MIP_LEVELS)
+					.base_array_layer(0)
+					.layer_count(vk::REMAINING_ARRAY_LAYERS)],
 			);
 			if let Some(d) = debug {
-				pass.zero(d.overdraw);
-				pass.zero(d.hwsw);
+				dev.cmd_clear_color_image(
+					buf,
+					pass.get(d.overdraw).image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&vk::ClearColorValue::default(),
+					&[vk::ImageSubresourceRange::default()
+						.aspect_mask(vk::ImageAspectFlags::COLOR)
+						.base_mip_level(0)
+						.level_count(vk::REMAINING_MIP_LEVELS)
+						.base_array_layer(0)
+						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+				);
+				dev.cmd_clear_color_image(
+					buf,
+					pass.get(d.hwsw).image,
+					vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+					&vk::ClearColorValue::default(),
+					&[vk::ImageSubresourceRange::default()
+						.aspect_mask(vk::ImageAspectFlags::COLOR)
+						.base_mip_level(0)
+						.level_count(vk::REMAINING_MIP_LEVELS)
+						.base_array_layer(0)
+						.layer_count(vk::REMAINING_ARRAY_LAYERS)],
+				);
 			}
 
 			for b in bvh_queues
@@ -428,9 +472,9 @@ impl Setup {
 				.chain(Some(meshlet_queue))
 				.chain(Some(meshlet_render))
 			{
-				pass.update_buffer(b, 0, &[count, 0, 0, 1, 1, 0, 0, 1, 1]);
+				dev.cmd_update_buffer(buf, pass.get(b).buffer, 0, bytes_of(&[count, 0, 0, 1, 1, 0, 0, 1, 1]));
 			}
-			pass.update_buffer(late_instances, 0, &[0u32, 0, 1, 1]);
+			dev.cmd_update_buffer(buf, pass.get(late_instances).buffer, 0, bytes_of(&[0, 0, 1, 1]));
 
 			if !pass.is_uninit(stats) {
 				let data = pass.get(stats).data.as_ref();

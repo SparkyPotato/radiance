@@ -91,9 +91,18 @@ impl ExposureCalc {
 				usages: &[BufferUsageType::TransferWrite],
 			},
 		);
-		pass.build(move |mut pass| {
-			pass.zero(histogram);
-			pass.zero_if_uninit(exp);
+		// TODO: stop using direct commands here and in mesh/setup.rs
+		pass.build(move |mut pass| unsafe {
+			let buf = pass.get(histogram);
+			pass.device
+				.device()
+				.cmd_fill_buffer(pass.buf, buf.buffer, 0, buf.size(), 0);
+			if pass.is_uninit(exp) {
+				let buf = pass.get(exp);
+				pass.device
+					.device()
+					.cmd_fill_buffer(pass.buf, buf.buffer, 0, buf.size(), 0);
+			}
 		});
 
 		let inp_usage = ImageUsage {
@@ -173,7 +182,6 @@ impl ExposureCalc {
 			);
 		});
 
-		// TODO: make this a helper.
 		let mut pass = frame.pass("readback exposure");
 		let usage = BufferUsage {
 			usages: &[BufferUsageType::TransferWrite],
@@ -202,19 +210,42 @@ impl ExposureCalc {
 
 		let ret_exp = *exposure;
 		let hist = *read_histogram;
-		pass.build(move |mut pass| {
-			pass.copy_full_buffer(histogram, histogram_read, 0);
-			if !pass.is_uninit(histogram_read) {
-				let read = pass.get(histogram_read);
+		pass.build(move |mut pass| unsafe {
+			let exp = pass.get(exp);
+			let histogram = pass.get(histogram);
+
+			let uninit = pass.is_uninit(histogram_read);
+			let read = pass.get(histogram_read);
+			pass.device.device().cmd_copy_buffer(
+				pass.buf,
+				histogram.buffer,
+				read.buffer,
+				&[vk::BufferCopy {
+					src_offset: 0,
+					dst_offset: 0,
+					size: histogram_size,
+				}],
+			);
+			if !uninit {
 				let total = (size.width * size.height) as f32;
-				let hist: &[u32; 256] = from_bytes(unsafe { &read.data.as_ref()[..histogram_size as usize] });
+				let hist: &[u32; 256] = from_bytes(&read.data.as_ref()[..histogram_size as usize]);
 				*read_histogram = hist.map(|x| x as f32 / total);
 			}
 
-			pass.copy_full_buffer(exp, exp_read, 0);
-			if !pass.is_uninit(exp_read) {
-				let read = pass.get(exp_read);
-				*exposure = *from_bytes(unsafe { &read.data.as_ref()[..exp_size as usize] });
+			let uninit = pass.is_uninit(exp_read);
+			let read = pass.get(exp_read);
+			pass.device.device().cmd_copy_buffer(
+				pass.buf,
+				exp.buffer,
+				read.buffer,
+				&[vk::BufferCopy {
+					src_offset: 0,
+					dst_offset: 0,
+					size: exp_size,
+				}],
+			);
+			if !uninit {
+				*exposure = *from_bytes(&read.data.as_ref()[..exp_size as usize]);
 			}
 		});
 

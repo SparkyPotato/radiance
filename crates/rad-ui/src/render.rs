@@ -212,7 +212,7 @@ impl Renderer {
 			}
 		}
 
-		pass.build(move |pass| self.execute(pass, PassIO { vertex, index, out }, &tris, &screen));
+		pass.build(move |ctx| unsafe { self.execute(ctx, PassIO { vertex, index, out }, &tris, &screen) });
 	}
 
 	/// # Safety
@@ -225,12 +225,12 @@ impl Renderer {
 		self.pass.destroy();
 	}
 
-	fn execute(&mut self, mut pass: PassContext, io: PassIO, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
+	unsafe fn execute(
+		&mut self, mut pass: PassContext, io: PassIO, tris: &[ClippedPrimitive], screen: &ScreenDescriptor,
+	) {
 		let vertex = pass.get(io.vertex);
 		let index = pass.get(io.index);
-		unsafe {
-			Self::generate_buffers(vertex, index, tris);
-		}
+		Self::generate_buffers(vertex, index, tris);
 
 		let mut pass = self.pass.start(
 			&mut pass,
@@ -269,12 +269,10 @@ impl Renderer {
 						},
 						TextureId::User(x) => {
 							let masked = x & !(1 << 63);
-							let image = unsafe {
-								if masked != x {
-									ImageId::from_raw(masked as _)
-								} else {
-									pass.pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
-								}
+							let image = if masked != x {
+								ImageId::from_raw(masked as _)
+							} else {
+								pass.pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
 							};
 							(image, self.default_sampler)
 						},
