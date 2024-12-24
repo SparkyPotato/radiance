@@ -2,113 +2,110 @@ module brdf;
 
 import graph;
 import graph.util.rng;
-import passes.bsdf.common;
-import passes.bsdf.anisotropic;
-import passes.bsdf.diffuse;
-import passes.bsdf.sheen;
-import passes.bsdf.ggx;
 
-struct LobePdfs {
-	f32 specular;
-	f32 diffuse;
-	f32 clearcoat;
-	f32 spec_trans;
-
-	__init(ShadingParams params) {
-		let metallic = params.metallic;
-		let specular = (1.f - params.metallic) * params.spec_trans;
-		let dielectric = (1.f - params.spec_trans) * (1.f - params.metallic);
-
-		let spec_w = metallic + dielectric;
-		let diffuse_w = dielectric;
-		let trans_w = specular;
-		let clearcoat_w = 1.f * saturate(params.clearcoat);
-
-		let norm = 1.f / (spec_w + trans_w + diffuse_w + clearcoat_w);
-		this.specular = spec_w * norm;
-		this.diffuse = diffuse_w * norm;
-		this.clearcoat = clearcoat_w * norm;
-		this.spec_trans = trans_w * norm;
-		this.specular = 0.f;
-		this.diffuse = 1.f;
-		this.clearcoat = 0.f;
-		this.spec_trans = 0.f;
-	}
+public struct BsdfSample {
+	public f32x3 L;
+	public f32x3 wi;
+	public bool is_specular;
 }
 
-f32 thin_trans_roughness(f32 ior, f32 roughness) {
-	return saturate((0.65f * ior - 0.35f) * roughness);
+public struct ShadingParams {
+	public f32x3 base_color;
+	public f32 metallic;
+	public f32 roughness;
 }
 
-// TODO: Spec trans, clearcoat.
+// clang-format off
+// Resources:
+// PBRT of course: https://pbr-book.org/4ed/contents
+// [0] Self Shadow: https://blog.selfshadow.com/links/
+// [1] Cook Torrance: https://graphics.pixar.com/library/ReflectanceModel/paper.pdf
+// [2] Disney PBR: https://media.disneyanimation.com/uploads/production/publication_asset/48/asset/s2012_pbs_disney_brdf_notes_v3.pdf
+// [3] GGX: https://www.graphics.cornell.edu/~bjw/microfacetbsdf.pdf
+// [4] Filament: https://google.github.io/filament/Filament.md.html#materialsystem
+// [5] Eric Heitz' Smith extension: https://jcgt.org/published/0003/02/03/paper.pdf
+// [6] Naty Hoffman Notes: https://blog.selfshadow.com/publications/s2012-shading-course/hoffman/s2012_pbs_physics_math_notes.pd
+// [7] Implenting Disney BRDF: https://schuttejoe.github.io/post/disneybsdf/
+// [8] Karis reference: https://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
+// [9] https://github.com/schuttejoe/Selas/blob/dev/Source/Core/Shading/Disney.cpp
+// clang-format on
 
-public BsdfEval eval_disney_bsdf(ShadingParams params, f32x3 wo, f32x3 wi, bool thin) {
-	let wm = normalize(wo + wi);
-	let n_v = brdf_cos(wo);
+public f32 brdf_cos(f32x3 v) {
+	return v.z;
+}
+
+public f32 brdf_cos2(f32x3 v) {
+	return v.z * v.z;
+}
+
+public f32 brdf_abscos(f32x3 v) {
+	return abs(v.z);
+}
+
+public f32 brdf_sin2(f32x3 v) {
+	return max(0.f, 1.f - brdf_cos2(v));
+}
+
+public f32 brdf_sin(f32x3 v) {
+	return sqrt(brdf_sin2(v));
+}
+
+public f32 brdf_tan2(f32x3 v) {
+	return brdf_sin2(v) / brdf_cos2(v);
+}
+
+public f32 brdf_tan(f32x3 v) {
+	return brdf_sin(v) / brdf_cos(v);
+}
+
+public f32 brdf_cos_phi(f32x3 v) {
+	let sin = brdf_sin(v);
+	return (sin == 0.f) ? 0.f : v.x / sin;
+}
+
+public f32 brdf_cos2_phi(f32x3 v) {
+	let c = brdf_cos_phi(v);
+	return c * c;
+}
+
+public f32 brdf_sin_phi(f32x3 v) {
+	let sin = brdf_sin(v);
+	return (sin == 0.f) ? 0.f : v.y / sin;
+}
+
+public f32 brdf_sin2_phi(f32x3 v) {
+	let c = brdf_sin_phi(v);
+	return c * c;
+}
+
+public f32x3 shlick(f32x3 r0, f32 rad) {
+	let exp = pow(1.f - rad, 5.f);
+	return r0 + (f32x3(1.f) - r0) * exp;
+}
+
+public f32 shlick(f32 r0, f32 rad) {
+	return lerp(1.f, shlick_weight(rad), r0);
+}
+
+public f32 shlick_weight(f32 u) {
+	let m = saturate(1.f - u);
+	let m2 = m * m;
+	return m * m2 * m2;
+}
+
+public f32 shlick_r0_from_rel_ior(f32 eta) {
+	let em = eta - 1.f;
+	let ep = eta + 1.f;
+	return (em * em) / (ep * ep);
+}
+
+public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
 	let n_l = brdf_cos(wi);
-
-	var L = f32x3(0.f);
-	var r_pdf = 0.f;
-	var f_pdf = 0.f;
-
-	let pdf = LobePdfs(params);
-	let aniso = Aniso(params.roughness, params.anisotropic);
-	let metallic = params.metallic;
-	let spec_trans = params.spec_trans;
-	// let diffuse_weight = (1.f - metallic) * (1.f - spec_trans);
-	let diffuse_weight = 1.f;
-	let trans_weight = (1.f - metallic) * spec_trans;
-	let upper_hemi = n_l > 0.f && n_v > 0.f;
-
-	// diffuse
-	if (diffuse_weight > 0.f) {
-		let fd_pdf = brdf_abscos(wi);
-		let rd_pdf = brdf_abscos(wo);
-		let diffuse = eval_diffuse(params, wo, wm, wi, thin);
-		let sheen = eval_sheen(params, wo, wm, wi);
-
-		L += diffuse_weight * (diffuse * params.base_color + sheen);
-		r_pdf += pdf.diffuse * rd_pdf;
-		f_pdf += pdf.diffuse * fd_pdf;
-	}
-
-	// specular
-	if (false) {
-		let s = eval_ggx(params, wo, wm, wi);
-		L += s.L;
-		r_pdf += pdf.specular * s.r_pdf / (4.f * abs(dot(wo, wm)));
-		f_pdf += pdf.specular * s.f_pdf / (4.f * abs(dot(wi, wm)));
-	}
-
-	return { L * abs(n_l), r_pdf, f_pdf };
+	return params.base_color / PI * abs(n_l);
 }
 
-public BsdfSample sample_disney_bsdf(inout Rng rng, ShadingParams params, f32x3 wo, bool thin) {
-	let pdf = LobePdfs(params);
-
-	BsdfSample ret;
-	var p_lobe = 0.f;
-	let p = rng.sample();
-	if (p <= pdf.specular) {
-		ret = sample_ggx(rng, params, wo);
-		p_lobe = pdf.specular;
-	} else if (p <= (pdf.specular + pdf.clearcoat)) {
-		p_lobe = pdf.clearcoat;
-	} else if (p <= (pdf.specular + pdf.clearcoat + pdf.diffuse)) {
-		ret = sample_diffuse(rng, params, wo, thin);
-		p_lobe = pdf.diffuse;
-	} else if (pdf.spec_trans >= 0.f) {
-		p_lobe = pdf.spec_trans;
-	} else {
-		ret.L = f32x3(1000000.f, 0.f, 1000000.f);
-		ret.r_pdf = 1.f;
-		ret.f_pdf = 1.f;
-	}
-
-	if (p_lobe > 0.f) {
-		ret.L /= p_lobe;
-		ret.r_pdf *= p_lobe;
-		ret.f_pdf *= p_lobe;
-	}
-	return ret;
+public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
+	let wi = rng.sample_cos_hemi();
+	let l = params.base_color / PI;
+	return { l, wi, false };
 }

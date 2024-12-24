@@ -10,7 +10,7 @@ pub fn reverse_depth() -> vk::PipelineDepthStencilStateCreateInfo<'static> {
 pub fn no_cull() -> vk::PipelineRasterizationStateCreateInfo<'static> {
 	vk::PipelineRasterizationStateCreateInfo::default()
 		.polygon_mode(vk::PolygonMode::FILL)
-		.front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+		.front_face(vk::FrontFace::CLOCKWISE)
 		.cull_mode(vk::CullModeFlags::NONE)
 		.line_width(1.0)
 }

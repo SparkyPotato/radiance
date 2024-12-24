@@ -6,7 +6,6 @@ import graph.util.color;
 import graph.util.rng;
 import asset;
 import passes.bsdf;
-import passes.bsdf.common;
 
 struct PushConstants {
 	Instance<NonUniform>* instances;
@@ -116,8 +115,6 @@ Optional<Hit> trace_ray(Ray ray) {
 		h.params.base_color = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
 		h.params.roughness = met_rough.y * mat->roughness_factor;
 		h.params.metallic = met_rough.x * mat->metallic_factor;
-		h.params.rel_ior = 1.5f;
-		h.params.ior = 1.5f;
 		return h;
 	} else
 		return none;
@@ -222,7 +219,7 @@ f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let ls = sample_one_light(rng, hit);
 	if (any(ls.L <= 0.f) || ls.pdf <= 0.f)
 		return 0.f;
-	let f = eval_disney_bsdf(hit.params, wo, ls.wi, false).L;
+	let f = eval_bsdf(hit.params, wo, ls.wi);
 	if (any(f <= 0.f))
 		return 0.f;
 	let unshadowed = is_unshadowed(hit, ls);
@@ -236,7 +233,7 @@ struct BsdfEstimate {
 }
 
 BsdfEstimate estimate_with_bsdf_sample(inout Rng rng, Hit hit, f32x3 wo) {
-	let bsdf = sample_disney_bsdf(rng, hit.params, wo, false);
+	let bsdf = sample_bsdf(rng, hit.params, wo);
 	let b = bsdf.L * abs(dot(bsdf.wi, hit.normal));
 	let r = Ray(hit.ray_origin(), hit.from_shading(bsdf.wi));
 	return { b, r, bsdf.is_specular };

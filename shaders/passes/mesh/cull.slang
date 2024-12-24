@@ -325,12 +325,12 @@ public struct Cull {
 		let center = mul(this.curr_mv, f32x4(bounds.xyz, 1.f)).xyz;
 		let radius = bounds.w * this.scale;
 
-		if (center.z + radius <= this.near)
+		if (center.y + radius <= this.near)
 			return 0.f;
 
 		let dist2 = dot(center, center);
-		let a = sqrt(dist2 - center.z * center.z);
-		let proj_center = f32x2(a, center.z);
+		let a = sqrt(dist2 - center.y * center.y);
+		let proj_center = f32x2(a, center.y);
 		let t2 = dist2 - radius * radius;
 		var t = sqrt(max(t2, 0.f));
 
@@ -350,7 +350,7 @@ public struct Cull {
 
 		// If intersecting the near plane, funky business is required.
 		if (t2 < 0.f || t_z < this.near) {
-			let off = this.near - center.z;
+			let off = this.near - center.y;
 			let k = sqrt(radius * radius - off * off);
 			let t = f32x2(a + k, this.near);
 			wt_z = t.y / length(t);
@@ -358,7 +358,7 @@ public struct Cull {
 
 		// Project the sphere to an equivalently sized sphere along the z axis,
 		// so error_scale can be used to monotonically compare.
-		return wt_z * max(center.z - radius, this.near);
+		return wt_z * max(center.y - radius, this.near);
 	}
 
 	public f32 error_scale() {

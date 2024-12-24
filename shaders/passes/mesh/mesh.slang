@@ -104,7 +104,7 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 		let in_front_of_z = a.z > 0.f && b.z > 0.f && c.z > 0.f;
 		culled = culled && in_front_of_z;
 
-		visbuffer[gtid].culled = culled;
+		visbuffer[gtid].culled = false;
 	}
 }
 
