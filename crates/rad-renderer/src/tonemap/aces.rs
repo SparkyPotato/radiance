@@ -2,8 +2,8 @@ use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
-	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Res, Shader},
-	resource::{BufferHandle, GpuPtr, ImageView},
+	graph::{Frame, ImageDesc, ImageUsage, Res, Shader},
+	resource::ImageView,
 	util::{
 		pass::{Attachment, Load},
 		render::FullscreenPass,
@@ -19,8 +19,7 @@ pub struct AcesTonemap {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	input: ImageId,
-	_pad: u32,
-	exp: GpuPtr<f32>,
+	exp: f32,
 }
 
 impl AcesTonemap {
@@ -38,13 +37,10 @@ impl AcesTonemap {
 	}
 
 	/// `highlights` must be sorted.
-	pub fn run<'pass>(
-		&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, exp: Res<BufferHandle>,
-	) -> Res<ImageView> {
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, exp: f32) -> Res<ImageView> {
 		let mut pass = frame.pass("aces tonemap");
 
 		pass.reference(input, ImageUsage::sampled_2d(Shader::Fragment));
-		pass.reference(exp, BufferUsage::read(Shader::Fragment));
 		let desc = pass.desc(input);
 		let out = pass.resource(
 			ImageDesc {
@@ -56,10 +52,9 @@ impl AcesTonemap {
 
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
-			let exp = pass.get(exp).ptr();
 			self.pass.run(
 				&mut pass,
-				&PushConstants { input, _pad: 0, exp },
+				&PushConstants { input, exp },
 				&[Attachment {
 					image: out,
 					load: Load::Clear(vk::ClearValue {

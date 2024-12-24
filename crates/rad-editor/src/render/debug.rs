@@ -1,9 +1,9 @@
-use egui_plot::{Bar, BarChart, HPlacement, Plot, VPlacement};
+use egui_plot::{Bar, BarChart, HPlacement, Plot, VLine, VPlacement};
 use rad_graph::device::{Device, HotreloadStatus};
 use rad_renderer::{
 	debug::mesh::DebugVis,
 	mesh::{CullStats, PassStats},
-	tonemap::exposure::ExposureStats,
+	tonemap::exposure::{ExposureCalc, ExposureStats},
 };
 use rad_ui::egui::{ComboBox, Context, DragValue, Ui, Window};
 
@@ -144,6 +144,17 @@ impl DebugWindow {
 								.enumerate()
 								.map(|(i, x)| Bar::new(i as _, x as _).width(1.0))
 								.collect(),
+						));
+
+						ui.vline(VLine::new(
+							(exp.exposure - ExposureCalc::MIN_EXPOSURE)
+								/ (ExposureCalc::MAX_EXPOSURE - ExposureCalc::MIN_EXPOSURE)
+								* 255.0,
+						));
+						ui.vline(VLine::new(
+							(exp.target_exposure - ExposureCalc::MIN_EXPOSURE)
+								/ (ExposureCalc::MAX_EXPOSURE - ExposureCalc::MIN_EXPOSURE)
+								* 255.0,
 						));
 					});
 			}

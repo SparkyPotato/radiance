@@ -6,6 +6,7 @@ import graph.util.color;
 import graph.util.rng;
 import asset;
 import passes.bsdf;
+import passes.bsdf.common;
 
 struct PushConstants {
 	Instance<NonUniform>* instances;
@@ -259,30 +260,13 @@ f32x3 li(inout Rng rng, Ray ray) {
 			L += b * hit.emissive;
 
 		let wo = hit.to_shading(-ray.dir);
+		L += b * estimate_with_light_sample(rng, hit, wo);
+		let es = estimate_with_bsdf_sample(rng, hit, wo);
+		b *= es.b;
+		ray = es.r;
+		specular = es.spec;
 
-		let ls = sample_one_light(rng, hit);
-		if (any(ls.L > 0.f) && ls.pdf > 0) {
-			let f = dot(ls.wi, hit.normal) * hit.params.base_color / PI;
-			if (any(f > 0.f)) {
-				let unshadowed = is_unshadowed(hit, ls);
-				L += f32(unshadowed) * ls.L * b * f / ls.pdf;
-			}
-		}
-
-		let wi = rng.sample_cos_hemi();
-		ray.dir = hit.from_shading(wi);
-		ray.origin = hit.ray_origin();
-		b *= dot(wi, hit.normal) * hit.params.base_color / PI;
-
-		// L += b * estimate_with_light_sample(rng, hit, wo);
-		// let es = estimate_with_bsdf_sample(rng, hit, wo);
-		// b *= es.b;
-		// ray = es.r;
-		// specular = es.spec;
-
-		specular = false;
-
-		if (bounces > 3) {
+		if (bounces > 2) {
 			let q = max(0.05f, 1.f - luminance(b));
 			if (rng.sample() < q)
 				break;
@@ -299,7 +283,9 @@ void main(ScreenOutput input) {
 	var rng = Constants.rng.init_at(pix);
 
 	let r = primary_ray(rng, pix);
-	f32x3 ret = li(rng, r);
+	var ret = li(rng, r);
+	if (any(isnan(ret) || isinf(ret)))
+		ret = f32x3(1000000.f, 0.f, 1000000.f);
 
 	let n = f32(Constants.samples);
 	if (n == 0.f) {

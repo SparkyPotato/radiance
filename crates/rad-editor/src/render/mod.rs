@@ -84,9 +84,9 @@ impl Renderer {
 								size: Vec2::new(size.x as u32, size.y as u32),
 							},
 						);
-						let (exp, exp_s) = self.exposure.run(frame, hdr, ui.input(|x| x.stable_dt));
-						let img = self.aces.run(frame, hdr, exp);
-						(img, None, Some((exp_s, s)))
+						let exp = self.exposure.run(frame, hdr, ui.input(|x| x.stable_dt));
+						let img = self.aces.run(frame, hdr, exp.exposure);
+						(img, None, Some((exp, s)))
 					},
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(
