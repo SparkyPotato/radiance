@@ -30,86 +30,161 @@ public struct ShadingParams {
 // [9] https://github.com/schuttejoe/Selas/blob/dev/Source/Core/Shading/Disney.cpp
 // clang-format on
 
-public f32 brdf_cos(f32x3 v) {
+f32 brdf_cos(f32x3 v) {
 	return v.z;
 }
 
-public f32 brdf_cos2(f32x3 v) {
+f32 brdf_cos2(f32x3 v) {
 	return v.z * v.z;
 }
 
-public f32 brdf_abscos(f32x3 v) {
+f32 brdf_abscos(f32x3 v) {
 	return abs(v.z);
 }
 
-public f32 brdf_sin2(f32x3 v) {
+f32 brdf_sin2(f32x3 v) {
 	return max(0.f, 1.f - brdf_cos2(v));
 }
 
-public f32 brdf_sin(f32x3 v) {
+f32 brdf_sin(f32x3 v) {
 	return sqrt(brdf_sin2(v));
 }
 
-public f32 brdf_tan2(f32x3 v) {
+f32 brdf_tan2(f32x3 v) {
 	return brdf_sin2(v) / brdf_cos2(v);
 }
 
-public f32 brdf_tan(f32x3 v) {
+f32 brdf_tan(f32x3 v) {
 	return brdf_sin(v) / brdf_cos(v);
 }
 
-public f32 brdf_cos_phi(f32x3 v) {
+f32 brdf_cos_phi(f32x3 v) {
 	let sin = brdf_sin(v);
 	return (sin == 0.f) ? 0.f : v.x / sin;
 }
 
-public f32 brdf_cos2_phi(f32x3 v) {
+f32 brdf_cos2_phi(f32x3 v) {
 	let c = brdf_cos_phi(v);
 	return c * c;
 }
 
-public f32 brdf_sin_phi(f32x3 v) {
+f32 brdf_sin_phi(f32x3 v) {
 	let sin = brdf_sin(v);
 	return (sin == 0.f) ? 0.f : v.y / sin;
 }
 
-public f32 brdf_sin2_phi(f32x3 v) {
+f32 brdf_sin2_phi(f32x3 v) {
 	let c = brdf_sin_phi(v);
 	return c * c;
 }
 
-public f32x3 shlick(f32x3 r0, f32 rad) {
-	let exp = pow(1.f - rad, 5.f);
-	return r0 + (f32x3(1.f) - r0) * exp;
+f32x3 eval_lambert(ShadingParams params, f32x3 wo, f32x3 wi) {
+	let diffuse_color = (1.f - params.metallic) * params.base_color;
+	return diffuse_color / PI;
 }
 
-public f32 shlick(f32 r0, f32 rad) {
-	return lerp(1.f, shlick_weight(rad), r0);
-}
-
-public f32 shlick_weight(f32 u) {
-	let m = saturate(1.f - u);
-	let m2 = m * m;
-	return m * m2 * m2;
-}
-
-public f32 shlick_r0_from_rel_ior(f32 eta) {
-	let em = eta - 1.f;
-	let ep = eta + 1.f;
-	return (em * em) / (ep * ep);
-}
-
-public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
-	let n_l = brdf_cos(wi);
-	return params.base_color / PI * abs(n_l);
-}
-
-public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
-	let wi = rng.sample_cos_hemi();
+BsdfSample sample_lambert(inout Rng rng, ShadingParams params, f32x3 wo) {
 	// L = (col * n dot l / PI) / pdf
 	// pdf = cos / PI
 	// n dot l = cos
 	// thus, L = col
-	let l = params.base_color;
-	return { l, wi, false };
+	let diffuse_color = (1.f - params.metallic) * params.base_color;
+	return { diffuse_color, rng.sample_cos_hemi(), false };
+}
+
+f32 v_ggx(f32x3 w, f32 roughness) {
+	let a2 = roughness * roughness;
+	let v = a2 * brdf_tan2(w);
+	return 0.5f / max(sqrt(1.f + v) - 1.f, 1e-5f);
+}
+
+f32 g1_ggx(f32x3 wm, f32x3 wo, f32 roughness) {
+	if (dot(wo, wm) * wm.z <= 0.f)
+		return 0.f;
+	return 1.f / (1.f + v_ggx(wo, roughness));
+}
+
+f32 g2_ggx(f32x3 wi, f32x3 wm, f32x3 wo, f32 roughness) {
+	if (dot(wi, wm) * wi.z <= 0.f || dot(wo, wm) * wo.z <= 0.f)
+		return 0.f;
+	return 1.f / (1.f + v_ggx(wi, roughness) + v_ggx(wo, roughness));
+}
+
+f32x3 shlick(f32 u, f32x3 f0) {
+	let f = pow(saturate(1.f - u), 5.f);
+	return f + f0 * (1.f - f);
+}
+
+f32x3 sample_ggx_vndf(inout Rng rng, f32x3 wo, f32 roughness) {
+	let u = rng.sample2();
+	let vh = normalize(f32x3(roughness * wo.xy, wo.z));
+	let lensq = dot(vh.xy, vh.xy);
+	let T1 = lensq > 0.f ? f32x3(-vh.y, vh.x, 0.f) / sqrt(lensq) : f32x3(1.f, 0.f, 0.f);
+	let T2 = cross(vh, T1);
+
+	let r = sqrt(u.x);
+	let phi = 2.f * PI * u.y;
+	let t1 = r * cos(phi);
+	var t2 = r * sin(phi);
+	let s = 0.5f * (1.f + vh.z);
+	t2 = (1.f - s) * sqrt(1.f - t1 * t1) + s * t2;
+
+	let nh = t1 * T1 + t2 * T2 + sqrt(max(0.f, 1.f - t1 * t1 - t2 * t2)) * vh;
+	return normalize(f32x3(roughness * nh.xy, max(0.f, nh.z)));
+}
+
+f32 d_ggx(f32x3 wm, f32 roughness) {
+	let a2 = roughness * roughness;
+	let k = wm.z * wm.z * (a2 - 1.f) + 1.f;
+	return a2 / (PI * k * k);
+}
+
+f32 dv_ggx(f32x3 wm, f32x3 wo, f32 roughness) {
+	let l_h = dot(wm, wo);
+	let g1 = g1_ggx(wm, wo, roughness);
+	let d = d_ggx(wm, roughness);
+	return (g1 * l_h * d) / wo.z;
+}
+
+f32x3 eval_ggx(ShadingParams params, f32x3 wo, f32x3 wi) {
+	let wm = normalize(wo + wi);
+	let f0 = lerp(f32x3(0.04f), params.base_color, params.metallic);
+	let l_h = dot(wm, wo);
+
+	let g1 = g1_ggx(wm, wo, params.roughness);
+	let g2 = g2_ggx(wi, wm, wo, params.roughness);
+	let f = shlick(l_h, f0);
+
+	if (g1 == 0.f)
+		return f32x3(0.f);
+	return f * g2 / g1;
+}
+
+BsdfSample sample_ggx(inout Rng rng, ShadingParams params, f32x3 wo) {
+	let wm = sample_ggx_vndf(rng, wo, params.roughness);
+	let wi = reflect(-wo, wm);
+	let l_h = dot(wm, wo);
+	let pdf = dv_ggx(wo, wm, params.roughness) / (4.f * l_h);
+	let L = eval_ggx(params, wo, wi);
+	return { L, wi, true };
+}
+
+public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
+	let n_l = brdf_cos(wi);
+	let fd = eval_lambert(params, wo, wi);
+	let fr = eval_ggx(params, wo, wi);
+	return (fd + fr) * abs(n_l);
+}
+
+public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
+	let lambert_chance = lerp(0.5f, 0.f, params.metallic);
+	BsdfSample ret;
+	if (rng.sample() < lambert_chance) {
+		ret = sample_lambert(rng, params, wo);
+		ret.L /= lambert_chance;
+	} else {
+		ret = sample_ggx(rng, params, wo);
+		ret.L /= 1.f - lambert_chance;
+	}
+	return ret;
 }

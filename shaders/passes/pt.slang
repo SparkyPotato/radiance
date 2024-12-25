@@ -105,6 +105,7 @@ Optional<Hit> trace_ray(Ray ray) {
 		let white = f32x4(1.f);
 		let met_rough = mr.sample(s, uv, white).xy;
 		let emissive = em.sample(s, uv, white).xyz * mat->emissive_factor;
+		let rough = met_rough.y * mat->roughness_factor;
 
 		Hit h = {};
 		h.position = position;
@@ -113,7 +114,7 @@ Optional<Hit> trace_ray(Ray ray) {
 		h.from_shading_basis = gen_basis(normal);
 		h.to_shading_basis = transpose(h.from_shading_basis);
 		h.params.base_color = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
-		h.params.roughness = met_rough.y * mat->roughness_factor;
+		h.params.roughness = max(rough * rough, 0.0001f);
 		h.params.metallic = met_rough.x * mat->metallic_factor;
 		return h;
 	} else
@@ -234,7 +235,7 @@ struct BsdfEstimate {
 
 BsdfEstimate estimate_with_bsdf_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let bsdf = sample_bsdf(rng, hit.params, wo);
-	let b = bsdf.L * abs(dot(bsdf.wi, hit.normal));
+	let b = bsdf.L;
 	let r = Ray(hit.ray_origin(), hit.from_shading(bsdf.wi));
 	return { b, r, bsdf.is_specular };
 }
@@ -282,7 +283,7 @@ void main(ScreenOutput input) {
 	let r = primary_ray(rng, pix);
 	var ret = li(rng, r);
 	if (any(isnan(ret) || isinf(ret)))
-		ret = f32x3(1000000.f, 0.f, 1000000.f);
+		ret = f32x3(1.f, 0.f, 1.f) * 1e7f * 0.f;
 
 	let n = f32(Constants.samples);
 	if (n == 0.f) {
