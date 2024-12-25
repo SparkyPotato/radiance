@@ -34,7 +34,9 @@ pub struct ExposureStats {
 
 impl ExposureCalc {
 	pub const MAX_EXPOSURE: f32 = 18.0;
+	pub const MAX_HISTOGRAM_RANGE: f32 = 0.95;
 	pub const MIN_EXPOSURE: f32 = -6.0;
+	pub const MIN_HISTOGRAM_RANGE: f32 = 0.8;
 
 	pub fn bin_to_exposure(bin: f32) -> f32 {
 		let log = (bin - 1.0) / 254.0;
@@ -114,8 +116,8 @@ impl ExposureCalc {
 			*read_histogram = pass.readback(histogram_read, 0);
 
 			let total: u32 = read_histogram.iter().skip(1).sum();
-			let range_start = total as f32 * 0.5;
-			let range_end = total as f32 * 0.95;
+			let range_start = total as f32 * Self::MIN_HISTOGRAM_RANGE;
+			let range_end = total as f32 * Self::MAX_HISTOGRAM_RANGE;
 			let mut seen = 0.0;
 			let mut sum = 0.0;
 			let mut weight = 0.0;

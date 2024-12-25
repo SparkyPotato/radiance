@@ -263,7 +263,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 		ray = es.r;
 		specular = es.spec;
 
-		if (bounces > 2) {
+		if (bounces > 1) {
 			let q = max(0.05f, 1.f - luminance(b));
 			if (rng.sample() < q)
 				break;

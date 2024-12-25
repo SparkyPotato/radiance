@@ -106,6 +106,10 @@ public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
 
 public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
 	let wi = rng.sample_cos_hemi();
-	let l = params.base_color / PI;
+	// L = (col * n dot l / PI) / pdf
+	// pdf = cos / PI
+	// n dot l = cos
+	// thus, L = col
+	let l = params.base_color;
 	return { l, wi, false };
 }
