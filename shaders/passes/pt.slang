@@ -57,14 +57,13 @@ Ray primary_ray(inout Rng rng, u32x2 pix) {
 
 struct Hit {
 	f32x3 position;
-	f32x3 normal;
 	f32x3 emissive;
 	f32x3x3 to_shading_basis;
 	f32x3x3 from_shading_basis;
 	ShadingParams params;
 
 	f32x3 ray_origin() {
-		return this.position + this.normal * 1e-5f;
+		return this.position + this.from_shading_basis._m02_m12_m22 * 1e-5f;
 	}
 
 	f32x3 to_shading(f32x3 x) {
@@ -74,6 +73,20 @@ struct Hit {
 	f32x3 from_shading(f32x3 x) {
 		return mul(this.from_shading_basis, x);
 	}
+}
+
+f32x3x3 gen_inv_basis(f32x3 z) {
+	f32x3 other;
+	if (z.x < 0.1f && z.y < 0.1f) {
+		other = f32x3(0.f, -z.z, z.y);
+	} else {
+		other = f32x3(-z.y, z.x, 0.f);
+	}
+	other = normalize(other);
+	let last = cross(other, z);
+	// clang-format off
+	return f32x3x3(other, last, z);
+	// clang-format on
 }
 
 Optional<Hit> trace_ray(Ray ray) {
@@ -97,25 +110,58 @@ Optional<Hit> trace_ray(Ray ray) {
 		let position = mul(tmat, f32x4(bary.x * v0.position + bary.y * v1.position + bary.z * v2.position, 1.f)).xyz;
 		let normal = normalize(mul(tmat, f32x4(bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal, 0.f)).xyz);
 
+		// https://terathon.com/blog/tangent-space.html
+		let q1 = v1.position - v0.position;
+		let q2 = v2.position - v0.position;
+		let st1 = v1.uv - v0.uv;
+		let st2 = v2.uv - v0.uv;
+		let s1 = st1.x;
+		let t1 = st1.y;
+		let s2 = st2.x;
+		let t2 = st2.y;
+		f32x3x3 inv_basis;
+		let det = s1 * t2 - s2 * t1;
+		if (det != 0.f) {
+			let t = (t2 * q1 - t1 * q2) / det;
+			let b = (s1 * q2 - s2 * q1) / det;
+			let td = t - dot(t, normal) * normal;
+			let h = (dot(cross(normal, t), b) < 0.f) ? -1.f : 1.f;
+			let bd = h * cross(normal, td);
+			inv_basis = f32x3x3(normalize(td), normalize(bd), normal);
+		} else {
+			inv_basis = gen_inv_basis(normal);
+		}
+
 		let s = Constants.sampler;
 		let bc = mat->base_color.get();
 		let mr = mat->metallic_roughness.get();
 		let nm = mat->normal.get();
 		let em = mat->emissive.get();
 		let white = f32x4(1.f);
+		let blue = f32x4(0.f, 0.f, 1.f, 1.f);
+
+		let base = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
+		let norm = nm.sample(s, uv, blue).xyz;
+
 		let met_rough = mr.sample(s, uv, white).xy;
 		let emissive = em.sample(s, uv, white).xyz * mat->emissive_factor;
 		let rough = met_rough.y * mat->roughness_factor;
+		let met = met_rough.x * mat->metallic_factor;
+
+		var basis = transpose(inv_basis);
+		let norm_world = normalize(mul(basis, norm));
+		basis._m02_m12_m22 = norm_world;
+		inv_basis._m20_m21_m22 = norm_world;
 
 		Hit h = {};
 		h.position = position;
-		h.normal = f32x3(0.f, 0.f, 1.f);
 		h.emissive = emissive;
-		h.from_shading_basis = gen_basis(normal);
-		h.to_shading_basis = transpose(h.from_shading_basis);
-		h.params.base_color = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
+		h.from_shading_basis = basis;
+		h.to_shading_basis = inv_basis;
+		h.params.base_color = base;
 		h.params.roughness = max(rough * rough, 0.0001f);
-		h.params.metallic = met_rough.x * mat->metallic_factor;
+		h.params.metallic = met;
+
 		return h;
 	} else
 		return none;
@@ -292,22 +338,4 @@ void main(ScreenOutput input) {
 		let prev = Constants.output.load(pix);
 		Constants.output.store(pix, lerp(prev, ret, 1.f / (n + 1.f)));
 	}
-}
-
-f32x3x3 gen_basis(f32x3 z) {
-	f32x3 other;
-	if (z.x < 0.1f && z.y < 0.1f) {
-		other = f32x3(0.f, -z.z, z.y);
-	} else {
-		other = f32x3(-z.y, z.x, 0.f);
-	}
-	other = normalize(other);
-	let last = cross(other, z);
-	// clang-format off
-	return { 
-		other.x, last.x, z.x,
-		other.y, last.y, z.y,
-		other.z, last.z, z.z
-	};
-	// clang-format on
 }

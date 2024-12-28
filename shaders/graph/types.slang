@@ -51,6 +51,8 @@ public typedef float32_t3 f32x3;
 public typedef float32_t4 f32x4;
 
 public typedef float32_t2x2 f32x2x2;
+public typedef float32_t2x3 f32x2x3;
+public typedef float32_t3x2 f32x3x2;
 public typedef float32_t3x3 f32x3x3;
 public typedef float32_t3x4 f32x3x4;
 public typedef float32_t4x4 f32x4x3;
