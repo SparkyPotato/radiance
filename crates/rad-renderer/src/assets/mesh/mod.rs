@@ -291,7 +291,6 @@ impl Asset for Mesh {
 					None,
 				)
 				.unwrap();
-			device.device().reset_query_pool(qpool, 0, 1);
 			let cmd = pool.next(device)?;
 
 			device
@@ -301,6 +300,7 @@ impl Asset for Mesh {
 					&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
 				)
 				.unwrap();
+			device.device().cmd_reset_query_pool(cmd, qpool, 0, 1);
 			device.as_ext().cmd_build_acceleration_structures(
 				cmd,
 				&[info],

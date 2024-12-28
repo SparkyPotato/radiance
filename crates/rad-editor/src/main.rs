@@ -1,5 +1,7 @@
 #![feature(path_add_extension)]
 
+use std::mem::ManuallyDrop;
+
 use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{graph::Frame, Result};
 use rad_renderer::RendererModule;
@@ -58,7 +60,7 @@ struct EditorApp {
 	menu: Menu,
 	assets: AssetTray,
 	world: WorldContext,
-	renderer: Renderer,
+	renderer: ManuallyDrop<Renderer>,
 }
 
 impl EditorApp {
@@ -67,7 +69,7 @@ impl EditorApp {
 			menu: Menu::new(),
 			assets: AssetTray::new(),
 			world: WorldContext::new(),
-			renderer: Renderer::new().unwrap(),
+			renderer: ManuallyDrop::new(Renderer::new().unwrap()),
 		}
 	}
 }
@@ -83,5 +85,13 @@ impl App for EditorApp {
 
 	fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
 		self.renderer.on_window_event(window, event);
+	}
+}
+
+impl Drop for EditorApp {
+	fn drop(&mut self) {
+		unsafe {
+			ManuallyDrop::take(&mut self.renderer).destroy();
+		}
 	}
 }
