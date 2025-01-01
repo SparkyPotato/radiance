@@ -96,7 +96,7 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 		let c = Pos[tri.z].xyz;
 
 		var culled = false;
-		culled = culled || edge_fn(a.xy, b.xy, c.xy) <= 0.f;
+		culled = culled || edge_fn(a.xy, b.xy, c.xy) >= 0.f;
 		let bmin = min3(a, b, c);
 		let bmax = max3(a, b, c);
 		let prec = 1.f / 256.f;
@@ -146,8 +146,8 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 
 	let w_x = f32x3(v1.y - v2.y, v2.y - v0.y, v0.y - v1.y);
 	let w_y = f32x3(v2.x - v1.x, v0.x - v2.x, v1.x - v0.x);
-	let par_area = edge_fn(v0.xy, v1.xy, v2.xy);
-	if (par_area < 0.f)
+	let par_area = -edge_fn(v0.xy, v1.xy, v2.xy);
+	if (par_area <= 0.f)
 		return;
 
 	let v_z = f32x3(v0.z, v1.z, v2.z) / par_area;
