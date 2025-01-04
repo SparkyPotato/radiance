@@ -193,7 +193,7 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		case DebugVis.Metallic: {
 			let mat = tri.instance.material;
 			let mr = mat->metallic_roughness.get();
-			let m = mr.load(mr.pixel_of_uv(tri.uv()), 1.f).x * mat->metallic_factor;
+			let m = mr.load(mr.pixel_of_uv(tri.uv()), 1.f).z * mat->metallic_factor;
 			col = f32x3(m, m, m);
 			break;
 		}

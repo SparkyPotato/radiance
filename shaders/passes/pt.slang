@@ -121,7 +121,7 @@ Optional<Hit> trace_ray(Ray ray) {
 		let t2 = st2.y;
 		f32x3x3 inv_basis;
 		let det = s1 * t2 - s2 * t1;
-		if (det != 0.f) {
+		if (/*det != 0.f*/ false) {
 			let t = (t2 * q1 - t1 * q2) / det;
 			let b = (s1 * q2 - s2 * q1) / det;
 			let td = t - dot(t, normal) * normal;
@@ -143,15 +143,15 @@ Optional<Hit> trace_ray(Ray ray) {
 		let base = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
 		let norm = nm.sample(s, uv, blue).xyz;
 
-		let met_rough = mr.sample(s, uv, white).xy;
+		let met_rough = mr.sample(s, uv, white);
 		let emissive = em.sample(s, uv, white).xyz * mat->emissive_factor;
 		let rough = met_rough.y * mat->roughness_factor;
-		let met = met_rough.x * mat->metallic_factor;
+		let met = met_rough.z * mat->metallic_factor;
 
 		var basis = transpose(inv_basis);
 		let norm_world = normalize(mul(basis, norm));
-		basis._m02_m12_m22 = norm_world;
-		inv_basis._m20_m21_m22 = norm_world;
+		// basis._m02_m12_m22 = norm_world;
+		// inv_basis._m20_m21_m22 = norm_world;
 
 		Hit h = {};
 		h.position = position;
