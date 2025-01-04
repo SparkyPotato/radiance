@@ -1,0 +1,26 @@
+[package]
+name = "nvtt_rs"
+version = "0.10.1"
+edition = "2021"
+authors = [ "Luka Mijalkovic <luka.mijalkovic3@gmail.com>" ]
+description = "A rust wrapper around the Nvidia Texture Tools library."
+repository = "https://github.com/mijalk0/nvtt"
+documentation = "https://mijalk0.github.io/nvtt"
+license = "MIT"
+readme = "README.md"
+keywords = [ "image_processing", "texture", "texture_compression", "nvidia", "nvtt" ]
+rust-version = "1.66"
+
+[dependencies]
+nvtt_sys = { version = "0.5.2", path = "../nvtt-sys" }
+cfg-if = "1"
+thiserror = "1"
+lazy_static = "1.4"
+libc = "0.2"
+tempfile = "3"
+
+[dev-dependencies]
+approx = "0.5"
+
+[features]
+cuda = []

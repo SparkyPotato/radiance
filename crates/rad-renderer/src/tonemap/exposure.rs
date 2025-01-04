@@ -36,7 +36,7 @@ impl ExposureCalc {
 	pub const MAX_EXPOSURE: f32 = 18.0;
 	pub const MAX_HISTOGRAM_RANGE: f32 = 0.95;
 	pub const MIN_EXPOSURE: f32 = -6.0;
-	pub const MIN_HISTOGRAM_RANGE: f32 = 0.8;
+	pub const MIN_HISTOGRAM_RANGE: f32 = 0.1;
 
 	pub fn bin_to_exposure(bin: f32) -> f32 {
 		let log = (bin - 1.0) / 254.0;
@@ -149,7 +149,7 @@ impl ExposureCalc {
 			let lum = Self::exposure_to_lum(2.0 * target + 10.0);
 			let key = 1.03 - 2.0 / (2.0 + (lum + 1.0).log10());
 			let comp = 6.0 * key - 2.5;
-			*target_exposure = target - comp;
+			*target_exposure = target; // - comp;
 
 			let lerp = (1.0 - (-1.2 * dt).exp()).clamp(0.0, 1.0);
 			*exposure = (1.0 - lerp) * *exposure + lerp * *target_exposure;

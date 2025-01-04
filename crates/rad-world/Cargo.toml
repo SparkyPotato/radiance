@@ -4,8 +4,8 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-rad-core = { path = "../rad-core" }
-rad-world-derive = { path = "../rad-world-derive" }
+rad-core = { workspace = true }
+rad-world-derive = { workspace = true }
 
 bevy_ecs = { workspace = true }
 bevy_reflect = { workspace = true }

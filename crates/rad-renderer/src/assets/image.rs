@@ -1,19 +1,8 @@
 use std::io::{self, Write};
 
 use ash::vk;
-use basis_universal::{
-	encoder_init,
-	transcoder_init,
-	BasisTextureFormat,
-	ColorSpace,
-	Compressor,
-	CompressorParams,
-	DecodeFlags,
-	TranscodeParameters,
-	Transcoder,
-	TranscoderTextureFormat,
-	UserData,
-};
+use bincode::{config::standard, Decode, Encode};
+use nvtt_rs::{CompressionOptions, Container, Context, Format, InputFormat, OutputOptions, Surface, CUDA_SUPPORTED};
 use rad_core::{
 	asset::{Asset, AssetView, Uuid},
 	uuid,
@@ -30,6 +19,14 @@ use tracing::trace_span;
 pub struct Image {
 	image: resource::Image,
 	view: ImageView,
+}
+
+#[derive(Encode, Decode)]
+struct ImageData {
+	width: u32,
+	height: u32,
+	srgb: bool,
+	data: Vec<u8>,
 }
 
 impl Asset for Image {
@@ -54,48 +51,18 @@ impl Asset for Image {
 	where
 		Self: Sized,
 	{
-		transcoder_init();
 		view.seek_begin()?;
-		let mut read = view.read_section()?;
-		let mut data = Vec::new();
-		read.read_to_end(&mut data)?;
-		drop(read);
+		let data: ImageData = bincode::decode_from_std_read(&mut view.read_section()?, standard())
+			.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 		let name = view.name();
-
-		let mut trans = Transcoder::new();
-		trans
-			.prepare_transcoding(&data)
-			.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "failed to decode image"))?;
-		let info = trans
-			.image_level_info(&data, 0, 0)
-			.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "image missing"))?;
-		let is_srgb = trans
-			.user_data(&data)
-			.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "failed to decode image"))?
-			.userdata0
-			!= 0;
-		let data = trans
-			.transcode_image_level(
-				&data,
-				TranscoderTextureFormat::BC7_RGBA,
-				TranscodeParameters {
-					image_index: 0,
-					level_index: 0,
-					decode_flags: Some(DecodeFlags::HIGH_QUALITY),
-					output_rows_in_pixels: None,
-					output_row_pitch_in_blocks_or_pixels: None,
-				},
-			)
-			.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
-		trans.end_transcoding();
 
 		let device: &Device = Engine::get().global();
 		let size = vk::Extent3D {
-			width: info.m_width,
-			height: info.m_height,
+			width: data.width,
+			height: data.height,
 			depth: 1,
 		};
-		let format = if is_srgb {
+		let format = if data.srgb {
 			vk::Format::BC7_SRGB_BLOCK
 		} else {
 			vk::Format::BC7_UNORM_BLOCK
@@ -118,14 +85,14 @@ impl Asset for Image {
 			device,
 			BufferDesc {
 				name: &format!("{name} staging buffer"),
-				size: data.len() as _,
+				size: data.data.len() as _,
 				readback: false,
 			},
 		)?;
 		unsafe {
 			let mut pool = CommandPool::new(device, device.queue_families().transfer)?;
 			let cmd = pool.next(device)?;
-			staging.data().as_mut().write_all(&data)?;
+			staging.data().as_mut().write_all(&data.data)?;
 			device
 				.device()
 				.begin_command_buffer(
@@ -228,38 +195,43 @@ impl Image {
 		let s = trace_span!("import image", name = name);
 		let _e = s.enter();
 
-		encoder_init();
-		let mut comp = Compressor::new(std::thread::available_parallelism().map(|x| x.get()).unwrap_or(4) as _);
-		let mut params = CompressorParams::new();
-		params.source_image_mut(0).init(
-			data.data,
+		let image = Surface::image(
+			InputFormat::Bgra8Ub {
+				data: data.data,
+				unsigned_to_signed: false,
+			},
 			data.width,
 			data.height,
-			(data.data.len() as u32 / (data.width * data.height)) as _,
-		);
-		params.set_basis_format(BasisTextureFormat::UASTC4x4);
-		params.set_rdo_uastc(Some(1.0));
-		params.set_color_space(if data.is_srgb {
-			ColorSpace::Srgb
-		} else {
-			ColorSpace::Linear
-		});
-		if data.is_normal_map {
-			params.tune_for_normal_maps();
-		}
-		params.set_userdata(UserData {
-			userdata0: data.is_srgb as _,
-			userdata1: 0,
-		});
-		unsafe {
-			comp.init(&params);
-			comp.process()
-				.map_err(|e| io::Error::new(io::ErrorKind::Other, format!("{:?}", e)))?;
+			1,
+		)
+		.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
+
+		let mut context = Context::new();
+		if *CUDA_SUPPORTED {
+			context.set_cuda_acceleration(true);
 		}
 
+		let mut opts = CompressionOptions::new();
+		opts.set_format(Format::Bc7);
+
+		let mut out_opts = OutputOptions::new();
+		out_opts.set_srgb_flag(true);
+		out_opts.set_output_header(false);
+		out_opts.set_container(Container::Dds10);
+
+		let write = context.compress(&image, &opts, &out_opts).unwrap();
 		into.clear()?;
-		let mut write = into.new_section()?;
-		write.write_all(comp.basis_file())?;
+		bincode::encode_into_std_write(
+			ImageData {
+				width: data.width,
+				height: data.height,
+				srgb: data.is_srgb,
+				data: write,
+			},
+			&mut into.new_section()?,
+			standard(),
+		)
+		.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 
 		Ok(())
 	}

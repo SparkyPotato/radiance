@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-rad-core = { path = "../rad-core" }
-rad-graph = { path = "../rad-graph" }
+rad-core = { workspace = true }
+rad-graph = { workspace = true }
 
 tracing = { workspace = true }
 winit = { workspace = true }

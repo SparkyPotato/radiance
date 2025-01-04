@@ -4,13 +4,13 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-rad-core = { path = "../rad-core" }
-rad-graph = { path = "../rad-graph" }
-rad-renderer = { path = "../rad-renderer" }
-rad-rhi = { path = "../rad-rhi" }
-rad-ui = { path = "../rad-ui" }
-rad-window = { path = "../rad-window" }
-rad-world = { path = "../rad-world" }
+rad-core = { workspace = true }
+rad-graph = { workspace = true }
+rad-renderer = { workspace = true }
+rad-rhi = { workspace = true }
+rad-ui = { workspace = true }
+rad-window = { workspace = true }
+rad-world = { workspace = true }
 
 bytemuck = { workspace = true }
 egui_plot = { workspace = true }

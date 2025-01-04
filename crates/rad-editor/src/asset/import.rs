@@ -93,157 +93,177 @@ impl GltfImporter {
 
 		let prog = AtomicUsize::new(0);
 		let images: Vec<_> = self.gltf.images().collect();
-		let images: Vec<_> = images
-			.into_par_iter()
-			.map(|image| {
-				let meta_path = match image.source() {
-					Source::Uri { uri, .. } => fs::canonicalize(self.base.join(uri)).ok(),
-					_ => None,
-				};
-				if let Some(ref p) = meta_path {
-					if let Some((id, modified)) = sys.import_source_of(&p) {
-						if modified
-							>= p.metadata()
-								.ok()
-								.and_then(|x| x.modified().ok())
-								.unwrap_or(SystemTime::UNIX_EPOCH)
-						{
-							info!("skipping image {}", p.display());
-							return Ok(ARef::unloaded(id));
+		let images: Vec<_> = {
+			let s = trace_span!("importing images");
+			let _e = s.enter();
+
+			images
+				.into_par_iter()
+				.map(|image| {
+					let meta_path = match image.source() {
+						Source::Uri { uri, .. } => fs::canonicalize(self.base.join(uri)).ok(),
+						_ => None,
+					};
+					if let Some(ref p) = meta_path {
+						if let Some((id, modified)) = sys.import_source_of(&p) {
+							if modified
+								>= p.metadata()
+									.ok()
+									.and_then(|x| x.modified().ok())
+									.unwrap_or(SystemTime::UNIX_EPOCH)
+							{
+								info!("skipping image {}", p.display());
+								return Ok(ARef::unloaded(id));
+							}
 						}
 					}
-				}
 
-				let id = AssetId::new();
-				let name = image
-					.name()
-					.map(|x| x.to_string())
-					.or_else(|| {
-						let Source::Uri { uri, .. } = image.source() else {
-							return None;
-						};
-						Some(uri.to_string())
-					})
-					.unwrap_or_else(|| id.to_string());
-				let path = Path::new("images").join(&name);
-				let data = {
-					let s = trace_span!("load image", name = name);
-					let _e = s.enter();
-					image::Data::from_source(image.source(), Some(self.base.as_path()), &self.buffers)
-						.map_err(io::Error::other)?
-				};
-				Image::import(
-					&name,
-					ImportImage {
-						data: &data.pixels,
-						width: data.width,
-						height: data.height,
-						// TODO: yeah
-						is_normal_map: false,
-						is_srgb: true,
-					},
-					sys.create(&path, id, Image::uuid(), meta_path)?,
-				)?;
-				let old = prog.fetch_add(1, Ordering::Relaxed);
-				progress(
-					ImportProgress {
-						images: old as u32 + 1,
-						materials: 0,
-						meshes: 0,
-						scenes: 0,
-					}
-					.ratio(total),
-				);
+					let id = AssetId::new();
+					let name = image
+						.name()
+						.map(|x| x.to_string())
+						.or_else(|| {
+							let Source::Uri { uri, .. } = image.source() else {
+								return None;
+							};
+							Some(uri.to_string())
+						})
+						.unwrap_or_else(|| id.to_string());
+					let path = Path::new("images").join(&name);
+					let data = {
+						let s = trace_span!("load image", name = name);
+						let _e = s.enter();
+						image::Data::from_source(image.source(), Some(self.base.as_path()), &self.buffers)
+							.map_err(io::Error::other)?
+					};
+					Image::import(
+						&name,
+						ImportImage {
+							width: data.width,
+							height: data.height,
+							data: &Self::swizzle_image(data),
+							// TODO: yeah
+							is_normal_map: false,
+							is_srgb: true,
+						},
+						sys.create(&path, id, Image::uuid(), meta_path)?,
+					)?;
+					let old = prog.fetch_add(1, Ordering::Relaxed);
+					progress(
+						ImportProgress {
+							images: old as u32 + 1,
+							materials: 0,
+							meshes: 0,
+							scenes: 0,
+						}
+						.ratio(total),
+					);
 
-				Ok::<_, io::Error>(ARef::unloaded(id))
-			})
-			.collect::<Result<_, _>>()?;
+					Ok::<_, io::Error>(ARef::unloaded(id))
+				})
+				.collect::<Result<_, _>>()?
+		};
 
 		let prog = AtomicUsize::new(0);
 		let materials: Vec<_> = self.gltf.materials().collect();
-		let materials: Vec<_> = materials
-			.into_par_iter()
-			.map(|mat| {
-				let id = AssetId::new();
-				let name = mat.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
-				let path = Path::new("materials").join(&name);
-				let mat = self.material(&name, mat, &images);
-				mat.save(&mut sys.create(&path, id, Material::uuid(), None)?)?;
-				let old = prog.fetch_add(1, Ordering::Relaxed);
-				progress(
-					ImportProgress {
-						images: total.images,
-						materials: old as u32 + 1,
-						meshes: 0,
-						scenes: 0,
-					}
-					.ratio(total),
-				);
+		let materials: Vec<_> = {
+			let s = trace_span!("importing materials");
+			let _e = s.enter();
 
-				Ok::<_, io::Error>(ARef::unloaded(id))
-			})
-			.collect::<Result<_, _>>()?;
+			materials
+				.into_par_iter()
+				.map(|mat| {
+					let id = AssetId::new();
+					let name = mat.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
+					let path = Path::new("materials").join(&name);
+					let mat = self.material(&name, mat, &images);
+					mat.save(&mut sys.create(&path, id, Material::uuid(), None)?)?;
+					let old = prog.fetch_add(1, Ordering::Relaxed);
+					progress(
+						ImportProgress {
+							images: total.images,
+							materials: old as u32 + 1,
+							meshes: 0,
+							scenes: 0,
+						}
+						.ratio(total),
+					);
+
+					Ok::<_, io::Error>(ARef::unloaded(id))
+				})
+				.collect::<Result<_, _>>()?
+		};
 
 		let prog = AtomicUsize::new(0);
 		let meshes: Vec<_> = self.gltf.meshes().collect();
-		let meshes: Vec<_> = meshes
-			.into_par_iter()
-			.map(|mesh| {
-				let name = mesh.name().map(|x| x.to_string());
-				let prims = self.conv_to_meshes(mesh, &materials).map_err(io::Error::other)?;
-				let c = prims.len();
-				let ids = prims
-					.into_iter()
-					.enumerate()
-					.map(|(i, m)| {
-						let id = AssetId::new();
-						let name = name.clone().unwrap_or_else(|| id.to_string());
-						let name = if c == 1 {
-							name.to_string()
-						} else {
-							format!("{name}-{i}")
-						};
-						let path = Path::new("meshes").join(&name);
-						Mesh::import(&name, m, sys.create(&path, id, Mesh::uuid(), None)?)?;
-						Ok::<_, io::Error>(ARef::unloaded(id))
-					})
-					.collect::<Result<Vec<_>, _>>()?;
+		let meshes: Vec<_> = {
+			let s = trace_span!("importing meshes");
+			let _e = s.enter();
 
+			meshes
+				.into_par_iter()
+				.map(|mesh| {
+					let name = mesh.name().map(|x| x.to_string());
+					let prims = self.conv_to_meshes(mesh, &materials).map_err(io::Error::other)?;
+					let c = prims.len();
+					let ids = prims
+						.into_iter()
+						.enumerate()
+						.map(|(i, m)| {
+							let id = AssetId::new();
+							let name = name.clone().unwrap_or_else(|| id.to_string());
+							let name = if c == 1 {
+								name.to_string()
+							} else {
+								format!("{name}-{i}")
+							};
+							let path = Path::new("meshes").join(&name);
+							Mesh::import(&name, m, sys.create(&path, id, Mesh::uuid(), None)?)?;
+							Ok::<_, io::Error>(ARef::unloaded(id))
+						})
+						.collect::<Result<Vec<_>, _>>()?;
+
+					let old = prog.fetch_add(1, Ordering::Relaxed);
+					progress(
+						ImportProgress {
+							images: total.images,
+							materials: total.materials,
+							meshes: old as u32 + 1,
+							scenes: 0,
+						}
+						.ratio(total),
+					);
+
+					Ok(ids)
+				})
+				.collect::<Result<_, io::Error>>()?
+		};
+
+		let prog = AtomicUsize::new(0);
+		{
+			let s = trace_span!("importing scenes");
+			let _e = s.enter();
+
+			self.gltf.scenes().par_bridge().try_for_each(|scene| {
+				let id = AssetId::new();
+				let name = scene.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
+				let path = Path::new("scenes").join(&name);
+				let world = self.scene(&name, scene, &meshes).map_err(io::Error::other)?;
+				world.save(sys.create(&path, id, World::uuid(), None)?.as_mut())?;
 				let old = prog.fetch_add(1, Ordering::Relaxed);
 				progress(
 					ImportProgress {
 						images: total.images,
 						materials: total.materials,
-						meshes: old as u32 + 1,
-						scenes: 0,
+						meshes: total.meshes,
+						scenes: old as u32 + 1,
 					}
 					.ratio(total),
 				);
 
-				Ok(ids)
+				Ok(())
 			})
-			.collect::<Result<_, io::Error>>()?;
-
-		let prog = AtomicUsize::new(0);
-		self.gltf.scenes().par_bridge().try_for_each(|scene| {
-			let id = AssetId::new();
-			let name = scene.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
-			let path = Path::new("scenes").join(&name);
-			let world = self.scene(&name, scene, &meshes).map_err(io::Error::other)?;
-			world.save(sys.create(&path, id, World::uuid(), None)?.as_mut())?;
-			let old = prog.fetch_add(1, Ordering::Relaxed);
-			progress(
-				ImportProgress {
-					images: total.images,
-					materials: total.materials,
-					meshes: total.meshes,
-					scenes: old as u32 + 1,
-				}
-				.ratio(total),
-			);
-
-			Ok(())
-		})
+		}
 	}
 
 	fn new(base: &Path, gltf: Document, mut blob: Option<Vec<u8>>) -> Result<Self, gltf::Error> {
@@ -268,11 +288,28 @@ impl GltfImporter {
 		})
 	}
 
+	fn swizzle_image(data: image::Data) -> Vec<u8> {
+		match data.format {
+			image::Format::R8G8B8 => data
+				.pixels
+				.chunks_exact(3)
+				.flat_map(|x| [x[2], x[1], x[0], 255])
+				.collect(),
+			image::Format::R8G8B8A8 => data
+				.pixels
+				.chunks_exact(4)
+				.flat_map(|x| [x[2], x[1], x[0], x[3]])
+				.collect(),
+			_ => unimplemented!(),
+		}
+	}
+
 	fn material(&self, name: &str, mat: gltf::Material, images: &[ARef<Image>]) -> Material {
 		let s = span!(Level::INFO, "importing material", name = name);
 		let _e = s.enter();
 
 		let m = mat.pbr_metallic_roughness();
+		let es = mat.emissive_strength().unwrap_or(1.0);
 
 		Material {
 			base_color: m
@@ -290,7 +327,7 @@ impl GltfImporter {
 			emissive: mat
 				.emissive_texture()
 				.map(|x| images[x.texture().source().index()].clone()),
-			emissive_factor: mat.emissive_factor().into(),
+			emissive_factor: mat.emissive_factor().map(|x| x * es).into(),
 		}
 	}
 

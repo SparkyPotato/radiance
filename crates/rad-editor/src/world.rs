@@ -116,7 +116,7 @@ impl WorldContext {
 			.id();
 		self.edit.spawn_empty().insert(LightComponent {
 			ty: LightType::Sky,
-			radiance: Vec3::broadcast(0.2),
+			radiance: Vec3::broadcast(100.0),
 		});
 	}
 }

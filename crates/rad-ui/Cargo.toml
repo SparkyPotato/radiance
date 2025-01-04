@@ -4,9 +4,9 @@ version = "0.0.0"
 edition = "2021"
 
 [dependencies]
-rad-core = { path = "../rad-core" }
-rad-graph = { path = "../rad-graph" }
-rad-window = { path = "../rad-window" }
+rad-core = { workspace = true }
+rad-graph = { workspace = true }
+rad-window = { workspace = true }
 
 ash = { workspace = true }
 bytemuck = { workspace = true }
