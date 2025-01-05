@@ -149,7 +149,7 @@ impl ExposureCalc {
 			let lum = Self::exposure_to_lum(2.0 * target + 10.0);
 			let key = 1.03 - 2.0 / (2.0 + (lum + 1.0).log10());
 			let comp = 6.0 * key - 2.5;
-			*target_exposure = target; // - comp;
+			*target_exposure = target - comp;
 
 			let lerp = (1.0 - (-1.2 * dt).exp()).clamp(0.0, 1.0);
 			*exposure = (1.0 - lerp) * *exposure + lerp * *target_exposure;

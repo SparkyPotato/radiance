@@ -57,13 +57,14 @@ Ray primary_ray(inout Rng rng, u32x2 pix) {
 
 struct Hit {
 	f32x3 position;
+	f32x3 g_normal;
 	f32x3 emissive;
 	f32x3x3 to_shading_basis;
 	f32x3x3 from_shading_basis;
 	ShadingParams params;
 
 	f32x3 ray_origin() {
-		return this.position + this.from_shading_basis._m02_m12_m22 * 1e-5f;
+		return this.position + this.g_normal * 1e-5f;
 	}
 
 	f32x3 to_shading(f32x3 x) {
@@ -75,18 +76,37 @@ struct Hit {
 	}
 }
 
-f32x3x3 gen_inv_basis(f32x3 z) {
-	f32x3 other;
-	if (z.x < 0.1f && z.y < 0.1f) {
-		other = f32x3(0.f, -z.z, z.y);
-	} else {
-		other = f32x3(-z.y, z.x, 0.f);
+struct Tbn {
+	f32x3 tangent;
+	f32x3 bitangent;
+	f32x3 normal;
+
+	__init(Vertex v0, Vertex v1, Vertex v2, f32x3 n) {
+		// https://terathon.com/blog/tangent-space.html
+		let q1 = v1.position - v0.position;
+		let q2 = v2.position - v0.position;
+		let st1 = v1.uv - v0.uv;
+		let st2 = v2.uv - v0.uv;
+		let det = st1.x * st2.y - st2.x * st1.y;
+		if (det != 0.f) {
+			let tc = (st2.y * q1 - st1.y * q2) / det;
+			let bc = (st1.x * q2 - st2.x * q1) / det;
+			let t = normalize(tc - dot(n, tc) * n);
+			let h = (dot(cross(n, tc), bc) < 0.f) ? -1.f : 1.f;
+			let b = h * cross(n, t);
+			return { t, b, n };
+		} else {
+			f32x3 other;
+			if (n.x < 0.1f && n.y < 0.1f) {
+				other = f32x3(0.f, -n.z, n.y);
+			} else {
+				other = f32x3(-n.y, n.x, 0.f);
+			}
+			other = normalize(other);
+			let last = cross(other, n);
+			return { other, last, n };
+		}
 	}
-	other = normalize(other);
-	let last = cross(other, z);
-	// clang-format off
-	return f32x3x3(other, last, z);
-	// clang-format on
 }
 
 Optional<Hit> trace_ray(Ray ray) {
@@ -97,40 +117,22 @@ Optional<Hit> trace_ray(Ray ray) {
 		let instance = Constants.instances[q.CommittedRayInstanceId()];
 		let tri = q.CommittedRayPrimitiveIndex();
 		let iptr = (u32*)(instance.raw_mesh + instance.raw_vertex_count);
-		let indices = u32x3(iptr[tri * 3], iptr[tri * 3 + 1], iptr[tri * 3 + 2]);
-		let v0 = instance.raw_mesh[indices.x];
-		let v1 = instance.raw_mesh[indices.y];
-		let v2 = instance.raw_mesh[indices.z];
-		let b = q.CommittedRayBarycentrics();
-		let bary = f32x3(1.f - b.x - b.y, b.x, b.y);
+		let i0 = tri * 3;
+		let v0 = instance.raw_mesh[iptr[i0]];
+		let v1 = instance.raw_mesh[iptr[i0 + 1]];
+		let v2 = instance.raw_mesh[iptr[i0 + 2]];
+		let br = q.CommittedRayBarycentrics();
+		let bary = f32x3(1.f - (br.x + br.y), br.x, br.y);
 		let mat = instance.material;
 
 		let uv = bary.x * v0.uv + bary.y * v1.uv + bary.z * v2.uv;
+		let normal_obj = bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal;
+		let tbn = Tbn(v0, v1, v2, normal_obj);
 		let tmat = instance.transform.mat();
 		let position = mul(tmat, f32x4(bary.x * v0.position + bary.y * v1.position + bary.z * v2.position, 1.f)).xyz;
-		let normal = normalize(mul(tmat, f32x4(bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal, 0.f)).xyz);
-
-		// https://terathon.com/blog/tangent-space.html
-		let q1 = v1.position - v0.position;
-		let q2 = v2.position - v0.position;
-		let st1 = v1.uv - v0.uv;
-		let st2 = v2.uv - v0.uv;
-		let s1 = st1.x;
-		let t1 = st1.y;
-		let s2 = st2.x;
-		let t2 = st2.y;
-		f32x3x3 inv_basis;
-		let det = s1 * t2 - s2 * t1;
-		if (/*det != 0.f*/ false) {
-			let t = (t2 * q1 - t1 * q2) / det;
-			let b = (s1 * q2 - s2 * q1) / det;
-			let td = t - dot(t, normal) * normal;
-			let h = (dot(cross(normal, t), b) < 0.f) ? -1.f : 1.f;
-			let bd = h * cross(normal, td);
-			inv_basis = f32x3x3(normalize(td), normalize(bd), normal);
-		} else {
-			inv_basis = gen_inv_basis(normal);
-		}
+		var inv_basis = f32x3x3(normalize(mul(tmat, f32x4(tbn.tangent, 0.f)).xyz),
+								normalize(mul(tmat, f32x4(tbn.bitangent, 0.f)).xyz),
+								normalize(mul(tmat, f32x4(tbn.normal, 0.f)).xyz));
 
 		let s = Constants.sampler;
 		let bc = mat->base_color.get();
@@ -149,12 +151,14 @@ Optional<Hit> trace_ray(Ray ray) {
 		let met = met_rough.z * mat->metallic_factor;
 
 		var basis = transpose(inv_basis);
+		let g_normal = basis._m02_m12_m22;
 		let norm_world = normalize(mul(basis, norm));
-		// basis._m02_m12_m22 = norm_world;
-		// inv_basis._m20_m21_m22 = norm_world;
+		basis._m02_m12_m22 = norm_world;
+		inv_basis._m20_m21_m22 = norm_world;
 
 		Hit h = {};
 		h.position = position;
+		h.g_normal = g_normal;
 		h.emissive = emissive;
 		h.from_shading_basis = basis;
 		h.to_shading_basis = inv_basis;

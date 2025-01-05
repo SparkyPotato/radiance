@@ -1,7 +1,7 @@
 use std::{
 	marker::PhantomData,
 	sync::{
-		atomic::{AtomicU64, Ordering},
+		atomic::{AtomicBool, AtomicU64, Ordering},
 		Arc,
 		Mutex,
 	},
@@ -236,7 +236,6 @@ enum PipelineDesc {
 struct RuntimeShared {
 	builder: ShaderBuilder,
 	pipelines: Vec<(PipelineDesc, Arc<AtomicU64>)>,
-	recompiling: bool,
 	device: vk::Device,
 	layout: vk::PipelineLayout,
 	create_graphics_pipelines: vk::PFN_vkCreateGraphicsPipelines,
@@ -477,6 +476,7 @@ pub enum HotreloadStatus {
 
 pub struct ShaderRuntime {
 	_watcher: Debouncer<RecommendedWatcher, FileIdMap>,
+	status: Arc<AtomicBool>,
 	shared: Arc<Mutex<RuntimeShared>>,
 }
 
@@ -497,10 +497,10 @@ impl ShaderRuntime {
 			curr = p;
 		}
 		let source = source.unwrap();
+		let status = Arc::new(AtomicBool::new(false));
 		let shared = Arc::new(Mutex::new(RuntimeShared {
 			builder: ShaderBuilder::new(source.clone(), cache.unwrap()).unwrap(),
 			pipelines: Vec::new(),
-			recompiling: false,
 			device: device.handle(),
 			layout,
 			create_graphics_pipelines: device.fp_v1_0().create_graphics_pipelines,
@@ -508,12 +508,13 @@ impl ShaderRuntime {
 			destroy_pipeline: device.fp_v1_0().destroy_pipeline,
 		}));
 		let s = shared.clone();
+		let st = status.clone();
 		let mut watcher = new_debouncer(Duration::from_secs_f32(0.5), None, move |res: DebounceEventResult| {
 			if let Ok(evs) = res {
 				for ev in evs {
 					if matches!(ev.kind, EventKind::Create(_) | EventKind::Modify(_)) {
+						st.store(true, Ordering::Relaxed);
 						let mut s = s.lock().unwrap();
-						s.recompiling = true;
 						let RuntimeShared {
 							ref mut builder,
 							device,
@@ -555,7 +556,7 @@ impl ShaderRuntime {
 								Err(Err(e)) => println!("{e}"),
 							}
 						}
-						s.recompiling = false;
+						st.store(false, Ordering::Relaxed);
 					}
 				}
 				println!();
@@ -566,6 +567,7 @@ impl ShaderRuntime {
 
 		Self {
 			_watcher: watcher,
+			status,
 			shared,
 		}
 	}
@@ -581,7 +583,7 @@ impl ShaderRuntime {
 	}
 
 	pub fn status(&self) -> HotreloadStatus {
-		match self.shared.lock().unwrap().recompiling {
+		match self.status.load(Ordering::Relaxed) {
 			true => HotreloadStatus::Recompiling,
 			false => HotreloadStatus::Waiting,
 		}
