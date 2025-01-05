@@ -23,6 +23,12 @@ struct PushConstants {
 [vk::push_constant]
 PushConstants Constants;
 
+f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {
+	let f = f_pdf * f32(nf);
+	let g = g_pdf * f32(ng);
+	return f * f / (f * f + g * g);
+}
+
 struct Ray {
 	f32x3 origin;
 	f32x3 dir;
@@ -41,6 +47,13 @@ struct Ray {
 		r.TMin = 1e-5f;
 		r.TMax = this.t;
 		return r;
+	}
+
+	__generic<let F : u32> RayQuery<F> api_trace() {
+		RayQuery<F> q;
+		q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, this.to_rt());
+		while (q.Proceed());
+		return q;
 	}
 }
 
@@ -62,6 +75,7 @@ struct Hit {
 	f32x3x3 to_shading_basis;
 	f32x3x3 from_shading_basis;
 	ShadingParams params;
+	f32 area;
 
 	f32x3 ray_origin() {
 		return this.position + this.g_normal * 1e-5f;
@@ -109,65 +123,68 @@ struct Tbn {
 	}
 }
 
+Hit decode_hit(RayQuery<RAY_FLAG_FORCE_OPAQUE> q) {
+	let instance = Constants.instances[q.CommittedRayInstanceId()];
+	let tri = q.CommittedRayPrimitiveIndex();
+	let iptr = (u32*)(instance.raw_mesh + instance.raw_vertex_count);
+	let i0 = tri * 3;
+	let v0 = instance.raw_mesh[iptr[i0]];
+	let v1 = instance.raw_mesh[iptr[i0 + 1]];
+	let v2 = instance.raw_mesh[iptr[i0 + 2]];
+	let br = q.CommittedRayBarycentrics();
+	let bary = f32x3(1.f - (br.x + br.y), br.x, br.y);
+	let mat = instance.material;
+
+	let uv = bary.x * v0.uv + bary.y * v1.uv + bary.z * v2.uv;
+	let normal_obj = bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal;
+	let tbn = Tbn(v0, v1, v2, normal_obj);
+	let tmat = instance.transform.mat();
+	let position = mul(tmat, f32x4(bary.x * v0.position + bary.y * v1.position + bary.z * v2.position, 1.f)).xyz;
+	var inv_basis =
+		f32x3x3(normalize(mul(tmat, f32x4(tbn.tangent, 0.f)).xyz), normalize(mul(tmat, f32x4(tbn.bitangent, 0.f)).xyz),
+				normalize(mul(tmat, f32x4(tbn.normal, 0.f)).xyz));
+
+	let s = Constants.sampler;
+	let bc = mat->base_color.get();
+	let mr = mat->metallic_roughness.get();
+	let nm = mat->normal.get();
+	let em = mat->emissive.get();
+	let white = f32x4(1.f);
+	let blue = f32x4(0.f, 0.f, 1.f, 1.f);
+
+	let base = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
+	let norm = nm.sample(s, uv, blue).xyz;
+
+	let met_rough = mr.sample(s, uv, white);
+	let emissive = em.sample(s, uv, white).xyz * mat->emissive_factor;
+	let rough = met_rough.y * mat->roughness_factor;
+	let met = met_rough.z * mat->metallic_factor;
+
+	var basis = transpose(inv_basis);
+	let g_normal = basis._m02_m12_m22;
+	let norm_world = normalize(mul(basis, norm));
+	basis._m02_m12_m22 = norm_world;
+	inv_basis._m20_m21_m22 = norm_world;
+
+	Hit h = {};
+	h.position = position;
+	h.g_normal = g_normal;
+	h.emissive = emissive;
+	h.from_shading_basis = basis;
+	h.to_shading_basis = inv_basis;
+	h.params.base_color = base;
+	h.params.roughness = max(rough * rough, 0.0001f);
+	h.params.metallic = met;
+	h.area = length(cross(v1.position - v0.position, v2.position - v0.position)) * 0.5f;
+
+	return h;
+}
+
 Optional<Hit> trace_ray(Ray ray) {
-	RayQuery<RAY_FLAG_FORCE_OPAQUE> q;
-	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray.to_rt());
-	while (q.Proceed());
-	if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT) {
-		let instance = Constants.instances[q.CommittedRayInstanceId()];
-		let tri = q.CommittedRayPrimitiveIndex();
-		let iptr = (u32*)(instance.raw_mesh + instance.raw_vertex_count);
-		let i0 = tri * 3;
-		let v0 = instance.raw_mesh[iptr[i0]];
-		let v1 = instance.raw_mesh[iptr[i0 + 1]];
-		let v2 = instance.raw_mesh[iptr[i0 + 2]];
-		let br = q.CommittedRayBarycentrics();
-		let bary = f32x3(1.f - (br.x + br.y), br.x, br.y);
-		let mat = instance.material;
-
-		let uv = bary.x * v0.uv + bary.y * v1.uv + bary.z * v2.uv;
-		let normal_obj = bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal;
-		let tbn = Tbn(v0, v1, v2, normal_obj);
-		let tmat = instance.transform.mat();
-		let position = mul(tmat, f32x4(bary.x * v0.position + bary.y * v1.position + bary.z * v2.position, 1.f)).xyz;
-		var inv_basis = f32x3x3(normalize(mul(tmat, f32x4(tbn.tangent, 0.f)).xyz),
-								normalize(mul(tmat, f32x4(tbn.bitangent, 0.f)).xyz),
-								normalize(mul(tmat, f32x4(tbn.normal, 0.f)).xyz));
-
-		let s = Constants.sampler;
-		let bc = mat->base_color.get();
-		let mr = mat->metallic_roughness.get();
-		let nm = mat->normal.get();
-		let em = mat->emissive.get();
-		let white = f32x4(1.f);
-		let blue = f32x4(0.f, 0.f, 1.f, 1.f);
-
-		let base = (bc.sample(s, uv, white) * mat->base_color_factor).xyz;
-		let norm = nm.sample(s, uv, blue).xyz;
-
-		let met_rough = mr.sample(s, uv, white);
-		let emissive = em.sample(s, uv, white).xyz * mat->emissive_factor;
-		let rough = met_rough.y * mat->roughness_factor;
-		let met = met_rough.z * mat->metallic_factor;
-
-		var basis = transpose(inv_basis);
-		let g_normal = basis._m02_m12_m22;
-		let norm_world = normalize(mul(basis, norm));
-		basis._m02_m12_m22 = norm_world;
-		inv_basis._m20_m21_m22 = norm_world;
-
-		Hit h = {};
-		h.position = position;
-		h.g_normal = g_normal;
-		h.emissive = emissive;
-		h.from_shading_basis = basis;
-		h.to_shading_basis = inv_basis;
-		h.params.base_color = base;
-		h.params.roughness = max(rough * rough, 0.0001f);
-		h.params.metallic = met;
-
-		return h;
-	} else
+	let q = ray.api_trace<RAY_FLAG_FORCE_OPAQUE>();
+	if (q.CommittedStatus() == COMMITTED_TRIANGLE_HIT)
+		return decode_hit(q);
+	else
 		return none;
 }
 
@@ -176,6 +193,7 @@ struct LightSample {
 	f32x3 wi;
 	f32 t;
 	f32 pdf;
+	bool punctual;
 }
 
 f32x3 sample_sky(f32x3 dir) {
@@ -184,6 +202,11 @@ f32x3 sample_sky(f32x3 dir) {
 	return Constants.lights[Constants.sky_light].radiance;
 }
 
+f32 solid_angle_pdf(f32 theta) {
+	return 1.f / (2.f * PI * (1.f - cos(theta)));
+}
+
+// TODO: shrample light (light tree) and triangles (by solid angle or area) better.
 LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 	switch (light.ty) {
 		case LightType.Point: {
@@ -193,14 +216,14 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			let L = light.radiance / t2;
 			let t = sqrt(t2);
 			let wi = hit.to_shading(dir / t);
-			let pdf = 1.f;
-			return { L, wi, t, pdf };
+			let pdf = 1.f;	// TODO: don't think this is correct.
+			return { L, wi, t, pdf, true };
 		}
 		case LightType.Directional: {
 			let L = light.radiance;
 			let wi = hit.to_shading(-light.pos_or_dir);
-			let pdf = 1.f;
-			return { L, wi, 1e10f, pdf };
+			let pdf = solid_angle_pdf(radians(0.5f));
+			return { L, wi, 1e10f, pdf, true };
 		}
 		case LightType.Emissive: {
 			let i = asuint(light.radiance.x);
@@ -214,9 +237,15 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			let v1 = instance.raw_mesh[indices.y];
 			let v2 = instance.raw_mesh[indices.z];
 			let b = rng.sample2();
-			let su0 = sqrt(b.x);
-			let u = 1.f - su0;
-			let v = b.y * su0;
+			f32 u;
+			f32 v;
+			if (b.x < b.y) {
+				u = b.x / 2.f;
+				v = b.y - u;
+			} else {
+				v = b.y / 2.f;
+				u = b.x - v;
+			}
 			let w = 1.f - u - v;
 
 			let pos = u * v0.position + v * v1.position + w * v2.position;
@@ -227,23 +256,29 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			let em = mat->emissive.get();
 			let emf = mat->emissive_factor;
 
-			let dir = pos - hit.position;
-			let t2 = dot(dir, dir);
-			let t = sqrt(t2);
-			let wi = hit.to_shading(dir / t);
-			let L = em.load(em.pixel_of_uv(uv), f32x4(1.f)).xyz * emf / t2;
+			let r = pos - hit.position;
+			let t = length(r);
+			let dir = r / t;
+			let wi = hit.to_shading(dir);
+			let L = em.load(em.pixel_of_uv(uv), f32x4(1.f)).xyz * emf;
+			let d = abs(dot(hit.g_normal, -wi));
+			let pdf = (d != 0.f) ? (dot(dir, dir) / (area * f32(tri_count) * d)) : 0.f;
 
-			return { L, wi, t, 1.f / (area * f32(tri_count)) };
+			return { L, wi, t, pdf, false };
 		}
 		case LightType.Sky: {
 			let L = light.radiance;
 			let wi = rng.sample_cos_hemi();
 			let pdf = wi.z / PI;
-			return { L, wi, 1e10f, pdf };
+			return { L, wi, 1e10f, pdf, false };
 		}
 	}
 
 	return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
+}
+
+f32 light_sample_pdf() {
+	return 1.f / f32(Constants.light_count);
 }
 
 LightSample sample_one_light(inout Rng rng, Hit hit) {
@@ -254,16 +289,14 @@ LightSample sample_one_light(inout Rng rng, Hit hit) {
 	let l = min(u32(rng.sample() * n), u32(n - 1.f));
 	let light = Constants.lights[l];
 	var ls = sample_light(rng, hit, light);
-	ls.pdf /= n;
+	ls.pdf *= light_sample_pdf();
 	return ls;
 }
 
-bool is_unshadowed(Hit hit, LightSample ls) {
-	let ray = Ray(hit.ray_origin(), hit.from_shading(ls.wi), ls.t);
-	RayQuery<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH> q;
-	q.TraceRayInline(Constants.as.get(), RAY_FLAG_NONE, 0xff, ray.to_rt());
-	q.Proceed();
-	return q.CommittedStatus() == COMMITTED_NOTHING;
+bool shadowed(Hit hit, LightSample ls) {
+	let q = Ray(hit.ray_origin(), hit.from_shading(ls.wi), ls.t)
+				.api_trace<RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH>();
+	return q.CommittedStatus() != COMMITTED_NOTHING;
 }
 
 f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
@@ -271,48 +304,65 @@ f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	if (any(ls.L <= 0.f) || ls.pdf <= 0.f)
 		return 0.f;
 	let f = eval_bsdf(hit.params, wo, ls.wi);
-	if (any(f <= 0.f))
+	if (any(f <= 0.f) || shadowed(hit, ls))
 		return 0.f;
-	let unshadowed = is_unshadowed(hit, ls);
-	return f32(unshadowed) * f * ls.L / ls.pdf;
-}
 
-struct BsdfEstimate {
-	f32x3 b;
-	Ray r;
-	bool spec;
-}
-
-BsdfEstimate estimate_with_bsdf_sample(inout Rng rng, Hit hit, f32x3 wo) {
-	let bsdf = sample_bsdf(rng, hit.params, wo);
-	let b = bsdf.L;
-	let r = Ray(hit.ray_origin(), hit.from_shading(bsdf.wi));
-	return { b, r, bsdf.is_specular };
+	if (ls.punctual) {
+		return f * ls.L / ls.pdf;
+	} else {
+		let p_bounce = bsdf_pdf(hit.params, wo, ls.wi);
+		let w = pow_heuristic(1, p_bounce, 1, ls.pdf);
+		return w * f * ls.L / ls.pdf;
+	}
 }
 
 f32x3 li(inout Rng rng, Ray ray) {
 	f32x3 L = f32x3(0.f);
 	f32x3 b = f32x3(1.f);
-	var specular = true;
+	var specular = false;
+	var p_bounce = 0.f;
+	var prev_hit_pos = f32x3(0.f);
 
 	for (int bounces = 0; bounces < 10; bounces++) {
 		let h = trace_ray(ray);
 		if (!h.hasValue) {
-			if (specular)
-				L += b * sample_sky(ray.dir);
+			let le = sample_sky(ray.dir);
+			if (bounces == 0 || specular) {
+				L += b * le;
+			} else {
+				// MIS for the sky light.
+				let p_light = light_sample_pdf() / (4 * PI);
+				let w = pow_heuristic(1, p_bounce, 1, p_light);
+				L += w * b * le;
+			}
 			break;
 		}
 		let hit = h.value;
 
-		if (specular)
-			L += b * hit.emissive;
+		let le = hit.emissive;
+		if (bounces == 0 || specular) {
+			L += b * le;
+		} else {
+			// MIS for area light.
+			// TODO: this should take the solid angle of the triangle into account.
+			let d = hit.position - prev_hit_pos;
+			let u = abs(dot(hit.g_normal, -ray.dir)) * hit.area;
+			let p_light = (u != 0.f) ? (dot(d, d) / u) : 0.f;
+			let w = pow_heuristic(1, p_bounce, 1, p_light);
+			L += w * b * le;
+		}
+		// TODO: disable MIS if the ray hits a light without a bsdf?
 
 		let wo = hit.to_shading(-ray.dir);
-		L += b * estimate_with_light_sample(rng, hit, wo);
-		let es = estimate_with_bsdf_sample(rng, hit, wo);
-		b *= es.b;
-		ray = es.r;
-		specular = es.spec;
+		if (hit.params.metallic < 1.f)
+			L += b * estimate_with_light_sample(rng, hit, wo);
+
+		let bs = sample_bsdf(rng, hit.params, wo);
+		b *= bs.L;
+		p_bounce = bs.pdf;
+		ray = Ray(hit.ray_origin(), hit.from_shading(bs.wi));
+		specular = bs.is_specular;
+		prev_hit_pos = hit.position;
 
 		if (bounces > 1) {
 			let q = max(0.05f, 1.f - luminance(b));

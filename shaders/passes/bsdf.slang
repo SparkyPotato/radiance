@@ -4,8 +4,10 @@ import graph;
 import graph.util.rng;
 
 public struct BsdfSample {
+	// note: is premultiplied by cos(theta) / pdf.
 	public f32x3 L;
 	public f32x3 wi;
+	public f32 pdf;
 	public bool is_specular;
 }
 
@@ -89,7 +91,12 @@ BsdfSample sample_lambert(inout Rng rng, ShadingParams params, f32x3 wo) {
 	// n dot l = cos
 	// thus, L = col
 	let diffuse_color = (1.f - params.metallic) * params.base_color;
-	return { diffuse_color, rng.sample_cos_hemi(), false };
+	let wi = rng.sample_cos_hemi();
+	return { diffuse_color, wi, lambert_pdf(wi), false };
+}
+
+f32 lambert_pdf(f32x3 wi) {
+	return brdf_cos(wi) / PI;
 }
 
 f32 v_ggx(f32x3 w, f32 roughness) {
@@ -164,9 +171,14 @@ BsdfSample sample_ggx(inout Rng rng, ShadingParams params, f32x3 wo) {
 	let wm = sample_ggx_vndf(rng, wo, params.roughness);
 	let wi = reflect(-wo, wm);
 	let l_h = dot(wm, wo);
-	let pdf = dv_ggx(wo, wm, params.roughness) / (4.f * l_h);
 	let L = eval_ggx(params, wo, wi);
-	return { L, wi, true };
+	let pdf = ggx_pdf(wo, wm, params.roughness);
+	return { L, wi, pdf, true };
+}
+
+f32 ggx_pdf(f32x3 wo, f32x3 wm, f32 roughness) {
+	let l_h = dot(wm, wo);
+	return dv_ggx(wo, wm, roughness) / (4.f * l_h);
 }
 
 public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
@@ -182,9 +194,20 @@ public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
 	if (rng.sample() < lambert_chance) {
 		ret = sample_lambert(rng, params, wo);
 		ret.L /= lambert_chance;
+		ret.pdf *= lambert_chance;
 	} else {
 		ret = sample_ggx(rng, params, wo);
-		ret.L /= 1.f - lambert_chance;
+		let spec_chanc = 1.f - lambert_chance;
+		ret.L /= spec_chanc;
+		ret.pdf *= spec_chanc;
 	}
 	return ret;
+}
+
+public f32 bsdf_pdf(ShadingParams params, f32x3 wo, f32x3 wi) {
+	let lambert_chance = lerp(0.5f, 0.f, params.metallic);
+	let lambert_pdf = lambert_chance * lambert_pdf(wi);
+	let wm = normalize(wi + wo);
+	let ggx_pdf = (1.f - lambert_chance) * ggx_pdf(wo, wm, params.roughness);
+	return lambert_pdf + ggx_pdf;
 }
