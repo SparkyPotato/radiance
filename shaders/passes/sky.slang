@@ -24,14 +24,14 @@ public struct SkySampler {
 	}
 
 	public f32x3 sample_primary(f32x3 pos, f32x3 dir) {
-		let pos = f32x3(pos.xy / 1000000.f, pos.z / 1000000.f + GROUND_RADIUS_MM);
 		let li = this.sample(pos, dir);
 		var sun = smoothstep(0.002f, 1.f, this.sun_disk(dir)) * this.sun_radiance;
 		if (any(sun > 0.f)) {
-			if (intersect_sphere(pos, dir, GROUND_RADIUS_MM) >= 0.f) {
+			let height = (pos.z + 200.f) / 1000000.f + GROUND_RADIUS_MM;
+			if (intersect_plane(height, dir, GROUND_RADIUS_MM) >= 0.f) {
 				sun = f32x3(0.f);
 			} else {
-				sun *= this.transmittance.sample(this.sampler, map_to_lut_uv(pos, this.sun_dir));
+				sun *= this.transmittance.sample(this.sampler, map_to_lut_uv(height, this.sun_dir));
 			}
 		}
 
@@ -39,19 +39,17 @@ public struct SkySampler {
 	}
 
 	public f32x3 sample(f32x3 pos, f32x3 dir) {
-		let pos = f32x3(pos.xy / 1000000.f, (pos.z + 200.f) / 1000000.f + GROUND_RADIUS_MM);
-		let height = length(pos);
-		let up = pos / height;
+		let height = (pos.z + 200.f) / 1000000.f + GROUND_RADIUS_MM;
 
 		let horizon = safeacos(sqrt(height * height - GROUND_RADIUS_MM * GROUND_RADIUS_MM) / height);
-		let altitude = horizon - acos(dot(dir, up));
+		let altitude = horizon - acos(dir.z);
 		f32 azimuth;
 		if (abs(altitude) > (PI / 2.f - 0.0001f)) {
 			azimuth = 0.f;
 		} else {
-			let right = cross(this.sun_dir, up);
-			let forward = cross(up, right);
-			let projected = normalize(dir - up * dot(dir, up));
+			let right = cross(this.sun_dir, f32x3(0.f, 0.f, 1.f));
+			let forward = cross(f32x3(0.f, 0.f, 1.f), right);
+			let projected = normalize(f32x3(dir.xy, 0.f));
 			let sin = dot(projected, right);
 			let cos = dot(projected, forward);
 			azimuth = atan2(sin, cos) + PI;

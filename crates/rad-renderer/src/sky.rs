@@ -179,7 +179,7 @@ impl SkyLuts {
 			ImageDesc {
 				size: vk::Extent3D {
 					width: 256,
-					height: 256,
+					height: 192,
 					depth: 1,
 				},
 				format,
