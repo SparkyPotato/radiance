@@ -136,7 +136,7 @@ impl<const N: usize> ToOwnedAlloc for BufferUsageArray<N> {
 /// A description for an image.
 ///
 /// Has a corresponding usage of [`ImageUsage`].
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub struct ImageDesc {
 	pub size: vk::Extent3D,
 	pub format: vk::Format,
@@ -144,6 +144,23 @@ pub struct ImageDesc {
 	pub layers: u32,
 	pub samples: vk::SampleCountFlags,
 	pub persist: Option<&'static str>,
+}
+
+impl Default for ImageDesc {
+	fn default() -> Self {
+		Self {
+			size: vk::Extent3D {
+				width: 1,
+				height: 1,
+				depth: 1,
+			},
+			format: vk::Format::UNDEFINED,
+			levels: 1,
+			layers: 1,
+			samples: vk::SampleCountFlags::TYPE_1,
+			persist: None,
+		}
+	}
 }
 
 /// The usage of an image in a render pass.

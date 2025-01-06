@@ -17,7 +17,7 @@ use rad_graph::{
 use rad_world::{transform::Transform, Entity};
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
-use vek::{Aabb, Mat4, Quaternion, Vec3, Vec4};
+use vek::{Aabb, Quaternion, Vec3, Vec4};
 
 use crate::{
 	assets::{
@@ -58,7 +58,6 @@ pub enum GpuLightType {
 	Point,
 	Directional,
 	Emissive,
-	Sky,
 }
 
 #[derive(Copy, Clone, NoUninit)]
@@ -187,11 +186,7 @@ impl GpuSceneUpdate {
 	fn add_light(instance: u32, transform: &Transform, light: &LightComponent) -> Self {
 		let pos_or_dir = match light.ty {
 			LightType::Point => transform.position,
-			LightType::Directional => {
-				let (angle, axis) = transform.rotation.into_angle_axis();
-				(Mat4::rotation_3d(angle, axis) * -Vec4::unit_z()).xyz()
-			},
-			LightType::Sky => Vec3::zero(),
+			LightType::Directional => (transform.rotation * -Vec4::unit_z()).xyz(),
 		};
 
 		Self {
@@ -293,9 +288,10 @@ impl SceneUpdater {
 			cap,
 			light_len,
 			light_cap,
-			sky_light,
 			updates,
 			depth_refs,
+			sun_dir,
+			sun_radiance,
 			..
 		} = scene;
 		let asi = as_instances.handle();
@@ -527,7 +523,8 @@ impl SceneUpdater {
 			as_: as_buf,
 			lights,
 			light_count: *light_len,
-			sky_light: *sky_light,
+			sun_dir: *sun_dir,
+			sun_radiance: *sun_radiance,
 			as_offset: addr - handle.addr,
 			instance_count: *len,
 			max_depth: depth_refs.first_key_value().map(|(InvertOrd(d), _)| *d).unwrap_or(0),
@@ -542,7 +539,8 @@ pub struct SceneReader {
 	pub as_: Res<BufferHandle>,
 	pub lights: Res<BufferHandle>,
 	pub light_count: u32,
-	pub sky_light: u32,
+	pub sun_dir: Vec3<f32>,
+	pub sun_radiance: Vec3<f32>,
 	pub as_offset: u64,
 	pub instance_count: u32,
 	pub max_depth: u32,
@@ -620,11 +618,12 @@ pub struct Scene {
 	cap: u32,
 	light_len: u32,
 	light_cap: u32,
-	sky_light: u32,
 	entity_map: FxHashMap<Entity, Vec<(u32, u32)>>,
 	light_map: FxHashMap<Entity, u32>,
 	updates: Vec<GpuSceneUpdate>,
 	depth_refs: BTreeMap<InvertOrd<u32>, u32>,
+	sun_dir: Vec3<f32>,
+	sun_radiance: Vec3<f32>,
 }
 
 fn map_aabb(aabb: Aabb<f32>) -> GpuAabb {
@@ -646,7 +645,6 @@ fn map_light_ty(ty: LightType) -> GpuLightType {
 	match ty {
 		LightType::Point => GpuLightType::Point,
 		LightType::Directional => GpuLightType::Directional,
-		LightType::Sky => GpuLightType::Sky,
 	}
 }
 
@@ -685,11 +683,12 @@ impl Scene {
 			cap: 4096,
 			light_len: 0,
 			light_cap: 4096,
-			sky_light: u32::MAX,
 			entity_map: FxHashMap::default(),
 			light_map: FxHashMap::default(),
 			updates: Vec::new(),
 			depth_refs: BTreeMap::new(),
+			sun_dir: Vec3::new(0.0, 0.0, -1.0),
+			sun_radiance: Vec3::broadcast(1.0),
 		})
 	}
 
@@ -724,8 +723,9 @@ impl Scene {
 		self.light_len += 1;
 		self.light_map.insert(entity, instance);
 		self.updates.push(GpuSceneUpdate::add_light(instance, transform, light));
-		if matches!(light.ty, LightType::Sky) {
-			self.sky_light = instance;
+		if matches!(light.ty, LightType::Directional) {
+			self.sun_dir = transform.rotation * -Vec3::unit_z();
+			self.sun_radiance = light.radiance;
 		}
 	}
 

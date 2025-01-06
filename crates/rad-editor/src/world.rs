@@ -11,7 +11,6 @@ use rad_renderer::{
 	},
 	components::{
 		camera::{CameraComponent, PrimaryViewComponent},
-		light::{LightComponent, LightType},
 		mesh::MeshComponent,
 	},
 	vek::{Vec2, Vec3},
@@ -114,10 +113,6 @@ impl WorldContext {
 			.insert(PrimaryViewComponent(CameraComponent::default()))
 			.insert(DoNotSerialize)
 			.id();
-		self.edit.spawn_empty().insert(LightComponent {
-			ty: LightType::Sky,
-			radiance: Vec3::broadcast(100.0),
-		});
 	}
 }
 

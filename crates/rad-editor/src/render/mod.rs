@@ -4,6 +4,7 @@ use rad_renderer::{
 	debug::mesh::DebugMesh,
 	mesh::{self, VisBuffer},
 	pt::{self, PathTracer},
+	sky::SkyLuts,
 	tonemap::{aces::AcesTonemap, exposure::ExposureCalc},
 	vek::Vec2,
 };
@@ -26,6 +27,7 @@ mod debug;
 
 pub struct Renderer {
 	pub debug_window: DebugWindow,
+	sky: SkyLuts,
 	visbuffer: VisBuffer,
 	pt: PathTracer,
 	exposure: ExposureCalc,
@@ -40,6 +42,7 @@ impl Renderer {
 		let device = Engine::get().global();
 		Ok(Self {
 			debug_window: DebugWindow::new(),
+			sky: SkyLuts::new(device)?,
 			visbuffer: VisBuffer::new(device)?,
 			pt: PathTracer::new(device)?,
 			exposure: ExposureCalc::new(device)?,
@@ -77,10 +80,12 @@ impl Renderer {
 
 				let (img, stats, exp) = match self.debug_window.render_mode() {
 					RenderMode::Path => {
+						let sky = self.sky.run(frame, data);
 						let (hdr, s) = self.pt.run(
 							frame,
 							pt::RenderInfo {
 								data,
+								sky,
 								size: Vec2::new(size.x as u32, size.y as u32),
 							},
 						);

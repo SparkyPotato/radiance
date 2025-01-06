@@ -20,6 +20,7 @@ use vek::Vec2;
 use crate::{
 	mesh::CameraData,
 	scene::{GpuInstance, GpuLight, GpuTransform},
+	sky::{GpuSkySampler, SkySampler},
 	PrimaryViewData,
 };
 
@@ -34,6 +35,7 @@ pub struct PathTracer {
 #[derive(Clone)]
 pub struct RenderInfo {
 	pub data: PrimaryViewData,
+	pub sky: SkySampler,
 	pub size: Vec2<u32>,
 }
 
@@ -49,7 +51,8 @@ struct PushConstants {
 	seed: u32,
 	samples: u32,
 	light_count: u32,
-	sky_light: u32,
+	sky: GpuSkySampler,
+	_pad: u32,
 }
 
 impl PathTracer {
@@ -75,6 +78,7 @@ impl PathTracer {
 		let read = BufferUsage::read(Shader::Fragment);
 		pass.reference(info.data.scene.as_, read);
 		pass.reference(info.data.scene.instances, read);
+		info.sky.reference(&mut pass, Shader::Fragment);
 		let camera = pass.resource(BufferDesc::upload(std::mem::size_of::<CameraData>() as _), read);
 
 		let out = pass.resource(
@@ -123,6 +127,7 @@ impl PathTracer {
 			let instances = pass.get(info.data.scene.instances).ptr();
 			let lights = pass.get(info.data.scene.lights).ptr();
 			let camera = pass.get(camera);
+			let sky = info.sky.to_gpu(&mut pass);
 			self.pass.run_empty(
 				&mut pass,
 				&PushConstants {
@@ -135,7 +140,8 @@ impl PathTracer {
 					seed: thread_rng().next_u32(),
 					samples: self.samples,
 					light_count: info.data.scene.light_count,
-					sky_light: info.data.scene.sky_light,
+					sky,
+					_pad: 0,
 				},
 				vk::Extent2D::default().width(out.size.width).height(out.size.height),
 			);

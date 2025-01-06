@@ -12,7 +12,6 @@ use rad_graph::{
 #[repr(C)]
 struct PushConstants {
 	histogram: GpuPtr<u32>,
-	exp: GpuPtr<f32>,
 	input: ImageId,
 	min_exp: f32,
 	inv_exp_range: f32,
@@ -89,7 +88,6 @@ impl ExposureCalc {
 				&mut pass,
 				&PushConstants {
 					histogram,
-					exp: GpuPtr::null(),
 					input,
 					lerp_coeff: 0.0,
 					min_exp: Self::MIN_EXPOSURE,

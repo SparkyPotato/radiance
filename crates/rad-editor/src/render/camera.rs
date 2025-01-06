@@ -43,7 +43,7 @@ pub enum Mode {
 }
 
 pub struct CameraController {
-	pos: Vec3<f32>,
+	pub pos: Vec3<f32>,
 	states: [bool; 6],
 	pitch: f32,
 	yaw: f32,

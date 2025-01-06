@@ -2,8 +2,6 @@ module rng;
 
 import graph;
 
-public static const f32 PI = 3.14159265359f;
-
 public struct Sample<T> {
 	public T sample;
 	public f32 pdf;

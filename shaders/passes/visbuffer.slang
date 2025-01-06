@@ -211,13 +211,7 @@ public struct DecodedTri {
 		}
 		let bitangent = jacobian * sign(dot(pos_ddy, cross(normal, pos_ddx))) * cross(normal, tangent);
 
-		// clang-format off
-		return f32x3x3(
-			tangent.x, bitangent.x, normal.x,
-			tangent.y, bitangent.y, normal.y,
-			tangent.z, bitangent.z, normal.z
-		);
-		// clang-format on
+		return transpose(f32x3x3(tangent, bitangent, normal));
 	}
 
 	public f32x3 position() {

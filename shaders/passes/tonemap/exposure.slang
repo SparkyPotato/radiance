@@ -5,7 +5,6 @@ import graph.util.color;
 
 struct PushConstants {
 	u32* histogram;
-	f32* exp;
 	Tex2D<f32x4> input;
 	f32 min_exp;
 	f32 inv_exp_range;
@@ -24,24 +23,17 @@ u8 bin_lum(f32 lum) {
 	return u8(log * 254.f + 1.f);
 }
 
-f32 unbin_exp(f32 bin) {
-	let log = (bin - 1.f) / 254.f;
-	return log / Constants.inv_exp_range + Constants.min_exp;
-}
-
-groupshared u8 bins[256];
-groupshared u8 bin_counts[256];
-
 [shader("compute")]
 [numthreads(16, 16, 1)]
-void histogram(u32x2 id: SV_DispatchThreadID, u32 gid: SV_GroupIndex) {
-	// TODO: novideo dies if we do atomics on groupshared,
-	// so we do terrible, cursed stuff instead.
+void histogram(u32x2 id: SV_DispatchThreadID, u32 gid: SV_GroupIndex, u32x2 group: SV_GroupID) {
+	// TODO: the novideo compiler breaks on groupshared atomics for some reason.
+	// so just suck it and use global atomics for now.
+	// (i tried waterfall loops but they were ~20% slower than mem atomics).
 
 	let size = Constants.input.size();
 	if (id.x < size.x && id.y < size.y) {
 		let color = Constants.input.load(id).xyz;
-		let bin = bin_lum(luminance(color));
+		let bin = u32(bin_lum(luminance(color)));
 		atomic_add(Constants.histogram[bin], 1);
 	}
 }

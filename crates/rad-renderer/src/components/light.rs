@@ -5,7 +5,6 @@ use vek::Vec3;
 pub enum LightType {
 	Point,
 	Directional,
-	Sky,
 }
 
 #[derive(RadComponent)]

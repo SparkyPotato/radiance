@@ -46,8 +46,8 @@ public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	return {};
 }
 
-public T wave_atomic_add<T: __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
-													 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+public T wave_atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+													  constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 	let rel = WavePrefixSum(value);
 	let total = WaveActiveSum(value);
 	T base;
@@ -56,8 +56,8 @@ public T wave_atomic_add<T: __BuiltinArithmeticType>(__ref T dest, T value, cons
 	return WaveReadLaneFirst(base) + rel;
 }
 
-public u32 wave_atomic_inc(__ref u32 dest, constexpr Scope sc = DEFAULT_SCOPE,
-						   constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+public u32 wave_atomic_inc(__ref u32 dest, constexpr Scope sc = DEFAULT_SCOPE, constexpr Loc loc = DEFAULT_LOC,
+						   constexpr Sem se = DEFAULT_SEM) {
 	let rel = WavePrefixCountBits(true);
 	let total = WaveActiveCountBits(true);
 	u32 base;
@@ -85,8 +85,8 @@ public T atomic_sub<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	return {};
 }
 
-public u32 wave_atomic_dec(__ref u32 dest, constexpr Scope sc = DEFAULT_SCOPE,
-						   constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+public u32 wave_atomic_dec(__ref u32 dest, constexpr Scope sc = DEFAULT_SCOPE, constexpr Loc loc = DEFAULT_LOC,
+						   constexpr Sem se = DEFAULT_SEM) {
 	let rel = WavePrefixCountBits(true);
 	let total = WaveActiveCountBits(true);
 	u32 base;
@@ -118,8 +118,8 @@ public T atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	return {};
 }
 
-public T wave_atomic_max<T: __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
-													 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+public T wave_atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+													  constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 	let max = WaveActiveMax(value);
 	T ret;
 	if (WaveIsFirstLane())
@@ -143,6 +143,10 @@ public void sync_barrier(constexpr Scope esc, constexpr Scope sc, constexpr Loc 
 
 public void workgroup_sync_barrier() {
 	sync_barrier(Scope.Workgroup, Scope.Workgroup, Loc.Workgroup, Sem.AcqRel);
+}
+
+public void mem_sync_barrier() {
+	sync_barrier(Scope.Workgroup, DEFAULT_SCOPE, Loc.Buffer | Loc.Workgroup, Sem.AcqRel);
 }
 
 public void image_sync_barrier() {

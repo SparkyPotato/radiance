@@ -6,6 +6,7 @@ import graph.util.color;
 import graph.util.rng;
 import asset;
 import passes.bsdf;
+import passes.sky;
 
 struct PushConstants {
 	Instance<NonUniform>* instances;
@@ -17,7 +18,7 @@ struct PushConstants {
 	Rng rng;
 	u32 samples;
 	u32 light_count;
-	u32 sky_light;
+	SkySampler sky;
 };
 
 [vk::push_constant]
@@ -196,12 +197,6 @@ struct LightSample {
 	bool punctual;
 }
 
-f32x3 sample_sky(f32x3 dir) {
-	if (Constants.sky_light == -1)
-		return f32x3(0.f);
-	return Constants.lights[Constants.sky_light].radiance;
-}
-
 f32 solid_angle_pdf(f32 theta) {
 	return 1.f / (2.f * PI * (1.f - cos(theta)));
 }
@@ -266,28 +261,26 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 
 			return { L, wi, t, pdf, false };
 		}
-		case LightType.Sky: {
-			let L = light.radiance;
-			let wi = rng.sample_cos_hemi();
-			let pdf = wi.z / PI;
-			return { L, wi, 1e10f, pdf, false };
-		}
 	}
 
-	return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
+	return { f32x3(0.f), f32x3(0.f), 0.f, 0.f, false };
 }
 
 f32 light_sample_pdf() {
-	return 1.f / f32(Constants.light_count);
+	return 1.f / f32(Constants.light_count + 1);
 }
 
 LightSample sample_one_light(inout Rng rng, Hit hit) {
-	let n = f32(Constants.light_count);
-	if (n == 0)
-		return { f32x3(0.f), f32x3(0.f), 0.f, 0.f };
+	let n = f32(Constants.light_count + 1);
 
 	let l = min(u32(rng.sample() * n), u32(n - 1.f));
-	let light = Constants.lights[l];
+	if (l == 0) {
+		let wi = rng.sample_cos_hemi();
+		let L = Constants.sky.sample(hit.position, hit.from_shading(wi));
+		let pdf = (wi.z / PI) * light_sample_pdf();
+		return { L, wi, 1e10f, pdf, false };
+	}
+	let light = Constants.lights[l - 1];
 	var ls = sample_light(rng, hit, light);
 	ls.pdf *= light_sample_pdf();
 	return ls;
@@ -326,12 +319,12 @@ f32x3 li(inout Rng rng, Ray ray) {
 	for (int bounces = 0; bounces < 10; bounces++) {
 		let h = trace_ray(ray);
 		if (!h.hasValue) {
-			let le = sample_sky(ray.dir);
+			let le = Constants.sky.sample_primary(ray.origin, ray.dir);
 			if (bounces == 0 || specular) {
 				L += b * le;
 			} else {
 				// MIS for the sky light.
-				let p_light = light_sample_pdf() / (4 * PI);
+				let p_light = light_sample_pdf() / (4.f * PI);
 				let w = pow_heuristic(1, p_bounce, 1, p_light);
 				L += w * b * le;
 			}

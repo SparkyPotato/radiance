@@ -232,16 +232,15 @@ impl Setup {
 		let size = info.size.map(prev_pot);
 		let hzb = pass.resource(
 			ImageDesc {
-				format: vk::Format::R32_SFLOAT,
 				size: vk::Extent3D {
 					width: size.x,
 					height: size.y,
 					depth: 1,
 				},
+				format: vk::Format::R32_SFLOAT,
 				levels: size.x.max(size.y).ilog2(),
-				layers: 1,
-				samples: vk::SampleCountFlags::TYPE_1,
 				persist: Some("persistent hzb"),
+				..Default::default()
 			},
 			ImageUsage {
 				format: vk::Format::UNDEFINED,

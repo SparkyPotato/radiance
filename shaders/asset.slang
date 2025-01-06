@@ -150,7 +150,6 @@ public enum LightType {
 	Point,
 	Directional,
 	Emissive,
-	Sky,
 }
 
 public struct Light {

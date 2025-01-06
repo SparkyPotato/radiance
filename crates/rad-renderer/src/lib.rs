@@ -29,6 +29,7 @@ pub mod debug;
 pub mod mesh;
 pub mod pt;
 mod scene;
+pub mod sky;
 pub mod tonemap;
 mod util;
 
@@ -51,6 +52,7 @@ impl Module for RendererModule {
 	}
 }
 
+// TODO: better name
 #[derive(Copy, Clone)]
 pub struct PrimaryViewData {
 	transform: GpuTransform,
