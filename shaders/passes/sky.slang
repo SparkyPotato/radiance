@@ -6,29 +6,32 @@ import passes.sky.common;
 // TODO: reduce the size of this, as it goes in push constants.
 public struct SkySampler {
 	Tex2D<f32x3> sky;
+	Tex2D<f32x3> transmittance;
 	Sampler sampler;
 	f32x3 sun_dir;
 	f32x3 sun_radiance;
 
-	f32x3 sun_disk(f32x3 dir) {
+	f32 sun_disk(f32x3 dir) {
 		let sun_cos = cos(radians(0.5f));
 		let cos = dot(dir, this.sun_dir);
 		if (cos >= sun_cos)
-			return this.sun_radiance;
+			return 1.f;
 
 		let offset = sun_cos - cos;
 		let gaussian = exp(-offset * 50000.f) / 2.f;
 		let inv = 1.f / (0.02f + offset * 300.f) * 0.01f;
-		return (gaussian + inv) * this.sun_radiance;
+		return gaussian + inv;
 	}
 
 	public f32x3 sample_primary(f32x3 pos, f32x3 dir) {
 		let pos = f32x3(pos.xy / 1000000.f, pos.z / 1000000.f + GROUND_RADIUS_MM);
 		let li = this.sample(pos, dir);
-		var sun = smoothstep(0.002f, this.sun_radiance, this.sun_disk(dir));
+		var sun = smoothstep(0.002f, 1.f, this.sun_disk(dir)) * this.sun_radiance;
 		if (any(sun > 0.f)) {
 			if (intersect_sphere(pos, dir, GROUND_RADIUS_MM) >= 0.f) {
 				sun = f32x3(0.f);
+			} else {
+				sun *= this.transmittance.sample(this.sampler, map_to_lut_uv(pos, this.sun_dir));
 			}
 		}
 
@@ -36,7 +39,7 @@ public struct SkySampler {
 	}
 
 	public f32x3 sample(f32x3 pos, f32x3 dir) {
-		let pos = f32x3(pos.xy / 1000000.f, pos.z / 1000000.f + GROUND_RADIUS_MM);
+		let pos = f32x3(pos.xy / 1000000.f, (pos.z + 200.f) / 1000000.f + GROUND_RADIUS_MM);
 		let height = length(pos);
 		let up = pos / height;
 

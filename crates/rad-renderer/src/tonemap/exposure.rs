@@ -33,9 +33,9 @@ pub struct ExposureStats {
 
 impl ExposureCalc {
 	pub const MAX_EXPOSURE: f32 = 18.0;
-	pub const MAX_HISTOGRAM_RANGE: f32 = 0.95;
+	pub const MAX_HISTOGRAM_RANGE: f32 = 0.9;
 	pub const MIN_EXPOSURE: f32 = -6.0;
-	pub const MIN_HISTOGRAM_RANGE: f32 = 0.1;
+	pub const MIN_HISTOGRAM_RANGE: f32 = 0.6;
 
 	pub fn bin_to_exposure(bin: f32) -> f32 {
 		let log = (bin - 1.0) / 254.0;

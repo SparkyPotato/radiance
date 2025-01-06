@@ -52,7 +52,6 @@ struct PushConstants {
 	samples: u32,
 	light_count: u32,
 	sky: GpuSkySampler,
-	_pad: u32,
 }
 
 impl PathTracer {
@@ -141,7 +140,6 @@ impl PathTracer {
 					samples: self.samples,
 					light_count: info.data.scene.light_count,
 					sky,
-					_pad: 0,
 				},
 				vk::Extent2D::default().width(out.size.width).height(out.size.height),
 			);

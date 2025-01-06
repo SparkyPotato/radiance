@@ -31,6 +31,7 @@ pub struct SkyLuts {
 #[repr(C)]
 pub struct GpuSkySampler {
 	lut: ImageId,
+	transmittance: ImageId,
 	sampler: SamplerId,
 	sun_dir: Vec3<f32>,
 	sun_radiance: Vec3<f32>,
@@ -39,6 +40,7 @@ pub struct GpuSkySampler {
 #[derive(Copy, Clone)]
 pub struct SkySampler {
 	lut: Res<ImageView>,
+	transmittance: Res<ImageView>,
 	sampler: SamplerId,
 	sun_dir: Vec3<f32>,
 	sun_radiance: Vec3<f32>,
@@ -47,11 +49,13 @@ pub struct SkySampler {
 impl SkySampler {
 	pub fn reference(&self, pass: &mut PassBuilder, shader: Shader) {
 		pass.reference(self.lut, ImageUsage::sampled_2d(shader));
+		pass.reference(self.transmittance, ImageUsage::sampled_2d(shader));
 	}
 
 	pub fn to_gpu(&self, pass: &mut PassContext) -> GpuSkySampler {
 		GpuSkySampler {
 			lut: pass.get(self.lut).id.unwrap(),
+			transmittance: pass.get(self.transmittance).id.unwrap(),
 			sampler: self.sampler,
 			sun_dir: self.sun_dir,
 			sun_radiance: self.sun_radiance,
@@ -77,6 +81,8 @@ struct EvalConstants {
 }
 
 impl SkyLuts {
+	const FORMAT: vk::Format = vk::Format::R16G16B16A16_SFLOAT;
+
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
 			transmittance: FullscreenPass::new(
@@ -85,7 +91,7 @@ impl SkyLuts {
 					shader: "passes.sky.transmittance.main",
 					spec: &[],
 				},
-				&[vk::Format::R8G8B8A8_UNORM],
+				&[Self::FORMAT],
 			)?,
 			scattering: FullscreenPass::new(
 				device,
@@ -93,7 +99,7 @@ impl SkyLuts {
 					shader: "passes.sky.scattering.main",
 					spec: &[],
 				},
-				&[vk::Format::R8G8B8A8_UNORM],
+				&[Self::FORMAT],
 			)?,
 			eval: FullscreenPass::new(
 				device,
@@ -101,7 +107,7 @@ impl SkyLuts {
 					shader: "passes.sky.eval.main",
 					spec: &[],
 				},
-				&[vk::Format::R8G8B8A8_UNORM],
+				&[Self::FORMAT],
 			)?,
 			sampler: device.sampler(SamplerDesc::default()),
 		})
@@ -109,7 +115,7 @@ impl SkyLuts {
 
 	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, data: PrimaryViewData) -> SkySampler {
 		frame.start_region("sky lut");
-		let format = vk::Format::R8G8B8A8_UNORM;
+		let format = Self::FORMAT;
 
 		let mut pass = frame.pass("transmittance");
 		let trans = pass.resource(
@@ -205,6 +211,7 @@ impl SkyLuts {
 
 		SkySampler {
 			lut,
+			transmittance: trans,
 			sampler: self.sampler,
 			sun_dir: -data.scene.sun_dir,
 			sun_radiance: data.scene.sun_radiance,

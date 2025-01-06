@@ -60,7 +60,7 @@ f32x3 main(ScreenOutput input) : SV_Target0 {
 		adj_v = coord * coord;
 	}
 
-	let pos = f32x3(Constants.cam_pos.xy / 1000000.f, Constants.cam_pos.z / 1000000.f + GROUND_RADIUS_MM);
+	let pos = f32x3(Constants.cam_pos.xy / 1000000.f, (Constants.cam_pos.z + 200.f) / 1000000.f + GROUND_RADIUS_MM);
 	let height = length(pos);
 	let up = pos / height;
 	let horiz = safeacos(sqrt(height * height - GROUND_RADIUS_MM * GROUND_RADIUS_MM) / height) - PI / 2.f;

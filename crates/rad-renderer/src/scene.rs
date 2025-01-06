@@ -687,8 +687,8 @@ impl Scene {
 			light_map: FxHashMap::default(),
 			updates: Vec::new(),
 			depth_refs: BTreeMap::new(),
-			sun_dir: Vec3::new(0.0, 0.0, -1.0),
-			sun_radiance: Vec3::broadcast(1.0),
+			sun_dir: Vec3::new(0.0, 1.0, -0.005).normalized(),
+			sun_radiance: Vec3::broadcast(20.0),
 		})
 	}
 
