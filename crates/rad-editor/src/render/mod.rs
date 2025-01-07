@@ -5,7 +5,12 @@ use rad_renderer::{
 	mesh::{self, VisBuffer},
 	pt::{self, PathTracer},
 	sky::SkyLuts,
-	tonemap::{aces::AcesTonemap, exposure::ExposureCalc, tony_mc_mapface::TonyMcMapfaceTonemap},
+	tonemap::{
+		aces::AcesTonemap,
+		agx::{AgXLook, AgXTonemap},
+		exposure::ExposureCalc,
+		tony_mc_mapface::TonyMcMapfaceTonemap,
+	},
 	vek::Vec2,
 };
 use rad_ui::{
@@ -32,6 +37,7 @@ pub struct Renderer {
 	pt: PathTracer,
 	exposure: ExposureCalc,
 	aces: AcesTonemap,
+	agx: AgXTonemap,
 	tony_mcmapface: TonyMcMapfaceTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
@@ -48,6 +54,7 @@ impl Renderer {
 			pt: PathTracer::new(device)?,
 			exposure: ExposureCalc::new(device)?,
 			aces: AcesTonemap::new(device)?,
+			agx: AgXTonemap::new(device)?,
 			tony_mcmapface: TonyMcMapfaceTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
@@ -91,9 +98,17 @@ impl Renderer {
 								size: Vec2::new(size.x as u32, size.y as u32),
 							},
 						);
-						let exp = self.exposure.run(frame, hdr, ui.input(|x| x.stable_dt));
+						let exp = self.exposure.run(
+							frame,
+							hdr,
+							self.debug_window.exposure_compensation(),
+							ui.input(|x| x.stable_dt),
+						);
 						let img = match self.debug_window.tonemap() {
 							Tonemap::Aces => self.aces.run(frame, hdr, exp.exposure),
+							Tonemap::AgX => self.agx.run(frame, hdr, exp.exposure, AgXLook::default()),
+							Tonemap::AgXPunchy => self.agx.run(frame, hdr, exp.exposure, AgXLook::punchy()),
+							Tonemap::AgXFilmic => self.agx.run(frame, hdr, exp.exposure, AgXLook::filmic()),
 							Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, hdr, exp.exposure),
 						};
 						(img, None, Some((exp, s)))

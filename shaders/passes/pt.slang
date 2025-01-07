@@ -211,7 +211,7 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			let L = light.radiance / t2;
 			let t = sqrt(t2);
 			let wi = hit.to_shading(dir / t);
-			let pdf = 1.f;	// TODO: don't think this is correct.
+			let pdf = 1.f;
 			return { L, wi, t, pdf, true };
 		}
 		case LightType.Directional: {

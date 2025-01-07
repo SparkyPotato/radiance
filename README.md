@@ -9,13 +9,18 @@ A virtual geometry system similar to Unreal Engine's _Nanite_, able to render sc
 
 ### Ground-truth Path Tracing
 HW-accelerated path tracer for ground-truth, to be used to generate references for the real-time path.
-Implements a simple path tracer with MIS and NEE.
+Currently very simple with only MIS and NEE.
 
 ### Hillaire Sky
-An approximation of the Hillaire sky model, described in [_A Scalable and Production Ready
-Sky and Atmosphere Rendering Technique_](https://sebh.github.io/publications/egsr2020.pdf) by Sébastien Hillaire.
+An approximation of [_A Scalable and Production Ready Sky and Atmosphere Rendering Technique_](https://sebh.github.io/publications/egsr2020.pdf) by Sébastien Hillaire.
 
-### Requirements
+### Auto-exposure and tonemapping
+Histogram-based auto-exposure with several tonemapping operators:
+- ACES
+- AgX (default, 'filmic', and punchy 'looks')
+- [Tony McMapface](https://github.com/h3r2tic/tony-mc-mapface)
+
+## Requirements
 Currently requires the NVTT 3 SDK installed, with `nvtt.dll` in the PATH. 
 Once that is done, shrimply `cargo run`.
 

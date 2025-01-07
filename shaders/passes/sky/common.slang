@@ -6,9 +6,7 @@ module common;
 //
 // https://sebh.github.io/publications/egsr2020.pdf
 // https://www.shadertoy.com/view/slSXRW
-// https://github.com/Sunset-Flock/Timberdoodle/blob/main/src/rendering/tasks/sky.hlsl
-// https://github.com/Sunset-Flock/Timberdoodle/blob/main/src/rendering/tasks/sky.glsl
-// https://github.com/Sunset-Flock/Timberdoodle/blob/main/src/shader_lib/sky_util.glsl#L200
+// https://github.com/Sunset-Flock/Timberdoodle/
 
 import graph;
 

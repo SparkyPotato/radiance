@@ -16,6 +16,9 @@ pub enum RenderMode {
 #[derive(Copy, Clone)]
 pub enum Tonemap {
 	Aces,
+	AgX,
+	AgXPunchy,
+	AgXFilmic,
 	TonyMcMapface,
 }
 
@@ -25,6 +28,7 @@ pub struct DebugWindow {
 	tonemap: Tonemap,
 	debug_vis: DebugVis,
 	scale: f32,
+	exposure_compensation: f32,
 }
 
 impl DebugWindow {
@@ -32,9 +36,10 @@ impl DebugWindow {
 		Self {
 			enabled: false,
 			render_mode: RenderMode::Path,
-			tonemap: Tonemap::TonyMcMapface,
+			tonemap: Tonemap::AgXPunchy,
 			debug_vis: DebugVis::Meshlets,
 			scale: 0.15,
+			exposure_compensation: 0.0,
 		}
 	}
 
@@ -66,7 +71,10 @@ impl DebugWindow {
 	fn tonemap_text(tonemap: usize) -> &'static str {
 		match tonemap {
 			0 => "aces",
-			1 => "tony mcmapface",
+			1 => "agx",
+			2 => "agx (punchy)",
+			3 => "agx (filmic)",
+			4 => "tony mcmapface",
 			_ => unreachable!(),
 		}
 	}
@@ -90,10 +98,13 @@ impl DebugWindow {
 					let mut sel = self.tonemap as usize;
 					ComboBox::from_label("tonemap")
 						.selected_text(Self::tonemap_text(sel))
-						.show_index(ui, &mut sel, 2, Self::tonemap_text);
+						.show_index(ui, &mut sel, 5, Self::tonemap_text);
 					self.tonemap = match sel {
 						0 => Tonemap::Aces,
-						1 => Tonemap::TonyMcMapface,
+						1 => Tonemap::AgX,
+						2 => Tonemap::AgXPunchy,
+						3 => Tonemap::AgXFilmic,
+						4 => Tonemap::TonyMcMapface,
 						_ => unreachable!(),
 					};
 				},
@@ -150,6 +161,12 @@ impl DebugWindow {
 
 				ui.label(format!("exposure: {:.2}", exp.exposure));
 
+				ui.add(
+					DragValue::new(&mut self.exposure_compensation)
+						.speed(0.1)
+						.range(-5.0..=5.0),
+				);
+
 				Plot::new("exposure histogram")
 					.allow_zoom(false)
 					.allow_scroll(false)
@@ -185,6 +202,11 @@ impl DebugWindow {
 								/ (ExposureCalc::MAX_EXPOSURE - ExposureCalc::MIN_EXPOSURE)
 								* 255.0,
 						));
+						ui.vline(VLine::new(
+							(exp.scene_exposure - ExposureCalc::MIN_EXPOSURE)
+								/ (ExposureCalc::MAX_EXPOSURE - ExposureCalc::MIN_EXPOSURE)
+								* 255.0,
+						));
 					});
 			}
 		});
@@ -200,6 +222,8 @@ impl DebugWindow {
 	pub fn render_mode(&self) -> RenderMode { self.render_mode }
 
 	pub fn tonemap(&self) -> Tonemap { self.tonemap }
+
+	pub fn exposure_compensation(&self) -> f32 { self.exposure_compensation }
 
 	pub fn debug_vis(&self) -> DebugVis { self.debug_vis }
 }

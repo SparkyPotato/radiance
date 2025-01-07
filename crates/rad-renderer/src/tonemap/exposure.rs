@@ -22,20 +22,22 @@ pub struct ExposureCalc {
 	histogram: ComputePass<PushConstants>,
 	exposure: f32,
 	target_exposure: f32,
+	scene_exposure: f32,
 	read_histogram: [u32; 256],
 }
 
 pub struct ExposureStats {
 	pub exposure: f32,
 	pub target_exposure: f32,
+	pub scene_exposure: f32,
 	pub histogram: [u32; 256],
 }
 
 impl ExposureCalc {
 	pub const MAX_EXPOSURE: f32 = 18.0;
-	pub const MAX_HISTOGRAM_RANGE: f32 = 0.9;
+	pub const MAX_HISTOGRAM_RANGE: f32 = 0.95;
 	pub const MIN_EXPOSURE: f32 = -6.0;
-	pub const MIN_HISTOGRAM_RANGE: f32 = 0.6;
+	pub const MIN_HISTOGRAM_RANGE: f32 = 0.8;
 
 	pub fn bin_to_exposure(bin: f32) -> f32 {
 		let log = (bin - 1.0) / 254.0;
@@ -48,6 +50,12 @@ impl ExposureCalc {
 
 	pub fn exposure_to_lum(exp: f32) -> f32 { (exp - 3.0).exp2() }
 
+	pub fn exposure_compensation(exp: f32) -> f32 {
+		let lum = Self::exposure_to_lum(2.0 * exp + 10.0);
+		let key = 1.03 - 2.0 / (2.0 + (lum + 1.0).log10());
+		6.0 * key - 2.5
+	}
+
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
 			histogram: ComputePass::new(
@@ -59,17 +67,21 @@ impl ExposureCalc {
 			)?,
 			exposure: 0.0,
 			target_exposure: 0.0,
+			scene_exposure: 0.0,
 			read_histogram: [0; 256],
 		})
 	}
 
-	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, dt: f32) -> ExposureStats {
+	pub fn run<'pass>(
+		&'pass mut self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, ec: f32, dt: f32,
+	) -> ExposureStats {
 		frame.start_region("exposure");
 
 		let Self {
 			histogram: hist,
 			exposure,
 			target_exposure,
+			scene_exposure,
 			read_histogram,
 		} = self;
 
@@ -110,6 +122,7 @@ impl ExposureCalc {
 
 		let ret_exp = *exposure;
 		let target_exp = *target_exposure;
+		let scene_exp = *scene_exposure;
 		let hist = *read_histogram;
 		pass.build(move |mut pass| {
 			pass.copy_full_buffer(histogram, histogram_read, 0);
@@ -145,11 +158,9 @@ impl ExposureCalc {
 
 			let exp_bin = weight / sum;
 			let log = (exp_bin - 1.0) / 254.0;
-			let target = log * (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE) + Self::MIN_EXPOSURE;
-			let lum = Self::exposure_to_lum(2.0 * target + 10.0);
-			let key = 1.03 - 2.0 / (2.0 + (lum + 1.0).log10());
-			let comp = 4.0 * key - 2.5;
-			*target_exposure = target - comp;
+			*scene_exposure = log * (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE) + Self::MIN_EXPOSURE;
+			let comp = Self::exposure_compensation(*scene_exposure);
+			*target_exposure = *scene_exposure - (comp + ec);
 
 			let lerp = (1.0 - (-1.2 * dt).exp()).clamp(0.0, 1.0);
 			*exposure = (1.0 - lerp) * *exposure + lerp * *target_exposure;
@@ -160,6 +171,7 @@ impl ExposureCalc {
 		ExposureStats {
 			exposure: ret_exp,
 			target_exposure: target_exp,
+			scene_exposure: scene_exp,
 			histogram: hist,
 		}
 	}
