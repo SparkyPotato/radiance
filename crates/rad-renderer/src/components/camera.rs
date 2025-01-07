@@ -11,7 +11,7 @@ pub struct CameraComponent {
 impl Default for CameraComponent {
 	fn default() -> Self {
 		Self {
-			fov: std::f32::consts::PI / 2.0,
+			fov: 70f32.to_radians(),
 			near: 0.01,
 		}
 	}

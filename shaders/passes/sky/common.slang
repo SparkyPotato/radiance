@@ -17,7 +17,7 @@ public static const f32 GROUND_RADIUS_MM = 6.36f;
 public static const f32 ATMOSPHERE_RADIUS_MM = 6.46f;
 public static const f32x3 GROUND_ALBEDO = f32x3(0.3f);
 
-public static const f32x3 RAYLEIGH_SCATTERING_BASE = f32x3(5.802f, 13.558f, 33.1f);
+public static const f32x3 RAYLEIGH_SCATTERING_BASE = f32x3(6.604931f, 12.344918f, 29.412623f);
 public static const f32 RAYLEIGH_ABSORPTION_BASE = 0.0f;
 public static const f32 MIE_SCATTERING_BASE = 3.996f;
 public static const f32 MIE_ABSORPTION_BASE = 4.4f;
@@ -44,10 +44,10 @@ public struct Scattering {
 	public f32x3 extinction;
 }
 
-public Scattering get_scattering(f32 height) {
-	let altitude_km = (height - GROUND_RADIUS_MM) * 1000.f;
-	let rayleigh_density = exp(-altitude_km / 8.0);
-	let mie_density = exp(-altitude_km / 1.2);
+public Scattering get_scattering(f32x3 pos) {
+	let altitude_km = (length(pos) - GROUND_RADIUS_MM) * 1000.f;
+	let rayleigh_density = exp(-altitude_km / 8.f);
+	let mie_density = exp(-altitude_km / 1.2f);
 
 	let rayleigh_scatter = RAYLEIGH_SCATTERING_BASE * rayleigh_density;
 	let rayleigh_absorption = RAYLEIGH_ABSORPTION_BASE * rayleigh_density;
@@ -81,13 +81,10 @@ public f32 intersect_sphere(f32x3 ro, f32x3 rd, f32 rad) {
 	return -b - sqrt(discr);
 }
 
-public f32 intersect_plane(f32 ro, f32x3 rd, f32 height) {
-	if (abs(rd.z) < 0.0001f)
-		return -1.f;
-	return (height - ro) / rd.z;
-}
-
-public f32x2 map_to_lut_uv(f32 height, f32x3 sun_dir) {
-	return f32x2(clamp(0.5f + 0.5f * sun_dir.z, 0.f, 1.f),
+public f32x2 lut_uv(f32x3 pos, f32x3 sun_dir) {
+	let height = length(pos);
+	let up = pos / height;
+	let zenith_cos = dot(up, sun_dir);
+	return f32x2(clamp(0.5f + 0.5f * zenith_cos, 0.f, 1.f),
 				 clamp((height - GROUND_RADIUS_MM) / (ATMOSPHERE_RADIUS_MM - GROUND_RADIUS_MM), 0.f, 1.f));
 }

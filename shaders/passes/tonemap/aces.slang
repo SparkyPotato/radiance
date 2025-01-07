@@ -1,14 +1,7 @@
 import graph;
 import graph.util;
 import graph.util.color;
-
-struct PushConstants {
-	Tex2D<f32x4> input;
-	f32 exp;
-};
-
-[vk::push_constant]
-PushConstants Constants;
+import passes.tonemap.common;
 
 // Don't rember where I stole this from, but:
 // The code in this file was originally written by Stephen Hill (@self_shadow), who deserves all
@@ -30,25 +23,37 @@ f32x3 RRTAndODTFit(f32x3 v) {
 	return a / b;
 }
 
-f32x3 ACESFitted(f32x3 color) {
-	color /= exp2(Constants.exp) * 1.2f;
+struct Aces : Tonemap {
+	Tex2D<f32x4> input;
+	f32 exp;
 
-	color = mul(ACESInputMat, color);
+	Tex2D<f32x4> src() {
+		return input;
+	}
 
-	// Apply RRT and ODT
-	color = RRTAndODTFit(color);
+	f32 exposure() {
+		return exp;
+	}
 
-	color = mul(ACESOutputMat, color);
-
-	// Clamp to [0, 1]
-	color = saturate(color);
-
-	return color;
+	f32x3 map(f32x3 color) {
+		color = mul(ACESInputMat, color);
+		// Apply RRT and ODT
+		color = RRTAndODTFit(color);
+		color = mul(ACESOutputMat, color);
+		// Clamp to [0, 1]
+		color = saturate(color);
+		return color;
+	}
 }
+
+struct PushConstants {
+	Aces map;
+}
+
+[vk::push_constant]
+PushConstants Constants;
 
 [shader("pixel")]
 f32x4 main(ScreenOutput input) : SV_Target0 {
-	let pixel = Constants.input.pixel_of_uv(input.uv);
-	let color = Constants.input.load(pixel).xyz;
-	return float4(ACESFitted(color), 1.f);
+	return tonemap(input, Constants.map);
 }

@@ -5,9 +5,10 @@ use bytemuck::NoUninit;
 
 use crate::{
 	device::{Device, GraphicsPipeline, GraphicsPipelineDesc, ShaderInfo},
-	graph::PassContext,
+	graph::{PassContext, Res},
+	resource::ImageView,
 	util::{
-		pass::Attachment,
+		pass::{Attachment, Load},
 		pipeline::{no_blend, no_cull, simple_blend},
 	},
 	Result,
@@ -81,6 +82,22 @@ impl<T: NoUninit> FullscreenPass<T> {
 			)?,
 			_phantom: PhantomData,
 		})
+	}
+
+	pub fn run_one<'a, 'frame, 'graph>(
+		&self, pass: &'a mut PassContext<'frame, 'graph>, push: &T, image: Res<ImageView>,
+	) {
+		let mut pass = self.inner.start(
+			pass,
+			push,
+			&[Attachment {
+				image,
+				load: Load::DontCare,
+				store: true,
+			}],
+			None,
+		);
+		pass.draw(3, 1, 0, 0);
 	}
 
 	pub fn run<'a, 'frame, 'graph>(

@@ -17,7 +17,7 @@ PushConstants Constants;
 
 static const u32 STEPS = 50;
 
-f32x3 raymarch(f32 height, f32x3 dir, f32x3 sun_dir, f32 t_max) {
+f32x3 raymarch(f32x3 pos, f32x3 dir, f32x3 sun_dir, f32 t_max) {
 	let cos = dot(dir, sun_dir);
 	let mie = mie_phase(cos);
 	let rayleigh = rayleigh_phase(-cos);
@@ -29,12 +29,12 @@ f32x3 raymarch(f32 height, f32x3 dir, f32x3 sun_dir, f32 t_max) {
 		let new_t = ((f32(i) + 0.3f) / f32(STEPS)) * t_max;
 		let dt = new_t - t;
 		t = new_t;
-		let new_height = height + dir.z * t;
+		let new_pos = pos + dir * t;
 
-		let s = get_scattering(new_height);
+		let s = get_scattering(new_pos);
 		let sample_trans = exp(-dt * s.extinction);
-		let sun_trans = Constants.sun_transmittance.sample(Constants.sampler, map_to_lut_uv(new_height, sun_dir));
-		let ms = Constants.sun_scattering.sample(Constants.sampler, map_to_lut_uv(new_height, sun_dir));
+		let sun_trans = Constants.sun_transmittance.sample(Constants.sampler, lut_uv(new_pos, sun_dir));
+		let ms = Constants.sun_scattering.sample(Constants.sampler, lut_uv(new_pos, sun_dir));
 
 		let rayleigh_inscatter = s.rayleigh * (rayleigh * sun_trans + ms);
 		let mie_inscatter = s.mie * (mie * sun_trans + ms);
@@ -60,18 +60,20 @@ f32x3 main(ScreenOutput input) : SV_Target0 {
 		adj_v = coord * coord;
 	}
 
-	let height = (Constants.cam_pos.z + 200.f) / 1000000.f + GROUND_RADIUS_MM;
+	let pos = f32x3(Constants.cam_pos.xy / 1000000.f, (Constants.cam_pos.z + 500.f) / 1000000.f + GROUND_RADIUS_MM);
+	let height = length(pos);
+	let up = pos / height;
 	let horiz = safeacos(sqrt(height * height - GROUND_RADIUS_MM * GROUND_RADIUS_MM) / height) - PI / 2.f;
 	let alt = adj_v * PI / 2.f - horiz;
 
 	let cos_alt = cos(alt);
 	let dir = f32x3(cos_alt * sin(azimuth), -cos_alt * cos(azimuth), sin(alt));
 
-	let sun_alt = PI / 2.f - acos(Constants.sun_dir.z);
+	let sun_alt = PI / 2.f - acos(dot(Constants.sun_dir, up));
 	let sun_dir = f32x3(0.f, -cos(sun_alt), sin(sun_alt));
 
-	let atmo_dist = intersect_plane(height, dir, ATMOSPHERE_RADIUS_MM);
-	let ground_dist = intersect_plane(height, dir, GROUND_RADIUS_MM);
+	let atmo_dist = intersect_sphere(pos, dir, ATMOSPHERE_RADIUS_MM);
+	let ground_dist = intersect_sphere(pos, dir, GROUND_RADIUS_MM);
 	let t_max = (ground_dist < 0.f) ? atmo_dist : ground_dist;
-	return raymarch(height, dir, sun_dir, t_max);
+	return raymarch(pos, dir, sun_dir, t_max);
 }

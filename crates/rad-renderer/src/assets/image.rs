@@ -15,6 +15,7 @@ use rad_graph::{
 	sync::{get_image_barrier, ImageBarrier, UsageType},
 };
 use tracing::trace_span;
+use vek::Vec3;
 
 pub struct Image {
 	image: resource::Image,
@@ -22,11 +23,11 @@ pub struct Image {
 }
 
 #[derive(Encode, Decode)]
-struct ImageData {
-	width: u32,
-	height: u32,
-	srgb: bool,
-	data: Vec<u8>,
+pub(crate) struct ImageData {
+	#[bincode(with_serde)]
+	pub(crate) size: Vec3<u32>,
+	pub(crate) format: i32,
+	pub(crate) data: Vec<u8>,
 }
 
 impl Asset for Image {
@@ -55,18 +56,35 @@ impl Asset for Image {
 		let data: ImageData = bincode::decode_from_std_read(&mut view.read_section()?, standard())
 			.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
 		let name = view.name();
+		Self::from_data(name, data)
+	}
 
+	fn save(&self, _: &mut dyn AssetView) -> Result<(), std::io::Error> {
+		Err(io::Error::new(io::ErrorKind::Unsupported, "images cannot be edited"))
+	}
+}
+
+pub struct ImportImage<'a> {
+	pub data: &'a [u8],
+	pub width: u32,
+	pub height: u32,
+	pub is_normal_map: bool,
+	pub is_srgb: bool,
+}
+
+impl Image {
+	pub fn image(&self) -> &resource::Image { &self.image }
+
+	pub fn view(&self) -> &ImageView { &self.view }
+
+	pub(crate) fn from_data(name: &str, data: ImageData) -> Result<Self, std::io::Error> {
 		let device: &Device = Engine::get().global();
 		let size = vk::Extent3D {
-			width: data.width,
-			height: data.height,
-			depth: 1,
+			width: data.size.x,
+			height: data.size.y,
+			depth: data.size.z,
 		};
-		let format = if data.srgb {
-			vk::Format::BC7_SRGB_BLOCK
-		} else {
-			vk::Format::BC7_UNORM_BLOCK
-		};
+		let format = vk::Format::from_raw(data.format);
 		let image = resource::Image::create(
 			device,
 			ImageDesc {
@@ -162,7 +180,11 @@ impl Asset for Image {
 			ImageViewDesc {
 				name: &format!("{name} view"),
 				image: image.handle(),
-				view_type: vk::ImageViewType::TYPE_2D,
+				view_type: if size.depth == 1 {
+					vk::ImageViewType::TYPE_2D
+				} else {
+					vk::ImageViewType::TYPE_3D
+				},
 				format,
 				usage: ImageViewUsage::Sampled,
 				size,
@@ -172,24 +194,6 @@ impl Asset for Image {
 
 		Ok(Self { image, view })
 	}
-
-	fn save(&self, _: &mut dyn AssetView) -> Result<(), std::io::Error> {
-		Err(io::Error::new(io::ErrorKind::Unsupported, "images cannot be edited"))
-	}
-}
-
-pub struct ImportImage<'a> {
-	pub data: &'a [u8],
-	pub width: u32,
-	pub height: u32,
-	pub is_normal_map: bool,
-	pub is_srgb: bool,
-}
-
-impl Image {
-	pub fn image(&self) -> &resource::Image { &self.image }
-
-	pub fn view(&self) -> &ImageView { &self.view }
 
 	pub fn import(name: &str, data: ImportImage, mut into: Box<dyn AssetView>) -> Result<(), io::Error> {
 		let s = trace_span!("import image", name = name);
@@ -223,9 +227,13 @@ impl Image {
 		into.clear()?;
 		bincode::encode_into_std_write(
 			ImageData {
-				width: data.width,
-				height: data.height,
-				srgb: data.is_srgb,
+				size: Vec3::new(data.width, data.height, 1),
+				format: if data.is_srgb {
+					vk::Format::BC7_SRGB_BLOCK
+				} else {
+					vk::Format::BC7_UNORM_BLOCK
+				}
+				.as_raw(),
 				data: write,
 			},
 			&mut into.new_section()?,

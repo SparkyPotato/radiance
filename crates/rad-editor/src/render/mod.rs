@@ -5,7 +5,7 @@ use rad_renderer::{
 	mesh::{self, VisBuffer},
 	pt::{self, PathTracer},
 	sky::SkyLuts,
-	tonemap::{aces::AcesTonemap, exposure::ExposureCalc},
+	tonemap::{aces::AcesTonemap, exposure::ExposureCalc, tony_mc_mapface::TonyMcMapfaceTonemap},
 	vek::Vec2,
 };
 use rad_ui::{
@@ -17,7 +17,7 @@ use rad_window::winit::{event::WindowEvent, window::Window};
 use crate::{
 	render::{
 		camera::{CameraController, Mode},
-		debug::{DebugWindow, RenderMode},
+		debug::{DebugWindow, RenderMode, Tonemap},
 	},
 	world::WorldContext,
 };
@@ -32,6 +32,7 @@ pub struct Renderer {
 	pt: PathTracer,
 	exposure: ExposureCalc,
 	aces: AcesTonemap,
+	tony_mcmapface: TonyMcMapfaceTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
 	frame: u64,
@@ -47,6 +48,7 @@ impl Renderer {
 			pt: PathTracer::new(device)?,
 			exposure: ExposureCalc::new(device)?,
 			aces: AcesTonemap::new(device)?,
+			tony_mcmapface: TonyMcMapfaceTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
 			frame: 0,
@@ -90,7 +92,10 @@ impl Renderer {
 							},
 						);
 						let exp = self.exposure.run(frame, hdr, ui.input(|x| x.stable_dt));
-						let img = self.aces.run(frame, hdr, exp.exposure);
+						let img = match self.debug_window.tonemap() {
+							Tonemap::Aces => self.aces.run(frame, hdr, exp.exposure),
+							Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, hdr, exp.exposure),
+						};
 						(img, None, Some((exp, s)))
 					},
 					RenderMode::Debug => {
@@ -118,10 +123,12 @@ impl Renderer {
 	}
 
 	pub unsafe fn destroy(self) {
+		self.sky.destroy();
 		self.visbuffer.destroy();
 		self.pt.destroy();
 		self.exposure.destroy();
 		self.aces.destroy();
+		self.tony_mcmapface.destroy();
 		self.debug.destroy();
 	}
 }

@@ -126,20 +126,23 @@ impl SkyLuts {
 					depth: 1,
 				},
 				format,
+				persist: Some("sky transmittance"),
 				..Default::default()
 			},
 			ImageUsage::color_attachment(),
 		);
 		pass.build(move |mut pass| {
-			self.transmittance.run(
-				&mut pass,
-				&(),
-				&[Attachment {
-					image: trans,
-					load: Load::DontCare,
-					store: true,
-				}],
-			);
+			if pass.is_uninit(trans) {
+				self.transmittance.run(
+					&mut pass,
+					&(),
+					&[Attachment {
+						image: trans,
+						load: Load::DontCare,
+						store: true,
+					}],
+				);
+			}
 		});
 
 		let mut pass = frame.pass("scattering");
@@ -152,24 +155,28 @@ impl SkyLuts {
 					depth: 1,
 				},
 				format,
+				// TODO: make persist API nicer
+				persist: Some("sky scattering"),
 				..Default::default()
 			},
 			ImageUsage::color_attachment(),
 		);
 		pass.build(move |mut pass| {
-			let transmittance = pass.get(trans).id.unwrap();
-			self.scattering.run(
-				&mut pass,
-				&ScatteringConstants {
-					transmittance,
-					sampler: self.sampler,
-				},
-				&[Attachment {
-					image: scatter,
-					load: Load::DontCare,
-					store: true,
-				}],
-			);
+			if pass.is_uninit(scatter) {
+				let transmittance = pass.get(trans).id.unwrap();
+				self.scattering.run(
+					&mut pass,
+					&ScatteringConstants {
+						transmittance,
+						sampler: self.sampler,
+					},
+					&[Attachment {
+						image: scatter,
+						load: Load::DontCare,
+						store: true,
+					}],
+				);
+			}
 		});
 
 		let mut pass = frame.pass("eval");
@@ -216,5 +223,11 @@ impl SkyLuts {
 			sun_dir: -data.scene.sun_dir,
 			sun_radiance: data.scene.sun_radiance,
 		}
+	}
+
+	pub unsafe fn destroy(self) {
+		self.transmittance.destroy();
+		self.scattering.destroy();
+		self.eval.destroy();
 	}
 }

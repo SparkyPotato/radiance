@@ -4,10 +4,7 @@ use rad_graph::{
 	device::{Device, ShaderInfo},
 	graph::{BufferDesc, BufferUsage, Frame, ImageDesc, ImageUsage, PassContext, Res, Shader},
 	resource::{BufferHandle, GpuPtr, ImageView},
-	util::{
-		pass::{Attachment, Load},
-		render::FullscreenPass,
-	},
+	util::render::FullscreenPass,
 	Result,
 };
 
@@ -136,7 +133,7 @@ impl DebugMesh {
 			let instances = pass.get(output.scene.instances).ptr();
 			let camera = pass.get(output.camera).ptr();
 			let read = output.reader.get_debug(&mut pass);
-			self.pass.run(
+			self.pass.run_one(
 				&mut pass,
 				&PushConstants {
 					instances,
@@ -148,15 +145,7 @@ impl DebugMesh {
 					overdraw_scale,
 					pad: 0,
 				},
-				&[Attachment {
-					image: out,
-					load: Load::Clear(vk::ClearValue {
-						color: vk::ClearColorValue {
-							float32: [0.0, 0.0, 0.0, 1.0],
-						},
-					}),
-					store: true,
-				}],
+				out,
 			);
 		}
 	}

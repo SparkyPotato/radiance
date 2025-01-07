@@ -4,10 +4,7 @@ use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
 	graph::{Frame, ImageDesc, ImageUsage, Res, Shader},
 	resource::ImageView,
-	util::{
-		pass::{Attachment, Load},
-		render::FullscreenPass,
-	},
+	util::render::FullscreenPass,
 	Result,
 };
 
@@ -36,7 +33,6 @@ impl AcesTonemap {
 		})
 	}
 
-	/// `highlights` must be sorted.
 	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, exp: f32) -> Res<ImageView> {
 		let mut pass = frame.pass("aces tonemap");
 
@@ -52,19 +48,7 @@ impl AcesTonemap {
 
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
-			self.pass.run(
-				&mut pass,
-				&PushConstants { input, exp },
-				&[Attachment {
-					image: out,
-					load: Load::Clear(vk::ClearValue {
-						color: vk::ClearColorValue {
-							float32: [0.0, 0.0, 0.0, 1.0],
-						},
-					}),
-					store: true,
-				}],
-			)
+			self.pass.run_one(&mut pass, &PushConstants { input, exp }, out)
 		});
 
 		out

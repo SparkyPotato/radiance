@@ -13,9 +13,16 @@ pub enum RenderMode {
 	Debug,
 }
 
+#[derive(Copy, Clone)]
+pub enum Tonemap {
+	Aces,
+	TonyMcMapface,
+}
+
 pub struct DebugWindow {
 	pub enabled: bool,
 	render_mode: RenderMode,
+	tonemap: Tonemap,
 	debug_vis: DebugVis,
 	scale: f32,
 }
@@ -25,6 +32,7 @@ impl DebugWindow {
 		Self {
 			enabled: false,
 			render_mode: RenderMode::Path,
+			tonemap: Tonemap::TonyMcMapface,
 			debug_vis: DebugVis::Meshlets,
 			scale: 0.15,
 		}
@@ -55,6 +63,14 @@ impl DebugWindow {
 		}
 	}
 
+	fn tonemap_text(tonemap: usize) -> &'static str {
+		match tonemap {
+			0 => "aces",
+			1 => "tony mcmapface",
+			_ => unreachable!(),
+		}
+	}
+
 	pub fn render(
 		&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>, pt: Option<(ExposureStats, u32)>,
 	) {
@@ -69,35 +85,48 @@ impl DebugWindow {
 				_ => unreachable!(),
 			};
 
-			if matches!(self.render_mode, RenderMode::Debug) {
-				let mut sel = self.debug_vis.to_u32() as usize;
-				ComboBox::from_label("debug vis")
-					.selected_text(Self::vis_text(sel))
-					.show_index(ui, &mut sel, 11, Self::vis_text);
-				self.debug_vis = match sel {
-					0 => DebugVis::Triangles,
-					1 => DebugVis::Meshlets,
-					2 => DebugVis::Overdraw(self.scale),
-					3 => DebugVis::HwSw,
-					4 => DebugVis::Normals,
-					5 => DebugVis::Uvs,
-					6 => DebugVis::Error,
-					7 => DebugVis::BaseColor,
-					8 => DebugVis::Roughness,
-					9 => DebugVis::Metallic,
-					10 => DebugVis::Emissive,
-					_ => unreachable!(),
-				};
+			match self.render_mode {
+				RenderMode::Path => {
+					let mut sel = self.tonemap as usize;
+					ComboBox::from_label("tonemap")
+						.selected_text(Self::tonemap_text(sel))
+						.show_index(ui, &mut sel, 2, Self::tonemap_text);
+					self.tonemap = match sel {
+						0 => Tonemap::Aces,
+						1 => Tonemap::TonyMcMapface,
+						_ => unreachable!(),
+					};
+				},
+				RenderMode::Debug => {
+					let mut sel = self.debug_vis.to_u32() as usize;
+					ComboBox::from_label("debug vis")
+						.selected_text(Self::vis_text(sel))
+						.show_index(ui, &mut sel, 11, Self::vis_text);
+					self.debug_vis = match sel {
+						0 => DebugVis::Triangles,
+						1 => DebugVis::Meshlets,
+						2 => DebugVis::Overdraw(self.scale),
+						3 => DebugVis::HwSw,
+						4 => DebugVis::Normals,
+						5 => DebugVis::Uvs,
+						6 => DebugVis::Error,
+						7 => DebugVis::BaseColor,
+						8 => DebugVis::Roughness,
+						9 => DebugVis::Metallic,
+						10 => DebugVis::Emissive,
+						_ => unreachable!(),
+					};
 
-				match &mut self.debug_vis {
-					DebugVis::Overdraw(s) => {
-						ui.horizontal(|ui| {
-							ui.add(DragValue::new(&mut self.scale).speed(0.01).range(0.0..=1.0));
-						});
-						*s = self.scale;
-					},
-					_ => {},
-				}
+					match &mut self.debug_vis {
+						DebugVis::Overdraw(s) => {
+							ui.horizontal(|ui| {
+								ui.add(DragValue::new(&mut self.scale).speed(0.01).range(0.0..=1.0));
+							});
+							*s = self.scale;
+						},
+						_ => {},
+					}
+				},
 			}
 
 			ui.horizontal(|ui| {
@@ -169,6 +198,8 @@ impl DebugWindow {
 	}
 
 	pub fn render_mode(&self) -> RenderMode { self.render_mode }
+
+	pub fn tonemap(&self) -> Tonemap { self.tonemap }
 
 	pub fn debug_vis(&self) -> DebugVis { self.debug_vis }
 }

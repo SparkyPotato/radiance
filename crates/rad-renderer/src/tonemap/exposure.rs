@@ -64,6 +64,8 @@ impl ExposureCalc {
 	}
 
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, dt: f32) -> ExposureStats {
+		frame.start_region("exposure");
+
 		let Self {
 			histogram: hist,
 			exposure,
@@ -146,12 +148,14 @@ impl ExposureCalc {
 			let target = log * (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE) + Self::MIN_EXPOSURE;
 			let lum = Self::exposure_to_lum(2.0 * target + 10.0);
 			let key = 1.03 - 2.0 / (2.0 + (lum + 1.0).log10());
-			let comp = 6.0 * key - 2.5;
+			let comp = 4.0 * key - 2.5;
 			*target_exposure = target - comp;
 
 			let lerp = (1.0 - (-1.2 * dt).exp()).clamp(0.0, 1.0);
 			*exposure = (1.0 - lerp) * *exposure + lerp * *target_exposure;
 		});
+
+		frame.end_region();
 
 		ExposureStats {
 			exposure: ret_exp,

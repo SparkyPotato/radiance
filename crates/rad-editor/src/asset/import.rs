@@ -290,6 +290,12 @@ impl GltfImporter {
 
 	fn swizzle_image(data: image::Data) -> Vec<u8> {
 		match data.format {
+			image::Format::R8 => data.pixels.into_iter().flat_map(|x| [255, 255, x, 255]).collect(),
+			image::Format::R8G8 => data
+				.pixels
+				.chunks_exact(2)
+				.flat_map(|x| [255, x[1], x[0], 255])
+				.collect(),
 			image::Format::R8G8B8 => data
 				.pixels
 				.chunks_exact(3)
@@ -300,7 +306,7 @@ impl GltfImporter {
 				.chunks_exact(4)
 				.flat_map(|x| [x[2], x[1], x[0], x[3]])
 				.collect(),
-			_ => unimplemented!(),
+			x => unimplemented!("{:?}", x),
 		}
 	}
 
