@@ -347,7 +347,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 		// TODO: disable MIS if the ray hits a light without a bsdf?
 
 		let wo = hit.to_shading(-ray.dir);
-		if (hit.params.metallic < 1.f)
+		if (hit.params.metallic < 1.f && hit.params.roughness > 0.f)
 			L += b * estimate_with_light_sample(rng, hit, wo);
 
 		let bs = sample_bsdf(rng, hit.params, wo);
