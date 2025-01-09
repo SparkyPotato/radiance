@@ -3,5 +3,5 @@ import common;
 
 [shader("miss")]
 void main(inout ShadowPayload payload) {
-	payload.shadowed = false;
+	payload.unshadowed = true;
 }

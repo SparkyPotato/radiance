@@ -27,6 +27,12 @@ public struct Ray {
 	public f32x3 dir;
 	public f32 t;
 
+	public __init() {
+		this.origin = f32x3(0.f);
+		this.dir = f32x3(0.f);
+		this.t = 0.f;
+	}
+
 	public __init(f32x3 origin, f32x3 dir, f32 t = 1e10f) {
 		this.origin = origin;
 		this.dir = dir;
@@ -48,7 +54,7 @@ public struct Ray {
 }
 
 public struct ShadowPayload {
-	public bool shadowed;
+	public bool unshadowed;
 }
 
 public struct HitPayload {
@@ -59,9 +65,10 @@ public struct HitPayload {
 	public bool specular;
 	public f32x3 b;
 	public f32x3 prev_hit_pos;
-	public i32 bounces;
 	// chit -> rgen
 	public bool hit;
+	public f32x3 L_light_sample;
+	public Ray shadow_ray;
 }
 
 public f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {

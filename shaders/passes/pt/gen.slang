@@ -18,23 +18,32 @@ Ray primary_ray(inout Rng rng, u32x2 pix) {
 	return Ray(origin, dir);
 }
 
+bool unshadowed(Ray ray) {
+	ShadowPayload s = { false };
+	ray.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 1, s);
+	return s.unshadowed;
+}
+
 f32x3 li(inout Rng rng, Ray ray) {
-	HitPayload p;
+	HitPayload p = {};
 	p.rng = rng;
 	p.ray = ray;
 	p.L = f32x3(0.f);
 	p.p_bounce = 0.f;
-	p.specular = false;
+	p.specular = true;
 	p.b = f32x3(1.f);
 	p.prev_hit_pos = f32x3(0.f);
 
-	for (p.bounces = 0; p.bounces < 10; p.bounces++) {
+	for (int bounces = 0; bounces < 10; bounces++) {
 		p.ray.trace(RAY_FLAG_FORCE_OPAQUE, 0, p);
 		if (!p.hit) {
 			break;
 		}
+		if (any(p.L_light_sample > 0.f) && unshadowed(p.shadow_ray)) {
+			p.L += p.L_light_sample;
+		}
 
-		if (p.bounces > 1) {
+		if (bounces > 1) {
 			let q = max(0.05f, 1.f - luminance(p.b));
 			if (p.rng.sample() < q)
 				break;

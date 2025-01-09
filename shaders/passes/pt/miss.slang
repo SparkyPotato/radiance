@@ -6,7 +6,7 @@ void main(inout HitPayload p) {
 	p.hit = false;
 
 	let le = Constants.sky.sample_primary(p.ray.origin, p.ray.dir);
-	if (p.bounces == 0 || p.specular) {
+	if (p.specular) {
 		p.L += p.b * le;
 	} else {
 		// MIS for the sky light.

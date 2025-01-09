@@ -162,7 +162,6 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			return { L, wi, 1e10f, pdf, true };
 		}
 		case LightType.Emissive: {
-			return { f32x3(0.f), f32x3(0.f), 0.f, 0.f, false };
 			let i = asuint(light.radiance.x);
 			let instance = Constants.instances[i];
 			let tri_count = instance.raw_tri_count;
@@ -183,12 +182,12 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			let mat = instance.material;
 			let em = mat->emissive.get();
 			let emf = mat->emissive_factor;
+			let L = em.sample(Constants.sampler, thit.uv, f32x4(1.f)).xyz * emf;
 
 			let r = thit.position - hit.position;
 			let t = length(r);
 			let dir = r / t;
 			let wi = hit.to_shading(dir);
-			let L = em.sample(Constants.sampler, thit.uv, f32x4(1.f)).xyz * emf;
 			let d = abs(dot(hit.g_normal, -wi));
 			let pdf = (d != 0.f) ? (dot(dir, dir) / (thit.area * f32(tri_count) * d)) : 0.f;
 
@@ -215,28 +214,30 @@ LightSample sample_one_light(inout Rng rng, Hit hit) {
 	return ls;
 }
 
-bool shadowed(Hit hit, LightSample ls) {
-	ShadowPayload s = { true };
-	Ray(hit.ray_origin(), hit.from_shading(ls.wi), ls.t - 2e-5f)
-		.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 1, s);
-	return s.shadowed;
+Ray shadow_ray(Hit hit, LightSample ls) {
+	return Ray(hit.ray_origin(), hit.from_shading(ls.wi), ls.t - 2e-5f);
 }
 
-f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
+struct SampleEstimate {
+	f32x3 L;
+	Ray ray;
+}
+
+SampleEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let ls = sample_one_light(rng, hit);
 	if (any(ls.L <= 0.f) || ls.pdf <= 0.f)
-		return 0.f;
+		return { f32x3(0.f), Ray() };
 	let f = eval_bsdf(hit.params, wo, ls.wi);
-	if (any(f <= 0.f) || shadowed(hit, ls))
-		return 0.f;
+	if (any(f <= 0.f))
+		return { f32x3(0.f), Ray() };
 
-	if (ls.punctual) {
-		return f * ls.L / ls.pdf;
-	} else {
+	let ray = shadow_ray(hit, ls);
+	var L = f * ls.L / ls.pdf;
+	if (!ls.punctual) {
 		let p_bounce = bsdf_pdf(hit.params, wo, ls.wi);
-		let w = pow_heuristic(1, p_bounce, 1, ls.pdf);
-		return w * f * ls.L / ls.pdf;
+		L *= pow_heuristic(1, p_bounce, 1, ls.pdf);
 	}
+	return { L, ray };
 }
 
 [shader("closesthit")]
@@ -245,7 +246,7 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	let hit = Hit(attrs);
 
 	let le = hit.emissive;
-	if (p.bounces == 0 || p.specular) {
+	if (p.specular) {
 		p.L += p.b * le;
 	} else {
 		// MIS for area light.
@@ -259,8 +260,11 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	// TODO: disable MIS if the ray hits a light without a bsdf?
 
 	let wo = hit.to_shading(-p.ray.dir);
-	if (hit.params.metallic < 1.f || hit.params.roughness > 0.f)
-		p.L += p.b * estimate_with_light_sample(p.rng, hit, wo);
+	if (hit.params.metallic < 1.f || hit.params.roughness > 0.f) {
+		let es = estimate_with_light_sample(p.rng, hit, wo);
+		p.L_light_sample = p.b * es.L;
+		p.shadow_ray = es.ray;
+	}
 
 	let bs = sample_bsdf(p.rng, hit.params, wo);
 	p.b *= bs.L;

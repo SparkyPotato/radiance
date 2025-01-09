@@ -211,10 +211,10 @@ impl PathTracer {
 	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> (Res<ImageView>, u32) {
 		let mut pass = frame.pass("path trace");
 
-		let read = BufferUsage::read(Shader::Fragment);
+		let read = BufferUsage::read(Shader::RayTracing);
 		pass.reference(info.data.scene.as_, read);
 		pass.reference(info.data.scene.instances, read);
-		info.sky.reference(&mut pass, Shader::Fragment);
+		info.sky.reference(&mut pass, Shader::RayTracing);
 		let camera = pass.resource(BufferDesc::upload(std::mem::size_of::<CameraData>() as _), read);
 
 		let out = pass.resource(
@@ -230,7 +230,7 @@ impl PathTracer {
 				samples: vk::SampleCountFlags::TYPE_1,
 				persist: Some("path tracer accum"),
 			},
-			ImageUsage::read_write_2d(Shader::Fragment),
+			ImageUsage::read_write_2d(Shader::RayTracing),
 		);
 
 		if let Some(c) = self.cached {
