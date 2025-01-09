@@ -730,6 +730,7 @@ impl Scene {
 	}
 
 	pub fn remove(&mut self, entity: Entity) {
+		unimplemented!();
 		for (instance, depth) in self.entity_map.remove(&entity).expect("entity not in scene") {
 			let depth = self.depth_refs.get_mut(&InvertOrd(depth)).unwrap();
 			*depth -= 1;

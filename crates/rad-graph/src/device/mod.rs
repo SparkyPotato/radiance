@@ -74,6 +74,10 @@ impl Device {
 		self.inner.shaders.create_compute_pipeline(shader).map_err(Into::into)
 	}
 
+	pub fn get_shader(&self, info: ShaderInfo) -> std::result::Result<(Vec<u32>, vk::ShaderStageFlags), String> {
+		self.inner.shaders.get_shader(info)
+	}
+
 	pub fn layout(&self) -> vk::PipelineLayout { self.inner.descriptors.layout() }
 
 	pub fn hotreload_status(&self) -> HotreloadStatus { self.inner.shaders.status() }

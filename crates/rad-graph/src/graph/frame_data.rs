@@ -254,6 +254,14 @@ impl<'a, I: Iterator<Item = Sync<'a>>> Submitter<'a, I> {
 					&[device.descriptor_set()],
 					&[],
 				);
+				dev.cmd_bind_descriptor_sets(
+					self.buf,
+					vk::PipelineBindPoint::RAY_TRACING_KHR,
+					device.layout(),
+					0,
+					&[device.descriptor_set()],
+					&[],
+				);
 			}
 
 			Ok(())

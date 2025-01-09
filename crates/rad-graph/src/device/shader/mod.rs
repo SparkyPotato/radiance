@@ -24,6 +24,7 @@ use rspirv::{
 
 use crate::device::{shader::compile::ShaderBuilder, Device};
 
+#[macro_export]
 macro_rules! c_str {
 	($name:literal) => {
 		#[allow(unused_unsafe)]
@@ -570,6 +571,10 @@ impl ShaderRuntime {
 			status,
 			shared,
 		}
+	}
+
+	pub fn get_shader(&self, info: ShaderInfo) -> Result<(Vec<u32>, vk::ShaderStageFlags), String> {
+		RuntimeShared::get_shader(&mut self.shared.lock().unwrap().builder, info)
 	}
 
 	#[track_caller]
