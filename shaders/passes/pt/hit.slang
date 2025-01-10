@@ -156,8 +156,10 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			return { L, wi, t, pdf, true };
 		}
 		case LightType.Directional: {
-			let L = light.radiance;
-			let wi = hit.to_shading(-light.pos_or_dir);
+			// TODO: sample disk and figure out atmosphere transmittance correctly.
+			let dir = -light.pos_or_dir;
+			let L = light.radiance * Constants.sky.sun_transmittance(hit.position, dir);
+			let wi = hit.to_shading(dir);
 			let pdf = solid_angle_pdf(radians(0.5f));
 			return { L, wi, 1e10f, pdf, true };
 		}

@@ -23,6 +23,11 @@ public struct SkySampler {
 		return gaussian + inv;
 	}
 
+	public f32x3 sun_transmittance(f32x3 pos, f32x3 dir) {
+		let pos = f32x3(pos.xy / 1000000.f, (pos.z + 500.f) / 1000000.f + GROUND_RADIUS_MM);
+		return this.transmittance.sample(this.sampler, lut_uv(pos, dir));
+	}
+
 	public f32x3 sample_primary(f32x3 pos, f32x3 dir) {
 		let li = this.sample(pos, dir);
 		var sun = smoothstep(0.002f, 1.f, this.sun_disk(dir)) * this.sun_radiance;
@@ -31,7 +36,7 @@ public struct SkySampler {
 			if (intersect_sphere(pos, dir, GROUND_RADIUS_MM) >= 0.f) {
 				sun = f32x3(0.f);
 			} else {
-				sun *= this.transmittance.sample(this.sampler, lut_uv(pos, this.sun_dir));
+				sun *= this.sun_transmittance(pos, this.sun_dir);
 			}
 		}
 
