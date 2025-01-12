@@ -2,20 +2,21 @@
 
 use std::{
 	any::TypeId,
-	io::{self, BufReader},
+	io,
+	ops::{Deref, DerefMut},
 };
 
+use bevy_ecs::world::EntityWorldMut;
 pub use bevy_ecs::{
+	self,
 	component::{Component, StorageType},
-	entity::Entity,
 	reflect::ReflectComponent,
 };
-use bevy_ecs::{system::Resource, world::Mut};
 pub use bevy_reflect;
 use bevy_reflect::{reflect_trait, FromType, GetTypeRegistration, Reflect, ReflectFromReflect, TypePath};
 pub use rad_core::{asset::Uuid, uuid};
 use rad_core::{
-	asset::{Asset, AssetView},
+	asset::{map_dec_err, map_enc_err, Asset, AssetRead, AssetWrite},
 	Engine,
 	EngineBuilder,
 	Module,
@@ -24,10 +25,7 @@ pub use rad_world_derive::RadComponent;
 use rustc_hash::FxHashMap;
 
 pub use crate::tick::TickStage;
-use crate::{
-	self as rad_world,
-	serde::{map_dec_err, map_enc_err},
-};
+use crate::{self as rad_world};
 
 pub mod serde;
 pub mod system;
@@ -49,10 +47,9 @@ pub trait WorldBuilderExt {
 
 impl WorldBuilderExt for EngineBuilder {
 	fn component<T: RadComponent + GetTypeRegistration>(&mut self) {
-		let ty = TypeId::of::<T>();
-		let uuid = T::uuid();
-		self.get_global::<TypeRegistry>().inner.register::<T>();
-		self.get_global::<TypeRegistry>().uuid_map.insert(uuid, ty);
+		let reg = self.get_global::<TypeRegistry>();
+		reg.inner.register::<T>();
+		reg.uuid_map.insert(T::uuid(), TypeId::of::<T>());
 	}
 
 	fn component_dep_type<T: Reflect + TypePath>(&mut self)
@@ -74,8 +71,6 @@ impl Module for WorldModule {
 			uuid_map: FxHashMap::default(),
 		});
 
-		engine.asset::<World>();
-
 		engine.component::<transform::Transform>();
 	}
 }
@@ -89,23 +84,6 @@ pub trait RadComponent {
 	fn uuid_dyn(&self) -> Uuid;
 }
 
-pub struct EntityWrite<'a> {
-	inner: bevy_ecs::world::EntityWorldMut<'a>,
-}
-
-impl EntityWrite<'_> {
-	pub fn insert<T: RadComponent + Component>(&mut self, comp: T) -> &mut Self {
-		self.inner.insert(comp);
-		self
-	}
-
-	pub fn component_mut<T: RadComponent + Component>(&mut self) -> Option<&mut T> {
-		self.inner.get_mut::<T>().map(|x| x.into_inner())
-	}
-
-	pub fn id(&self) -> Entity { self.inner.id() }
-}
-
 pub struct World {
 	inner: bevy_ecs::world::World,
 }
@@ -117,70 +95,44 @@ impl World {
 		}
 	}
 
-	pub fn spawn_empty(&mut self) -> EntityWrite<'_> {
-		let mut inner = self.inner.spawn_empty();
-		inner.insert(transform::Transform::identity());
-		EntityWrite { inner }
-	}
-
-	pub fn add_resource<R: Resource>(&mut self, value: R) { self.inner.insert_resource(value); }
-
-	pub fn get_resource<R: Resource>(&self) -> Option<&R> { self.inner.get_resource() }
-
-	pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
-		self.inner.get_resource_mut().map(|x: Mut<'_, R>| x.into_inner())
-	}
-
-	pub fn entity_mut(&mut self, e: Entity) -> EntityWrite<'_> {
-		EntityWrite {
-			inner: self.inner.entity_mut(e),
-		}
+	pub fn spawn_empty(&mut self) -> EntityWorldMut<'_> {
+		let mut e = self.inner.spawn_empty();
+		e.insert(transform::Transform::identity());
+		e
 	}
 }
 
+impl Deref for World {
+	type Target = bevy_ecs::world::World;
+
+	fn deref(&self) -> &Self::Target { &self.inner }
+}
+impl DerefMut for World {
+	fn deref_mut(&mut self) -> &mut Self::Target { &mut self.inner }
+}
+
 impl Asset for World {
-	fn uuid() -> Uuid
-	where
-		Self: Sized,
-	{
-		uuid!("aac9bce6-582b-422b-b56c-2048cc0c4a2f")
-	}
+	const UUID: Uuid = uuid!("aac9bce6-582b-422b-b56c-2048cc0c4a2f");
 
-	fn unloaded() -> Self
-	where
-		Self: Sized,
-	{
-		Self::new()
-	}
-
-	fn load(mut data: Box<dyn AssetView>) -> Result<Self, io::Error>
-	where
-		Self: Sized,
-	{
+	fn load(mut data: Box<dyn AssetRead>) -> Result<Self, io::Error> {
 		let c = bincode::config::standard();
-		data.seek_begin()?;
-		let mut from = BufReader::new(data.read_section()?);
 
-		let count: u32 = bincode::decode_from_std_read(&mut from, c).map_err(map_dec_err)?;
-
+		let count: u32 = bincode::decode_from_std_read(&mut data, c).map_err(map_dec_err)?;
 		let mut inner = bevy_ecs::world::World::new();
 		for _ in 0..count {
-			serde::deserialize_entity(&mut from, &mut inner)?;
+			serde::deserialize_entity(&mut data, &mut inner)?;
 		}
 
 		Ok(Self { inner })
 	}
 
-	fn save(&self, into: &mut dyn AssetView) -> Result<(), io::Error> {
-		into.clear()?;
-		let mut into = into.new_section()?;
-
+	fn save(&self, mut to: Box<dyn AssetWrite>) -> Result<(), io::Error> {
 		let c = bincode::config::standard();
 		let count = self.inner.entities().len();
-		bincode::encode_into_std_write(count, &mut into, c).map_err(map_enc_err)?;
+		bincode::encode_into_std_write(count, &mut to, c).map_err(map_enc_err)?;
 
 		for en in self.inner.iter_entities() {
-			serde::serialize_entity(&mut into, &self.inner, en)?;
+			serde::serialize_entity(&mut to, &self.inner, en)?;
 		}
 
 		Ok(())

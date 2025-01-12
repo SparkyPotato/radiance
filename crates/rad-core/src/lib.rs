@@ -1,16 +1,16 @@
 #![feature(coerce_unsized)]
+#![feature(once_cell_try)]
 #![feature(trait_upcasting)]
 #![feature(unsize)]
 
 use std::{
 	any::{Any, TypeId},
-	io,
 	sync::OnceLock,
 };
 
 use rustc_hash::FxHashMap;
 
-use crate::asset::{aref::ARef, Asset, AssetId, AssetRegistry, AssetSource};
+use crate::asset::{AssetRegistry, AssetSource, AssetView};
 
 pub mod asset;
 
@@ -34,17 +34,7 @@ impl Engine {
 
 	pub fn try_global<T: Any + Send + Sync>(&self) -> Option<&T> { self.globals.get() }
 
-	pub fn asset_dyn(&self, id: AssetId) -> Result<ARef<dyn Asset>, io::Error> { self.assets.load_asset_dyn(id) }
-
-	pub fn asset_owned_dyn(&self, id: AssetId) -> Result<Box<dyn Asset>, io::Error> {
-		self.assets.load_asset_owned_dyn(id)
-	}
-
-	pub fn asset<T: Asset>(&self, id: AssetId) -> Result<ARef<T>, io::Error> { self.assets.load_asset(id) }
-
-	pub fn asset_owned<T: Asset>(&self, id: AssetId) -> Result<Box<T>, io::Error> { self.assets.load_asset_owned(id) }
-
-	pub fn asset_source<T: AssetSource>(&self) -> Option<&T> { self.assets.get_source() }
+	fn assets(&self) -> &AssetRegistry { &self.assets }
 
 	pub unsafe fn destroy() { std::ptr::drop_in_place(&ENGINE as *const _ as *mut OnceLock<Engine>); }
 }
@@ -63,11 +53,11 @@ impl EngineBuilder {
 		}
 	}
 
-	pub fn asset<T: Asset>(&mut self) { self.inner.assets.register::<T>(); }
-
-	pub fn asset_source(&mut self, source: impl AssetSource) { self.inner.assets.source(source); }
-
 	pub fn global<T: Any + Send + Sync>(&mut self, value: T) { self.inner.globals.insert(value); }
+
+	pub fn asset_source<T: AssetSource>(&mut self, source: T) { self.inner.assets.register_source(source); }
+
+	pub fn asset_view<T: AssetView>(&mut self) { self.inner.assets.register_view::<T>(); }
 
 	pub fn get_global<T: Any + Send + Sync>(&mut self) -> &mut T { self.inner.globals.get_mut().unwrap() }
 

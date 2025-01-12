@@ -1,12 +1,17 @@
 #![feature(let_chains)]
 
-use rad_core::{asset::aref::ARef, Engine, EngineBuilder, Module};
+use rad_core::{
+	asset::aref::{ARef, AssetId},
+	Engine,
+	EngineBuilder,
+	Module,
+};
 use rad_graph::{graph::Frame, Result};
 use rad_world::{
+	bevy_ecs::entity::Entity,
 	system::{DetectChanges, Query, Ref, RemovedComponents, ResMut, Resource, WorldId},
 	tick::Tick,
 	transform::Transform,
-	Entity,
 	TickStage,
 	World,
 	WorldBuilderExt,
@@ -37,12 +42,8 @@ pub struct RendererModule;
 
 impl Module for RendererModule {
 	fn init(engine: &mut EngineBuilder) {
-		engine.asset::<assets::image::Image>();
-		engine.asset::<assets::material::Material>();
-		engine.asset::<assets::mesh::Mesh>();
-
 		engine.component::<components::mesh::MeshComponent>();
-		engine.component_dep_type::<Vec<ARef<assets::mesh::Mesh>>>();
+		engine.component_dep_type::<Vec<AssetId<assets::mesh::Mesh>>>();
 		engine.component::<components::light::LightComponent>();
 		engine.component::<components::camera::CameraComponent>();
 		engine.component::<components::camera::PrimaryViewComponent>();
@@ -80,7 +81,7 @@ impl WorldRenderer {
 	}
 
 	pub fn add_to_world(self, world: &mut World, tick: &mut Tick) {
-		world.add_resource(self);
+		world.insert_resource(self);
 		tick.add_systems(TickStage::Render, (sync_scene, find_primary_view));
 	}
 

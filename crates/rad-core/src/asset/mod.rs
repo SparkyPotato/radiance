@@ -1,102 +1,121 @@
 use std::{
 	any::{Any, TypeId},
-	fmt::{Debug, Display},
-	io::{self},
-	sync::Arc,
+	io::{self, Read, Write},
 };
 
-use bytemuck::{Pod, Zeroable};
-use parking_lot::RwLock;
+use bincode::{
+	error::{DecodeError, EncodeError},
+	Decode,
+	Encode,
+};
 use rustc_hash::FxHashMap;
-use serde::{Deserialize, Serialize};
 pub use uuid::Uuid;
 
-use crate::asset::aref::{ARef, AWeak};
+use crate::asset::aref::{AssetCache, AssetId, UntypedAssetId};
 
 pub mod aref;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, Pod, Zeroable)]
-#[serde(transparent)]
-#[repr(transparent)]
-pub struct AssetId(Uuid);
+pub trait AssetRead: Read {
+	fn section_count(&self) -> u32;
 
-impl Debug for AssetId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
-}
-impl Display for AssetId {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
+	fn seek_section(&self, id: u32) -> Result<(), io::Error>;
 }
 
-impl AssetId {
-	pub fn new() -> Self { Self(Uuid::new_v4()) }
+pub trait AssetWrite: Write {
+	fn next_section(&mut self) -> u32;
 }
 
-struct AssetDesc {
-	load: fn(AssetId, Box<dyn AssetView>) -> Result<ARef<dyn Asset>, io::Error>,
-	load_owned: fn(Box<dyn AssetView>) -> Result<Box<dyn Asset>, io::Error>,
+pub trait Asset: Sized {
+	const UUID: Uuid;
+
+	fn load(from: Box<dyn AssetRead>) -> Result<Self, io::Error>;
+
+	fn save(&self, to: Box<dyn AssetWrite>) -> Result<(), io::Error>;
 }
 
-enum CacheStatus {
-	Loading,
-	Loaded(AWeak<dyn Asset>),
+pub trait BincodeAsset: Encode + Decode + Sized {
+	const UUID: Uuid;
+}
+impl<T: BincodeAsset> Asset for T {
+	const UUID: Uuid = T::UUID;
+
+	fn load(mut from: Box<dyn AssetRead>) -> Result<Self, io::Error> {
+		let c = bincode::config::standard();
+		bincode::decode_from_std_read(&mut from, c).map_err(map_dec_err)
+	}
+
+	fn save(&self, mut to: Box<dyn AssetWrite>) -> Result<(), io::Error> {
+		let c = bincode::config::standard();
+		bincode::encode_into_std_write(self, &mut to, c).map_err(map_enc_err)?;
+		Ok(())
+	}
+}
+
+pub fn map_enc_err(e: EncodeError) -> io::Error {
+	match e {
+		EncodeError::Io { inner, .. } => inner,
+		x => io::Error::new(io::ErrorKind::Other, format!("bincode error: {x:?}")),
+	}
+}
+
+pub fn map_dec_err(e: DecodeError) -> io::Error {
+	match e {
+		DecodeError::Io { inner, .. } => inner,
+		x => io::Error::new(io::ErrorKind::Other, format!("bincode error: {x:?}")),
+	}
+}
+
+pub trait CookedAsset: Asset {
+	type Base: Asset;
+
+	fn cook(base: &Self::Base) -> Self;
+}
+
+pub trait AssetView: Sized + Send + Sync + 'static {
+	type Base: Asset;
+	type Ctx: Default + Send + Sync + 'static;
+
+	fn load(ctx: &'static Self::Ctx, base: Self::Base) -> Result<Self, io::Error>;
+}
+
+pub trait AssetSource: Send + Sync + 'static {
+	fn load(&self, id: UntypedAssetId, ty: Uuid) -> Result<Box<dyn AssetRead>, io::Error>;
 }
 
 pub struct AssetRegistry {
-	assets: FxHashMap<Uuid, AssetDesc>,
-	sources: FxHashMap<TypeId, Box<dyn AssetSource>>,
-	cache: RwLock<FxHashMap<AssetId, CacheStatus>>,
-}
-
-fn load_asset<T: Asset>(id: AssetId, data: Box<dyn AssetView>) -> Result<ARef<dyn Asset>, io::Error> {
-	let obj = T::load(data)?;
-	Ok(ARef::new(id, obj))
-}
-
-fn load_asset_owned<T: Asset>(data: Box<dyn AssetView>) -> Result<Box<dyn Asset>, io::Error> {
-	let obj = T::load(data)?;
-	Ok(Box::new(obj) as Box<dyn Asset>)
+	sources: Vec<Box<dyn AssetSource>>,
+	views: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl AssetRegistry {
 	pub fn new() -> Self {
 		Self {
-			assets: FxHashMap::default(),
-			sources: FxHashMap::default(),
-			cache: RwLock::new(FxHashMap::default()),
+			sources: Vec::new(),
+			views: FxHashMap::default(),
 		}
 	}
 
-	pub fn register<T: Asset>(&mut self) {
-		self.assets.insert(
-			T::uuid(),
-			AssetDesc {
-				load: load_asset::<T>,
-				load_owned: load_asset_owned::<T>,
-			},
-		);
+	pub fn register_source<T: AssetSource>(&mut self, source: T) { self.sources.push(Box::new(source)); }
+
+	pub fn register_view<T: AssetView>(&mut self) {
+		self.views.insert(TypeId::of::<T>(), Box::new(AssetCache::<T>::new()));
 	}
 
-	pub fn source<T: AssetSource>(&mut self, source: T) { self.sources.insert(TypeId::of::<T>(), Box::new(source)); }
-
-	pub fn get_source<T: AssetSource>(&self) -> Option<&T> {
-		self.sources
+	fn cache<T: AssetView>(&self) -> &AssetCache<T> {
+		match self
+			.views
 			.get(&TypeId::of::<T>())
-			.map(|s| (s.as_ref() as &dyn Any).downcast_ref().unwrap())
+			.and_then(|cache| cache.downcast_ref::<AssetCache<T>>())
+		{
+			Some(cache) => cache,
+			None => panic!("view `{}` not registered", std::any::type_name::<T>()),
+		}
 	}
 
-	fn find_asset(&self, id: AssetId) -> Result<(&AssetDesc, Box<dyn AssetView>), io::Error> {
-		for source in self.sources.values() {
-			match source.load(id) {
-				Ok((uuid, data)) => {
-					if let Some(desc) = self.assets.get(&uuid) {
-						return Ok((desc, data));
-					} else {
-						return Err(io::Error::new(
-							io::ErrorKind::NotFound,
-							"unknown asset type (not registered?)",
-						));
-					}
-				},
+	pub fn load_asset<T: Asset>(&self, id: AssetId<T>) -> Result<T, io::Error> {
+		for src in self.sources.iter().rev() {
+			match src.load(id.to_untyped(), T::UUID) {
+				Ok(from) => return T::load(from),
 				Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
 				Err(e) => return Err(e),
 			}
@@ -104,110 +123,4 @@ impl AssetRegistry {
 
 		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
 	}
-
-	pub fn load_asset_dyn(&self, id: AssetId) -> Result<ARef<dyn Asset>, io::Error> {
-		loop {
-			let cache = self.cache.read();
-			match cache.get(&id) {
-				Some(CacheStatus::Loading) => {
-					// TODO: this busy waits i think
-					drop(cache);
-					std::thread::yield_now();
-				},
-				Some(CacheStatus::Loaded(weak)) => {
-					if let Some(asset) = weak.upgrade() {
-						return Ok(asset);
-					} else {
-						break;
-					}
-				},
-				None => break,
-			}
-		}
-		self.cache.write().insert(id, CacheStatus::Loading);
-
-		let (desc, data) = self.find_asset(id)?;
-		let asset = (desc.load)(id, data)?;
-		self.cache.write().insert(id, CacheStatus::Loaded(asset.downgrade()));
-
-		Ok(asset)
-	}
-
-	pub fn load_asset_owned_dyn(&self, id: AssetId) -> Result<Box<dyn Asset>, io::Error> {
-		let (desc, data) = self.find_asset(id)?;
-		(desc.load_owned)(data)
-	}
-
-	pub fn load_asset<T: Asset>(&self, id: AssetId) -> Result<ARef<T>, io::Error> {
-		self.load_asset_dyn(id).and_then(|asset| {
-			asset
-				.downcast::<T>()
-				.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "asset type mismatch"))
-		})
-	}
-
-	pub fn load_asset_owned<T: Asset>(&self, id: AssetId) -> Result<Box<T>, io::Error> {
-		self.load_asset_owned_dyn(id).and_then(|asset| {
-			Box::<dyn Any + Send + Sync>::downcast::<T>(asset as _)
-				.map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "asset type mismatch"))
-		})
-	}
-}
-
-pub trait AssetView {
-	fn name(&self) -> &str;
-
-	fn clear(&mut self) -> Result<(), io::Error>;
-
-	fn new_section(&mut self) -> Result<Box<dyn io::Write + '_>, io::Error>;
-
-	fn seek_begin(&mut self) -> Result<(), io::Error>;
-
-	fn read_section(&mut self) -> Result<Box<dyn io::Read + '_>, io::Error>;
-}
-impl<T: ?Sized + AssetView> AssetView for Box<T> {
-	fn name(&self) -> &str { (**self).name() }
-
-	fn clear(&mut self) -> Result<(), io::Error> { (**self).clear() }
-
-	fn new_section(&mut self) -> Result<Box<dyn io::Write + '_>, io::Error> { (**self).new_section() }
-
-	fn seek_begin(&mut self) -> Result<(), io::Error> { (**self).seek_begin() }
-
-	fn read_section(&mut self) -> Result<Box<dyn io::Read + '_>, io::Error> { (**self).read_section() }
-}
-impl<T: ?Sized + AssetView> AssetView for &mut T {
-	fn name(&self) -> &str { (**self).name() }
-
-	fn clear(&mut self) -> Result<(), io::Error> { (**self).clear() }
-
-	fn new_section(&mut self) -> Result<Box<dyn io::Write + '_>, io::Error> { (**self).new_section() }
-
-	fn seek_begin(&mut self) -> Result<(), io::Error> { (**self).seek_begin() }
-
-	fn read_section(&mut self) -> Result<Box<dyn io::Read + '_>, io::Error> { (**self).read_section() }
-}
-
-pub trait Asset: Any + Send + Sync {
-	fn uuid() -> Uuid
-	where
-		Self: Sized;
-
-	fn unloaded() -> Self
-	where
-		Self: Sized;
-
-	fn load(data: Box<dyn AssetView>) -> Result<Self, io::Error>
-	where
-		Self: Sized;
-
-	fn save(&self, into: &mut dyn AssetView) -> Result<(), io::Error>;
-}
-
-pub trait AssetSource: Any + Send + Sync {
-	fn load(&self, id: AssetId) -> Result<(Uuid, Box<dyn AssetView>), io::Error>;
-}
-
-impl<T: AssetSource> AssetSource for Arc<T> {
-	fn load(&self, id: AssetId) -> Result<(Uuid, Box<dyn AssetView>), io::Error> { self.as_ref().load(id) }
 }

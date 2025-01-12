@@ -34,7 +34,7 @@ use bincode::{
 	Decode,
 	Encode,
 };
-use rad_core::asset::Uuid;
+use rad_core::asset::{map_dec_err, map_enc_err, Uuid};
 use serde::{
 	de::{DeserializeSeed, EnumAccess, IntoDeserializer, MapAccess, SeqAccess, VariantAccess, Visitor},
 	Deserializer,
@@ -800,19 +800,5 @@ impl<'de, 'a, DE: Decoder> VariantAccess<'de> for SerdeDecoder<'a, DE> {
 		V: Visitor<'de>,
 	{
 		Deserializer::deserialize_tuple(self, fields.len(), visitor)
-	}
-}
-
-pub fn map_enc_err(e: EncodeError) -> io::Error {
-	match e {
-		EncodeError::Io { inner, .. } => inner,
-		_ => io::Error::new(io::ErrorKind::Other, "Unknown error"),
-	}
-}
-
-pub fn map_dec_err(e: DecodeError) -> io::Error {
-	match e {
-		DecodeError::Io { inner, .. } => inner,
-		_ => io::Error::new(io::ErrorKind::Other, "Unknown error"),
 	}
 }

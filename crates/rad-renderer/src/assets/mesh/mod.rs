@@ -1,231 +1,88 @@
-use std::{
-	array,
-	io::{self, BufReader},
-	usize,
-};
+use std::{io, usize};
 
 use ash::vk;
-use bincode::error::{DecodeError, EncodeError};
-use bytemuck::{cast_slice, NoUninit, Pod, Zeroable};
+use bincode::{Decode, Encode};
+use bytemuck::{cast_slice, Pod, Zeroable};
 use rad_core::{
-	asset::{aref::ARef, Asset, AssetView, Uuid},
+	asset::{
+		aref::{ARef, AssetId, LARef},
+		AssetView,
+		BincodeAsset,
+		Uuid,
+	},
 	uuid,
 	Engine,
 };
 use rad_graph::{
 	cmd::CommandPool,
 	device::{Compute, Device, QueueWait},
-	resource::{ASDesc, Buffer, BufferDesc, GpuPtr, Resource, AS},
+	resource::{ASDesc, Buffer, BufferDesc, Resource, AS},
 	sync::{get_global_barrier, GlobalBarrier, UsageType},
 };
 use static_assertions::const_assert_eq;
-use tracing::{span, Level};
-use vek::{Aabb, Sphere, Vec3, Vec4};
+use vek::{Vec2, Vec3};
 
-pub use crate::assets::mesh::import::MeshData;
-use crate::{assets::material::Material, util::SliceWriter};
+use crate::{
+	assets::material::{Material, MaterialView},
+	util::SliceWriter,
+};
 
-mod data;
-mod import;
+pub mod virtual_mesh;
 
-pub type GpuVertex = data::Vertex;
-
-#[derive(Copy, Clone, Default, Pod, Zeroable)]
+#[derive(Pod, Zeroable, Copy, Clone, Default, Encode, Decode)]
 #[repr(C)]
-pub struct GpuAabb {
-	pub center: Vec3<f32>,
-	pub half_extent: Vec3<f32>,
+pub struct Vertex {
+	#[bincode(with_serde)]
+	pub position: Vec3<f32>,
+	#[bincode(with_serde)]
+	pub normal: Vec3<f32>,
+	#[bincode(with_serde)]
+	pub uv: Vec2<f32>,
 }
-const_assert_eq!(std::mem::size_of::<GpuAabb>(), 24);
-const_assert_eq!(std::mem::align_of::<GpuAabb>(), 4);
+pub type GpuVertex = Vertex;
 
-pub(super) fn map_aabb(aabb: Aabb<f32>) -> GpuAabb {
-	GpuAabb {
-		center: aabb.center(),
-		half_extent: aabb.half_size().into(),
-	}
-}
+const_assert_eq!(std::mem::size_of::<Vertex>(), 32);
+const_assert_eq!(std::mem::align_of::<Vertex>(), 4);
 
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-pub struct GpuBvhNode {
-	pub aabbs: [GpuAabb; 8],
-	pub lod_bounds: [Vec4<f32>; 8],
-	pub parent_errors: [f32; 8],
-	pub child_offsets: [u32; 8],
-	pub child_counts: [u8; 8],
-}
-const_assert_eq!(std::mem::size_of::<GpuBvhNode>(), 392);
-const_assert_eq!(std::mem::align_of::<GpuBvhNode>(), 4);
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-pub struct GpuMeshlet {
-	pub aabb: GpuAabb,
-	pub lod_bounds: Vec4<f32>,
-	pub error: f32,
-	pub vertex_byte_offset: u32,
-	pub index_byte_offset: u32,
-	pub vertex_count: u8,
-	pub triangle_count: u8,
-	pub _pad: u16,
-	pub max_edge_length: f32,
-}
-const_assert_eq!(std::mem::size_of::<GpuMeshlet>(), 60);
-const_assert_eq!(std::mem::align_of::<GpuMeshlet>(), 4);
-
-pub(super) fn map_sphere(sphere: Sphere<f32, f32>) -> Vec4<f32> { sphere.center.with_w(sphere.radius) }
-
+#[derive(Encode, Decode)]
 pub struct Mesh {
+	pub vertices: Vec<Vertex>,
+	pub indices: Vec<u32>,
+	pub material: AssetId<Material>,
+}
+
+impl BincodeAsset for Mesh {
+	const UUID: Uuid = uuid!("63d17036-5d82-4d70-a15e-103e72559abe");
+}
+
+pub struct RaytracingMeshView {
 	buffer: Buffer,
-	raw_buffer: Buffer,
 	as_: AS,
-	raw_vertex_count: u32,
-	raw_tri_count: u32,
-	bvh_depth: u32,
-	aabb: Aabb<f32>,
-	material: ARef<Material>,
+	vertex_count: u32,
+	tri_count: u32,
+	material: LARef<MaterialView>,
 }
 
-impl Mesh {
-	pub fn import(name: &str, import: import::MeshData, mut into: Box<dyn AssetView + '_>) -> Result<(), io::Error> {
-		let data = import::import(name, import);
-		into.clear()?;
-		bincode::encode_into_std_write(data, &mut into.new_section()?, bincode::config::standard()).map_err(
-			|x| match x {
-				EncodeError::Io { inner, .. } => inner,
-				_ => io::Error::new(io::ErrorKind::Other, "bincode error"),
-			},
-		)?;
+impl AssetView for RaytracingMeshView {
+	type Base = Mesh;
+	type Ctx = ();
 
-		Ok(())
-	}
-
-	pub fn bvh_depth(&self) -> u32 { self.bvh_depth }
-
-	pub fn raw_vertex_count(&self) -> u32 { self.raw_vertex_count }
-
-	pub fn raw_tri_count(&self) -> u32 { self.raw_tri_count }
-
-	pub fn aabb(&self) -> Aabb<f32> { self.aabb }
-
-	pub fn gpu_ptr(&self) -> GpuPtr<u8> { self.buffer.ptr() }
-
-	pub fn raw_gpu_ptr(&self) -> GpuPtr<GpuVertex> { self.raw_buffer.ptr() }
-
-	pub fn as_addr(&self) -> u64 { self.as_.addr() }
-
-	pub fn material(&self) -> &ARef<Material> { &self.material }
-}
-
-impl Asset for Mesh {
-	fn uuid() -> Uuid
-	where
-		Self: Sized,
-	{
-		uuid!("0ab1a518-ced8-41c9-ae55-9c208a461636")
-	}
-
-	fn unloaded() -> Self
-	where
-		Self: Sized,
-	{
-		Self {
-			buffer: Buffer::default(),
-			raw_buffer: Buffer::default(),
-			as_: AS::default(),
-			raw_vertex_count: 0,
-			raw_tri_count: 0,
-			bvh_depth: 0,
-			aabb: Aabb::default(),
-			material: ARef::unknown(),
-		}
-	}
-
-	fn load(mut data: Box<dyn AssetView>) -> Result<Self, io::Error>
-	where
-		Self: Sized,
-	{
-		let s = span!(Level::TRACE, "decode mesh");
-		let _e = s.enter();
-
+	fn load(_: &'static Self::Ctx, m: Self::Base) -> Result<Self, io::Error> {
 		let device: &Device = Engine::get().global();
-		data.seek_begin()?;
-		let m: data::Mesh =
-			bincode::decode_from_reader(BufReader::new(data.read_section()?), bincode::config::standard()).map_err(
-				|x| match x {
-					DecodeError::Io { inner, .. } => inner,
-					_ => io::Error::new(io::ErrorKind::Other, "bincode error"),
-				},
-			)?;
-		let name = data.name();
-
-		let bvh_byte_offset = 0;
-		let bvh_byte_len = (m.bvh.len() * std::mem::size_of::<GpuBvhNode>()) as u64;
-		let meshlet_byte_offset = bvh_byte_offset + bvh_byte_len;
-		let meshlet_byte_len = (m.meshlets.len() * std::mem::size_of::<GpuMeshlet>()) as u64;
-		let vertex_byte_offset = meshlet_byte_offset + meshlet_byte_len;
-		let vertex_byte_len = (m.vertices.len() * std::mem::size_of::<GpuVertex>()) as u64;
-		let index_byte_offset = vertex_byte_offset + vertex_byte_len;
-		let index_byte_len = (m.indices.len() * std::mem::size_of::<u8>()) as u64;
-		let size = index_byte_offset + index_byte_len;
+		// TODO: fips.
+		let name = "raytracing mesh";
 
 		let buffer = Buffer::create(
 			device,
 			BufferDesc {
-				name: &format!("{name} buffer"),
-				size,
-				readback: false,
-			},
-		)
-		.map_err(|x| io::Error::new(io::ErrorKind::Other, format!("failed to create mesh buffer: {:?}", x)))?;
-		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
-
-		for node in m.bvh {
-			writer.write(GpuBvhNode {
-				aabbs: node.aabbs.map(map_aabb),
-				lod_bounds: node.lod_bounds.map(map_sphere),
-				parent_errors: node.parent_errors,
-				child_offsets: array::from_fn(|i| {
-					if node.child_counts[i] == u8::MAX {
-						bvh_byte_offset as u32 + node.child_offsets[i] * std::mem::size_of::<GpuBvhNode>() as u32
-					} else {
-						meshlet_byte_offset as u32 + node.child_offsets[i] * std::mem::size_of::<GpuMeshlet>() as u32
-					}
-				}),
-				child_counts: node.child_counts,
-			});
-		}
-
-		for me in m.meshlets.iter() {
-			writer.write(GpuMeshlet {
-				aabb: map_aabb(me.aabb),
-				lod_bounds: map_sphere(me.lod_bounds),
-				error: me.error,
-				vertex_byte_offset: vertex_byte_offset as u32
-					+ (me.vert_offset * std::mem::size_of::<GpuVertex>() as u32),
-				index_byte_offset: index_byte_offset as u32 + (me.index_offset * std::mem::size_of::<u8>() as u32),
-				vertex_count: me.vert_count,
-				triangle_count: me.tri_count,
-				_pad: 0,
-				max_edge_length: me.max_edge_length,
-			});
-		}
-
-		writer.write_slice(&m.vertices);
-		writer.write_slice(&m.indices);
-
-		let raw_buffer = Buffer::create(
-			device,
-			BufferDesc {
 				name: &format!("{name} raw buffer"),
-				size: (cast_slice::<_, u8>(&m.raw_vertices).len() + cast_slice::<_, u8>(&m.raw_indices).len()) as u64,
+				size: (cast_slice::<_, u8>(&m.vertices).len() + cast_slice::<_, u8>(&m.indices).len()) as u64,
 				readback: false,
 			},
 		)?;
-		let mut writer = SliceWriter::new(unsafe { raw_buffer.data().as_mut() });
-		writer.write_slice(&m.raw_vertices);
-		writer.write_slice(&m.raw_indices);
+		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
+		writer.write_slice(&m.vertices);
+		writer.write_slice(&m.indices);
 
 		unsafe {
 			let geo = [vk::AccelerationStructureGeometryKHR::default()
@@ -234,14 +91,13 @@ impl Asset for Mesh {
 					triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
 						.vertex_format(vk::Format::R32G32B32_SFLOAT)
 						.vertex_data(vk::DeviceOrHostAddressConstKHR {
-							device_address: raw_buffer.ptr::<u8>().addr(),
+							device_address: buffer.ptr::<u8>().addr(),
 						})
 						.vertex_stride(std::mem::size_of::<GpuVertex>() as _)
-						.max_vertex(m.raw_indices.len() as u32 - 1)
+						.max_vertex(m.indices.len() as u32 - 1)
 						.index_type(vk::IndexType::UINT32)
 						.index_data(vk::DeviceOrHostAddressConstKHR {
-							device_address: raw_buffer.ptr::<u8>().addr()
-								+ cast_slice::<_, u8>(&m.raw_vertices).len() as u64,
+							device_address: buffer.ptr::<u8>().addr() + cast_slice::<_, u8>(&m.vertices).len() as u64,
 						}),
 				})];
 			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
@@ -253,7 +109,7 @@ impl Asset for Mesh {
 				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
 				.geometries(&geo);
 			let mut sinfo = vk::AccelerationStructureBuildSizesInfoKHR::default();
-			let tri_count = m.raw_indices.len() as u32 / 3;
+			let tri_count = m.indices.len() as u32 / 3;
 			device.as_ext().get_acceleration_structure_build_sizes(
 				vk::AccelerationStructureBuildTypeKHR::DEVICE,
 				&info,
@@ -370,20 +226,13 @@ impl Asset for Mesh {
 			pool.destroy(device);
 			old.destroy(device);
 
-			Ok(Mesh {
+			Ok(Self {
 				buffer,
-				raw_buffer,
 				as_,
-				raw_vertex_count: m.raw_vertices.len() as _,
-				raw_tri_count: (m.raw_indices.len() / 3) as _,
-				bvh_depth: m.bvh_depth,
-				aabb: m.aabb,
-				material: m.material,
+				vertex_count: m.vertices.len() as _,
+				tri_count,
+				material: ARef::loaded(m.material)?,
 			})
 		}
-	}
-
-	fn save(&self, _: &mut dyn AssetView) -> Result<(), io::Error> {
-		Err(io::Error::new(io::ErrorKind::Unsupported, "meshes cannot be edited"))
 	}
 }

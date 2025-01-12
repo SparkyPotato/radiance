@@ -17,10 +17,10 @@ use rad_graph::{
 };
 use vek::Vec3;
 
-use crate::assets::image::{Image, ImageData};
+use crate::assets::image::{ImageAsset, ImageAssetView};
 
 pub struct TonyMcMapfaceTonemap {
-	lut: Image,
+	lut: ImageAssetView,
 	sampler: SamplerId,
 	pass: FullscreenPass<PushConstants>,
 }
@@ -39,9 +39,9 @@ impl TonyMcMapfaceTonemap {
 
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
-			lut: Image::from_data(
+			lut: ImageAssetView::new(
 				"tony mcmapface lut",
-				ImageData {
+				ImageAsset {
 					size: Vec3::broadcast(48),
 					format: vk::Format::E5B9G9R9_UFLOAT_PACK32.as_raw(),
 					data: Self::LUT.into(),

@@ -1,8 +1,9 @@
 [workspace]
 members = [
-	"crates/rad*",
-	"crates/nvtt/nvtt",
-	"crates/nvtt/nvtt-sys",
+	"crates/*",
+	"ext/vek",
+	"ext/nvtt/nvtt",
+	"ext/nvtt/nvtt-sys",
 ]
 resolver = "2"
 
@@ -28,6 +29,9 @@ rad-window = { path = "crates/rad-window" }
 rad-world = { path = "crates/rad-world" }
 rad-world-derive = { path = "crates/rad-world-derive" }
 
+nvtt_rs = { path = "ext/nvtt/nvtt", features = ["cuda"] }
+vek = { path = "ext/vek", features = ["bytemuck", "serde"] }
+
 ash = "0.38.0"
 bevy_ecs = { version = "0.15.0", features = ["bevy_reflect", "serialize", "trace"] }
 bevy_reflect = "0.15.0"
@@ -43,7 +47,6 @@ hashbrown = { version = "0.14.5", features = ["nightly"] }
 metis = "0.2.1"
 meshopt = { git = "https://github.com/SparkyPotato/meshopt-rs" }
 notify-debouncer-full = "0.4.0"
-nvtt_rs = { path = "crates/nvtt/nvtt", features = ["cuda"] }
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
 proc-macro2 = "1.0.92"
 rand = "0.8.5"
@@ -64,7 +67,6 @@ tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 tracy = { package = "tracy_full", version = "1.10.0", features = ["tracing", "enable"] }
 uuid = { version = "1.11.0", features = ["bytemuck", "serde", "v4"] }
-vek = { path = "crates/vek", features = ["bytemuck", "serde"] }
 walkdir = "2.5.0"
 winit = "0.30.5"
 zstd = "0.13.2"

@@ -1,83 +1,117 @@
 use std::io::{self, Write};
 
 use ash::vk;
-use bincode::{config::standard, Decode, Encode};
+use bincode::{Decode, Encode};
 use nvtt_rs::{CompressionOptions, Container, Context, Format, InputFormat, OutputOptions, Surface, CUDA_SUPPORTED};
 use rad_core::{
-	asset::{Asset, AssetView, Uuid},
+	asset::{AssetView, BincodeAsset, CookedAsset, Uuid},
 	uuid,
 	Engine,
 };
 use rad_graph::{
 	cmd::CommandPool,
-	device::{Device, QueueWait, Transfer},
-	resource::{self, Buffer, BufferDesc, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, Subresource},
+	device::{descriptor::ImageId, Device, QueueWait, Transfer},
+	resource::{Buffer, BufferDesc, Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, Subresource},
 	sync::{get_image_barrier, ImageBarrier, UsageType},
 };
-use tracing::trace_span;
 use vek::Vec3;
 
-pub struct Image {
-	image: resource::Image,
+#[derive(Encode, Decode)]
+pub struct ImageAsset {
+	#[bincode(with_serde)]
+	pub size: Vec3<u32>,
+	/// This is a  `vk::Format` but that's not serializable so...
+	pub format: i32,
+	pub data: Vec<u8>,
+}
+
+impl BincodeAsset for ImageAsset {
+	const UUID: Uuid = uuid!("e68fac6b-41d0-48c5-a5ff-3e6cfe9b53f0");
+}
+
+impl CookedAsset for ImageAsset {
+	type Base = ImageAsset;
+
+	fn cook(base: &Self::Base) -> Self {
+		// TODO: bad
+		let in_fmt = vk::Format::from_raw(base.format);
+		let (in_fmt, out_fmt, out_vk_fmt) =
+			if in_fmt == vk::Format::B8G8R8A8_UNORM || in_fmt == vk::Format::B8G8R8A8_SRGB {
+				(
+					InputFormat::Bgra8Ub {
+						data: &base.data,
+						unsigned_to_signed: false,
+					},
+					Format::Bc7,
+					if in_fmt == vk::Format::B8G8R8A8_SRGB {
+						vk::Format::BC7_SRGB_BLOCK
+					} else {
+						vk::Format::BC7_UNORM_BLOCK
+					},
+				)
+			} else if in_fmt == vk::Format::B8G8R8A8_SNORM {
+				(
+					InputFormat::Bgra8Sb(&base.data),
+					Format::Bc7,
+					vk::Format::BC7_UNORM_BLOCK,
+				)
+			} else if in_fmt == vk::Format::R16G16B16A16_SFLOAT {
+				(
+					InputFormat::Rgba16f(&base.data),
+					Format::Bc6S,
+					vk::Format::BC6H_SFLOAT_BLOCK,
+				)
+			} else if in_fmt == vk::Format::R32G32B32A32_SFLOAT {
+				(
+					InputFormat::Rgba32f(&base.data),
+					Format::Bc6S,
+					vk::Format::BC6H_SFLOAT_BLOCK,
+				)
+			} else if in_fmt == vk::Format::R32_SFLOAT {
+				(
+					InputFormat::R32f(&base.data),
+					Format::Bc6S,
+					vk::Format::BC6H_SFLOAT_BLOCK,
+				)
+			} else {
+				panic!("unsupported format")
+			};
+		let image = Surface::image(in_fmt, base.size.x, base.size.y, base.size.z).expect("invalid data");
+
+		let mut context = Context::new();
+		if *CUDA_SUPPORTED {
+			context.set_cuda_acceleration(true);
+		}
+
+		let mut opts = CompressionOptions::new();
+		opts.set_format(out_fmt);
+
+		let mut out_opts = OutputOptions::new();
+		out_opts.set_srgb_flag(true);
+		out_opts.set_output_header(false);
+		out_opts.set_container(Container::Dds10);
+
+		Self {
+			size: base.size,
+			format: out_vk_fmt.as_raw(),
+			data: context.compress(&image, &opts, &out_opts).unwrap(),
+		}
+	}
+}
+
+pub struct ImageAssetView {
+	image: Image,
 	view: ImageView,
 }
 
-#[derive(Encode, Decode)]
-pub(crate) struct ImageData {
-	#[bincode(with_serde)]
-	pub(crate) size: Vec3<u32>,
-	pub(crate) format: i32,
-	pub(crate) data: Vec<u8>,
-}
-
-impl Asset for Image {
-	fn uuid() -> Uuid
-	where
-		Self: Sized,
-	{
-		uuid!("e68fac6b-41d0-48c5-a5ff-3e6cfe9b53f0")
-	}
-
-	fn unloaded() -> Self
-	where
-		Self: Sized,
-	{
-		Self {
-			image: resource::Image::default(),
-			view: ImageView::default(),
-		}
-	}
-
-	fn load(mut view: Box<dyn AssetView>) -> Result<Self, std::io::Error>
-	where
-		Self: Sized,
-	{
-		view.seek_begin()?;
-		let data: ImageData = bincode::decode_from_std_read(&mut view.read_section()?, standard())
-			.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-		let name = view.name();
-		Self::from_data(name, data)
-	}
-
-	fn save(&self, _: &mut dyn AssetView) -> Result<(), std::io::Error> {
-		Err(io::Error::new(io::ErrorKind::Unsupported, "images cannot be edited"))
-	}
-}
-
-pub struct ImportImage<'a> {
-	pub data: &'a [u8],
-	pub width: u32,
-	pub height: u32,
-	pub is_normal_map: bool,
-	pub is_srgb: bool,
-}
-
-impl Image {
-	pub fn image(&self) -> &resource::Image { &self.image }
+impl ImageAssetView {
+	pub fn image(&self) -> &Image { &self.image }
 
 	pub fn view(&self) -> &ImageView { &self.view }
 
-	pub(crate) fn from_data(name: &str, data: ImageData) -> Result<Self, std::io::Error> {
+	pub fn id(&self) -> ImageId { self.view.id.unwrap() }
+
+	pub fn new(name: &str, data: ImageAsset) -> Result<Self, std::io::Error> {
 		let device: &Device = Engine::get().global();
 		let size = vk::Extent3D {
 			width: data.size.x,
@@ -85,7 +119,7 @@ impl Image {
 			depth: data.size.z,
 		};
 		let format = vk::Format::from_raw(data.format);
-		let image = resource::Image::create(
+		let image = Image::create(
 			device,
 			ImageDesc {
 				name,
@@ -194,53 +228,14 @@ impl Image {
 
 		Ok(Self { image, view })
 	}
+}
 
-	pub fn import(name: &str, data: ImportImage, mut into: Box<dyn AssetView>) -> Result<(), io::Error> {
-		let s = trace_span!("import image", name = name);
-		let _e = s.enter();
+impl AssetView for ImageAssetView {
+	type Base = ImageAsset;
+	type Ctx = ();
 
-		let image = Surface::image(
-			InputFormat::Bgra8Ub {
-				data: data.data,
-				unsigned_to_signed: false,
-			},
-			data.width,
-			data.height,
-			1,
-		)
-		.map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{:?}", e)))?;
-
-		let mut context = Context::new();
-		if *CUDA_SUPPORTED {
-			context.set_cuda_acceleration(true);
-		}
-
-		let mut opts = CompressionOptions::new();
-		opts.set_format(Format::Bc7);
-
-		let mut out_opts = OutputOptions::new();
-		out_opts.set_srgb_flag(true);
-		out_opts.set_output_header(false);
-		out_opts.set_container(Container::Dds10);
-
-		let write = context.compress(&image, &opts, &out_opts).unwrap();
-		into.clear()?;
-		bincode::encode_into_std_write(
-			ImageData {
-				size: Vec3::new(data.width, data.height, 1),
-				format: if data.is_srgb {
-					vk::Format::BC7_SRGB_BLOCK
-				} else {
-					vk::Format::BC7_UNORM_BLOCK
-				}
-				.as_raw(),
-				data: write,
-			},
-			&mut into.new_section()?,
-			standard(),
-		)
-		.map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-
-		Ok(())
+	fn load(_: &'static Self::Ctx, base: Self::Base) -> Result<Self, io::Error> {
+		// TODO: fix
+		Self::new("image asset", base)
 	}
 }
