@@ -598,6 +598,8 @@ impl AS {
 
 	pub fn size(&self) -> u64 { self.buffer.size() }
 
+	pub fn inner(&self) -> &Buffer { &self.buffer }
+
 	pub fn buf_handle(&self) -> BufferHandle { self.buffer.handle() }
 }
 

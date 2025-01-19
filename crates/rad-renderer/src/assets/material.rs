@@ -44,7 +44,7 @@ impl BincodeAsset for Material {
 
 #[derive(Copy, Clone, Default, Pod, Zeroable)]
 #[repr(C)]
-struct GpuMaterial {
+pub struct GpuMaterial {
 	base_color: Option<ImageId>,
 	base_color_factor: Vec4<f32>,
 	metallic_roughness: Option<ImageId>,
@@ -59,10 +59,11 @@ pub struct MaterialView {
 	ptr: GpuPtr<GpuMaterial>,
 	buf: BufRef,
 	ctx: &'static MaterialBuffers,
-	base_color: Option<LARef<ImageAssetView>>,
-	metallic_roughness: Option<LARef<ImageAssetView>>,
-	normal: Option<LARef<ImageAssetView>>,
-	emissive: Option<LARef<ImageAssetView>>,
+	pub base_color: Option<LARef<ImageAssetView>>,
+	pub metallic_roughness: Option<LARef<ImageAssetView>>,
+	pub normal: Option<LARef<ImageAssetView>>,
+	pub emissive: Option<LARef<ImageAssetView>>,
+	pub emissive_factor: Vec3<f32>,
 }
 
 impl MaterialView {
@@ -86,7 +87,7 @@ struct BufRef {
 	id: u32,
 }
 
-struct MaterialBuffers {
+pub struct MaterialBuffers {
 	inner: RwLock<MaterialBuffersInner>,
 }
 
@@ -186,6 +187,7 @@ impl MaterialBuffers {
 			metallic_roughness,
 			normal,
 			emissive,
+			emissive_factor: mat.emissive_factor,
 		}
 	}
 

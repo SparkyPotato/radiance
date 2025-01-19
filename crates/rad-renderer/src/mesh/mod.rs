@@ -12,10 +12,8 @@ use vek::Vec2;
 
 pub use crate::mesh::setup::{DebugRes, DebugResId};
 use crate::{
-	components::camera::CameraComponent,
 	mesh::{bvh::BvhCull, hzb::HzbGen, instance::InstanceCull, meshlet::MeshletCull, setup::Setup},
-	scene::{GpuInstance, GpuTransform, SceneReader},
-	PrimaryViewData,
+	scene::{camera::GpuCamera, virtual_scene::GpuInstance, WorldRenderer},
 };
 
 mod bvh;
@@ -26,7 +24,6 @@ mod setup;
 
 #[derive(Clone)]
 pub struct RenderInfo {
-	pub data: PrimaryViewData,
 	pub size: Vec2<u32>,
 	pub debug_info: bool,
 }
@@ -90,7 +87,7 @@ pub struct GpuVisBufferReader {
 #[derive(Copy, Clone)]
 pub struct RenderOutput {
 	pub stats: CullStats,
-	pub scene: SceneReader,
+	pub instances: Res<BufferHandle>,
 	pub camera: Res<BufferHandle>,
 	pub reader: VisBufferReader,
 }
@@ -107,28 +104,6 @@ pub struct VisBuffer {
 	no_debug: Passes,
 	debug: Passes,
 	mesh: ext::mesh_shader::Device,
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, NoUninit)]
-pub struct CameraData {
-	transform: GpuTransform,
-	w: f32,
-	h: f32,
-	near: f32,
-}
-
-impl CameraData {
-	pub fn new(aspect: f32, camera: CameraComponent, transform: GpuTransform) -> Self {
-		let h = (camera.fov / 2.0).tan().recip();
-		let w = h / aspect;
-		Self {
-			transform,
-			w,
-			h,
-			near: camera.near,
-		}
-	}
 }
 
 #[repr(C)]
@@ -151,7 +126,7 @@ pub struct CullStats {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
-	camera: GpuPtr<CameraData>,
+	camera: GpuPtr<GpuCamera>,
 	queue: GpuPtr<u8>,
 	stats: GpuPtr<CullStats>,
 	output: StorageImageId,
@@ -299,11 +274,13 @@ impl VisBuffer {
 		)
 	}
 
-	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> RenderOutput {
+	pub fn run<'pass>(
+		&'pass mut self, frame: &mut Frame<'pass, '_>, rend: &mut WorldRenderer<'pass, '_>, info: RenderInfo,
+	) -> RenderOutput {
 		frame.start_region("visbuffer");
 
 		let rstats = self.setup.stats;
-		let res = self.setup.run(frame, &info, self.hzb_gen.sampler());
+		let res = self.setup.run(frame, rend, &info, self.hzb_gen.sampler());
 
 		frame.start_region("early pass");
 		frame.start_region("cull");
@@ -366,7 +343,7 @@ impl VisBuffer {
 		frame.end_region();
 		RenderOutput {
 			stats: rstats,
-			scene: res.scene,
+			instances: res.scene.instances,
 			camera,
 			reader: VisBufferReader {
 				visbuffer,

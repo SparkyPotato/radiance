@@ -1,3 +1,4 @@
+#![feature(associated_type_defaults)]
 #![feature(coerce_unsized)]
 #![feature(once_cell_try)]
 #![feature(trait_upcasting)]

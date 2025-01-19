@@ -15,10 +15,10 @@ public static const f32 GROUND_RADIUS_MM = 6.36f;
 public static const f32 ATMOSPHERE_RADIUS_MM = 6.46f;
 public static const f32x3 GROUND_ALBEDO = f32x3(0.3f);
 
-public static const f32x3 RAYLEIGH_SCATTERING_BASE = f32x3(6.604931f, 12.344918f, 29.412623f);
+public static const f32x3 RAYLEIGH_SCATTERING_BASE = f32x3(5.802f, 13.558f, 33.1f);
 public static const f32 RAYLEIGH_ABSORPTION_BASE = 0.0f;
 public static const f32 MIE_SCATTERING_BASE = 3.996f;
-public static const f32 MIE_ABSORPTION_BASE = 4.4f;
+public static const f32 MIE_ABSORPTION_BASE = 0.444f;
 public static const f32x3 OZONE_ABSORPTION_BASE = f32x3(0.65f, 1.881f, 0.85f);
 
 public f32 mie_phase(f32 cos) {

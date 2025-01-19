@@ -1,8 +1,9 @@
 use std::io;
 
 use bevy_ecs::{
-	component::ComponentInfo,
+	component::{Component, ComponentInfo},
 	entity::Entity,
+	reflect::ReflectComponent,
 	world::{EntityRef, EntityWorldMut, World},
 };
 use bevy_reflect::{
@@ -40,10 +41,9 @@ use serde::{
 	Deserializer,
 };
 
-use crate::{rad_world, ty_reg, uuid_to_ty, RadComponent};
+use crate::{ty_reg, uuid_to_ty, ReflectRadComponent};
 
-#[derive(Copy, Clone, RadComponent)]
-#[uuid("51197bdd-435f-4e2f-9ecc-d919d3a46d32")]
+#[derive(Copy, Clone, Component)]
 pub struct DoNotSerialize;
 
 pub fn serialize_entity(mut into: &mut dyn io::Write, world: &World, en: EntityRef) -> Result<(), io::Error> {
@@ -74,6 +74,10 @@ fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &Compo
 			format!("component (`{}`) not registered", info.name()),
 		)
 	})?;
+
+	let Some(ref_rad) = reg.data::<ReflectRadComponent>() else {
+		return Ok(());
+	};
 	let refl = reg
 		.data::<ReflectComponent>()
 		.ok_or_else(|| {
@@ -84,18 +88,7 @@ fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &Compo
 		})?
 		.reflect(en)
 		.unwrap();
-
-	let uuid = (reg
-		.data::<ReflectRadComponent>()
-		.ok_or_else(|| {
-			io::Error::new(
-				io::ErrorKind::InvalidData,
-				format!("component (`{}`) not reflectable", info.name()),
-			)
-		})?
-		.get_func)(refl)
-	.unwrap()
-	.uuid_dyn();
+	let uuid = (ref_rad.get_func)(refl).unwrap().uuid_dyn();
 
 	bincode::encode_into_std_write(ComponentEncoder { uuid, comp: refl }, &mut into, c).map_err(map_enc_err)?;
 

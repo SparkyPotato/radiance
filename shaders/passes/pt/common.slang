@@ -7,7 +7,7 @@ import passes.bsdf;
 import passes.sky;
 
 public struct PushConstants {
-	public Instance<NonUniform>* instances;
+	public RtInstance<NonUniform>* instances;
 	public Light* lights;
 	public Camera* camera;
 	public AS as;

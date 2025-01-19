@@ -25,7 +25,7 @@ impl<'a> SliceWriter<'a> {
 
 pub struct ResizableBuffer {
 	name: String,
-	inner: Buffer,
+	pub inner: Buffer,
 }
 
 impl ResizableBuffer {

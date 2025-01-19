@@ -56,11 +56,11 @@ impl BincodeAsset for Mesh {
 }
 
 pub struct RaytracingMeshView {
-	buffer: Buffer,
-	as_: AS,
-	vertex_count: u32,
-	tri_count: u32,
-	material: LARef<MaterialView>,
+	pub buffer: Buffer,
+	pub as_: AS,
+	pub vertex_count: u32,
+	pub tri_count: u32,
+	pub material: LARef<MaterialView>,
 }
 
 impl AssetView for RaytracingMeshView {

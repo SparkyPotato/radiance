@@ -17,13 +17,11 @@ use rad_graph::{
 	resource::{BufferHandle, ImageView, Subresource},
 	sync::Shader,
 };
-use rad_world::system::WorldId;
 use vek::Vec2;
 
 use crate::{
-	components::camera::CameraComponent,
-	mesh::{CameraData, CullStats, RenderInfo},
-	scene::{GpuTransform, SceneReader},
+	mesh::{CullStats, RenderInfo},
+	scene::{camera::CameraScene, virtual_scene::VirtualScene, WorldRenderer},
 };
 
 #[derive(Copy, Clone)]
@@ -52,7 +50,7 @@ unsafe impl PodInOption for DebugResId {}
 unsafe impl ZeroableInOption for DebugResId {}
 
 pub struct Resources {
-	pub scene: SceneReader,
+	pub scene: VirtualScene,
 	pub camera: Res<BufferHandle>,
 	pub hzb: Res<ImageView>,
 	pub hzb_sampler: SamplerId,
@@ -175,14 +173,7 @@ impl Resources {
 	}
 }
 
-struct Persistent {
-	id: WorldId,
-	camera: CameraComponent,
-	transform: GpuTransform,
-}
-
 pub struct Setup {
-	inner: Option<Persistent>,
 	pub stats: CullStats,
 }
 
@@ -191,44 +182,22 @@ fn prev_pot(x: u32) -> u32 { 1 << x.ilog2() }
 impl Setup {
 	pub fn new() -> Self {
 		Self {
-			inner: None,
 			stats: CullStats::default(),
 		}
 	}
 
 	pub fn run<'pass>(
-		&'pass mut self, frame: &mut Frame<'pass, '_>, info: &RenderInfo, hzb_sampler: SamplerId,
+		&'pass mut self, frame: &mut Frame<'pass, '_>, rend: &mut WorldRenderer<'pass, '_>, info: &RenderInfo,
+		hzb_sampler: SamplerId,
 	) -> Resources {
-		let (needs_clear, prev) = match &mut self.inner {
-			Some(Persistent { id, camera, transform }) => {
-				let prev = *transform;
-				*transform = info.data.transform;
-				if info.data.id != *id || info.data.camera != *camera {
-					*id = info.data.id;
-					*camera = info.data.camera;
-					(true, prev)
-				} else {
-					(false, prev)
-				}
-			},
-			None => {
-				self.inner = Some(Persistent {
-					id: info.data.id,
-					camera: info.data.camera,
-					transform: info.data.transform,
-				});
-				(true, info.data.transform)
-			},
-		};
+		let scene = rend.get::<VirtualScene>(frame);
+		let camera = rend.get::<CameraScene>(frame);
+
+		// TODO: handle world change.
+		let needs_clear = camera.prev.camera != camera.curr.camera;
 		let res = info.size;
-		let cam = info.data.camera;
-		let transform = info.data.transform;
 
 		let mut pass = frame.pass("setup cull buffers");
-		let camera = pass.resource(
-			BufferDesc::upload(std::mem::size_of::<CameraData>() as u64 * 2),
-			BufferUsage { usages: &[] },
-		);
 		let size = info.size.map(prev_pot);
 		let hzb = pass.resource(
 			ImageDesc {
@@ -260,7 +229,7 @@ impl Setup {
 		let count = 1024 * 1024u32;
 		let usage = BufferUsage::transfer_write();
 		let late_instances = pass.resource(
-			BufferDesc::gpu(((info.data.scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _),
+			BufferDesc::gpu(((scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _),
 			usage,
 		);
 		let desc = BufferDesc::gpu((count as u64 * 2 + 9) * std::mem::size_of::<u32>() as u64);
@@ -305,16 +274,6 @@ impl Setup {
 		});
 
 		pass.build(move |mut pass| {
-			let aspect = res.x as f32 / res.y as f32;
-			pass.write(
-				camera,
-				0,
-				&[
-					CameraData::new(aspect, cam, transform),
-					CameraData::new(aspect, cam, prev),
-				],
-			);
-
 			if needs_clear | pass.is_uninit(hzb) {
 				pass.zero(hzb);
 			}
@@ -338,8 +297,8 @@ impl Setup {
 		});
 
 		Resources {
-			scene: info.data.scene,
-			camera,
+			scene,
+			camera: camera.buf,
 			hzb,
 			hzb_sampler,
 			late_instances,

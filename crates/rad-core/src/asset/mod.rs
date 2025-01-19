@@ -27,6 +27,7 @@ pub trait AssetWrite: Write {
 
 pub trait Asset: Sized {
 	const UUID: Uuid;
+	type RealBase: Asset = Self;
 
 	fn load(from: Box<dyn AssetRead>) -> Result<Self, io::Error>;
 
@@ -35,8 +36,11 @@ pub trait Asset: Sized {
 
 pub trait BincodeAsset: Encode + Decode + Sized {
 	const UUID: Uuid;
+	type RealBase: Asset = Self;
 }
 impl<T: BincodeAsset> Asset for T {
+	type RealBase = T::RealBase;
+
 	const UUID: Uuid = T::UUID;
 
 	fn load(mut from: Box<dyn AssetRead>) -> Result<Self, io::Error> {
@@ -112,7 +116,7 @@ impl AssetRegistry {
 		}
 	}
 
-	pub fn load_asset<T: Asset>(&self, id: AssetId<T>) -> Result<T, io::Error> {
+	pub fn load_asset<T: Asset>(&self, id: AssetId<T::RealBase>) -> Result<T, io::Error> {
 		for src in self.sources.iter().rev() {
 			match src.load(id.to_untyped(), T::UUID) {
 				Ok(from) => return T::load(from),

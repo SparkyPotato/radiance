@@ -8,23 +8,25 @@ use rad_graph::{
 		SamplerDesc,
 		ShaderInfo,
 	},
-	graph::{BufferDesc, BufferUsage, Frame, ImageDesc, ImageUsage, Res},
+	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Res},
 	resource::{self, Buffer, GpuPtr, ImageView, Resource},
 	sync::Shader,
 	Result,
 };
-use rad_world::system::WorldId;
 use rand::{thread_rng, RngCore};
 use vek::Vec2;
 
 use crate::{
-	mesh::CameraData,
-	scene::{GpuInstance, GpuLight, GpuTransform},
+	scene::{
+		camera::{CameraScene, GpuCamera},
+		light::{GpuLight, LightScene},
+		rt_scene::{GpuRtInstance, RtScene},
+		WorldRenderer,
+	},
 	sky::{GpuSkySampler, SkySampler},
-	PrimaryViewData,
 };
 
-// TODO: reset on world edit.
+// TODO: reset on world change and edit.
 pub struct PathTracer {
 	pipeline: vk::Pipeline,
 	sbt: Buffer,
@@ -32,13 +34,11 @@ pub struct PathTracer {
 	miss: vk::StridedDeviceAddressRegionKHR,
 	hit: vk::StridedDeviceAddressRegionKHR,
 	sampler: SamplerId,
-	cached: Option<(WorldId, GpuTransform, Vec2<u32>)>,
+	cached: Option<Vec2<u32>>,
 	samples: u32,
 }
 
-#[derive(Clone)]
 pub struct RenderInfo {
-	pub data: PrimaryViewData,
 	pub sky: SkySampler,
 	pub size: Vec2<u32>,
 }
@@ -46,9 +46,9 @@ pub struct RenderInfo {
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
-	instances: GpuPtr<GpuInstance>,
+	instances: GpuPtr<GpuRtInstance>,
 	lights: GpuPtr<GpuLight>,
-	camera: GpuPtr<CameraData>,
+	camera: GpuPtr<GpuCamera>,
 	as_: GpuPtr<u8>,
 	sampler: SamplerId,
 	out: StorageImageId,
@@ -208,14 +208,21 @@ impl PathTracer {
 		}
 	}
 
-	pub fn run<'pass>(&'pass mut self, frame: &mut Frame<'pass, '_>, info: RenderInfo) -> (Res<ImageView>, u32) {
+	pub fn run<'pass>(
+		&'pass mut self, frame: &mut Frame<'pass, '_>, rend: &mut WorldRenderer<'pass, '_>, info: RenderInfo,
+	) -> (Res<ImageView>, u32) {
+		let rt = rend.get::<RtScene>(frame);
+		let camera = rend.get::<CameraScene>(frame);
+		let lights = rend.get::<LightScene>(frame);
+
 		let mut pass = frame.pass("path trace");
 
 		let read = BufferUsage::read(Shader::RayTracing);
-		pass.reference(info.data.scene.as_, read);
-		pass.reference(info.data.scene.instances, read);
+		pass.reference(rt.instances, read);
+		pass.reference(rt.as_, read);
+		pass.reference(camera.buf, read);
+		pass.reference(lights.buf, read);
 		info.sky.reference(&mut pass, Shader::RayTracing);
-		let camera = pass.resource(BufferDesc::upload(std::mem::size_of::<CameraData>() as _), read);
 
 		let out = pass.resource(
 			ImageDesc {
@@ -234,35 +241,24 @@ impl PathTracer {
 		);
 
 		if let Some(c) = self.cached {
-			if c.0 != info.data.id || c.1 != info.data.transform || c.2 != info.size {
+			if c != info.size {
 				self.samples = 0;
 			}
 		}
-		self.cached = Some((info.data.id, info.data.transform, info.size));
+		self.cached = Some(info.size);
 
 		let s = self.samples;
 		pass.build(move |mut pass| {
-			if pass.is_uninit(out) {
+			if pass.is_uninit(out) || camera.prev != camera.curr {
 				self.samples = 0;
 			}
-			pass.write(
-				camera,
-				0,
-				&[CameraData::new(
-					info.size.x as f32 / info.size.y as f32,
-					info.data.camera,
-					info.data.transform,
-				)],
-			);
 
 			let out = pass.get(out);
-			let as_ = pass
-				.get(info.data.scene.as_)
-				.ptr()
-				.offset(info.data.scene.as_offset as _);
-			let instances = pass.get(info.data.scene.instances).ptr();
-			let lights = pass.get(info.data.scene.lights).ptr();
-			let camera = pass.get(camera);
+			let as_ = pass.get(rt.as_).ptr().offset(rt.as_offset);
+			let instances = pass.get(rt.instances).ptr();
+			let light_count = lights.count;
+			let lights = pass.get(lights.buf).ptr();
+			let camera = pass.get(camera.buf).ptr();
 			let sky = info.sky.to_gpu(&mut pass);
 
 			unsafe {
@@ -274,13 +270,13 @@ impl PathTracer {
 					&PushConstants {
 						instances,
 						lights,
-						camera: camera.ptr(),
+						camera,
 						as_,
 						sampler: self.sampler,
 						out: out.storage_id.unwrap(),
 						seed: thread_rng().next_u32(),
 						samples: self.samples,
-						light_count: info.data.scene.light_count,
+						light_count,
 						sky,
 					},
 				);

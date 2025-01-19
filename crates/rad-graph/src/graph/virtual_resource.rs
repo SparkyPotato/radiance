@@ -73,6 +73,8 @@ pub struct BufferUsageOwned<A: Allocator> {
 }
 
 impl BufferUsage<'_> {
+	pub fn none() -> BufferUsageArray<0> { BufferUsageArray { usages: [] } }
+
 	pub fn read(shader: Shader) -> BufferUsageArray<1> {
 		BufferUsageArray {
 			usages: [BufferUsageType::ShaderStorageRead(shader)],

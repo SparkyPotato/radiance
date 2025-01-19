@@ -13,8 +13,8 @@ use rad_graph::{
 use vek::Vec2;
 
 use crate::{
-	mesh::{setup::Resources, CameraData, CullStats},
-	scene::GpuInstance,
+	mesh::{setup::Resources, CullStats},
+	scene::{camera::GpuCamera, virtual_scene::GpuInstance},
 };
 
 pub struct InstanceCull {
@@ -26,7 +26,7 @@ pub struct InstanceCull {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
-	camera: GpuPtr<CameraData>,
+	camera: GpuPtr<GpuCamera>,
 	hzb: ImageId,
 	hzb_sampler: SamplerId,
 	next: GpuPtr<u8>,
@@ -72,7 +72,8 @@ impl InstanceCull {
 
 		let instance_count = resources.scene.instance_count;
 		let hzb_sampler = resources.hzb_sampler;
-		let frame = resources.scene.frame;
+		// TODO: fix
+		let frame = 0;
 		let res = resources.res;
 		pass.build(move |mut pass| {
 			let push = PushConstants {

@@ -28,7 +28,7 @@ pub fn component(input: TokenStream) -> TokenStream {
 	let path: proc_macro2::TokenStream = path.expand_expr().unwrap().into();
 
 	quote! {
-		use rad_world::{ReflectRadComponent, Component, ReflectComponent};
+		use rad_world::{ReflectRadComponent, bevy_ecs::{prelude::Component, reflect::ReflectComponent}};
 		use rad_world::bevy_reflect as bevy_reflect;
 
 		rad_world::bevy_reflect::impl_reflect! {
@@ -39,10 +39,10 @@ pub fn component(input: TokenStream) -> TokenStream {
 		}
 
 		impl #im Component for #name #ty #wh {
-			const STORAGE_TYPE: rad_world::StorageType = rad_world::StorageType::Table;
+			const STORAGE_TYPE: rad_world::bevy_ecs::component::StorageType = rad_world::bevy_ecs::component::StorageType::Table;
 		}
 
-		impl #im RadComponent for #name #ty #wh {
+		impl #im rad_world::RadComponent for #name #ty #wh {
 			fn uuid() -> rad_world::Uuid
 			where
 				Self: Sized { rad_world::uuid!(#uuid) }

@@ -14,7 +14,10 @@ use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{asset::AssetView, Engine};
+use crate::{
+	asset::{Asset, AssetView},
+	Engine,
+};
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Pod, Zeroable, Encode, Decode, Reflect)]
 #[serde(transparent)]
@@ -71,7 +74,7 @@ impl<T> AssetId<T> {
 }
 
 struct ARefData<T: AssetView> {
-	id: AssetId<T::Base>,
+	id: AssetId<<T::Base as Asset>::RealBase>,
 	data: OnceLock<T>,
 }
 
@@ -83,10 +86,12 @@ pub struct ARef<T: AssetView> {
 
 impl<T: AssetView> ARef<T> {
 	/// Creates an unloaded asset view reference. The returned reference might be loaded if the asset is already loaded.
-	pub fn unloaded(id: AssetId<T::Base>) -> Self { Engine::get().assets().cache::<T>().unloaded(id) }
+	pub fn unloaded(id: AssetId<<T::Base as Asset>::RealBase>) -> Self {
+		Engine::get().assets().cache::<T>().unloaded(id)
+	}
 
 	/// Create a loaded asset view reference. This function will block until the asset view is loaded.
-	pub fn loaded(id: AssetId<T::Base>) -> Result<LARef<T>, io::Error> {
+	pub fn loaded(id: AssetId<<T::Base as Asset>::RealBase>) -> Result<LARef<T>, io::Error> {
 		Engine::get().assets().cache::<T>().loaded(id)
 	}
 
@@ -114,7 +119,7 @@ impl<T: AssetView> Deref for LARef<T> {
 
 pub struct AssetCache<T: AssetView> {
 	context: T::Ctx,
-	loaded: RwLock<FxHashMap<AssetId<T::Base>, Arc<ARefData<T>>>>,
+	loaded: RwLock<FxHashMap<AssetId<<T::Base as Asset>::RealBase>, Arc<ARefData<T>>>>,
 }
 
 impl<T: AssetView> AssetCache<T> {
@@ -125,7 +130,7 @@ impl<T: AssetView> AssetCache<T> {
 		}
 	}
 
-	pub fn unloaded(&self, id: AssetId<T::Base>) -> ARef<T> {
+	pub fn unloaded(&self, id: AssetId<<T::Base as Asset>::RealBase>) -> ARef<T> {
 		let read = self.loaded.read().unwrap();
 		match read.get(&id) {
 			Some(data) => ARef { inner: data.clone() },
@@ -146,7 +151,7 @@ impl<T: AssetView> AssetCache<T> {
 		}
 	}
 
-	pub fn loaded(&'static self, id: AssetId<T::Base>) -> Result<LARef<T>, io::Error> {
+	pub fn loaded(&'static self, id: AssetId<<T::Base as Asset>::RealBase>) -> Result<LARef<T>, io::Error> {
 		let inner = self.unloaded(id);
 		self.load(&inner.inner)?;
 		Ok(LARef { inner })

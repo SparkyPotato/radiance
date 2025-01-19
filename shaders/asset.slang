@@ -103,10 +103,7 @@ public struct Instance<U : Uniformity = Uniform> {
 	public Aabb aabb;
 	public u64 update_frame;
 	public u8* mesh;
-	public Vertex* raw_mesh;
 	public Material<U>* material;
-	public u32 raw_vertex_count;
-	public u32 raw_tri_count;
 
 	public BvhNode node(u32 offset) {
 		return *(BvhNode*)(this.mesh + offset);
@@ -123,6 +120,14 @@ public struct Instance<U : Uniformity = Uniform> {
 			return this.transform;
 		}
 	}
+}
+
+public struct RtInstance<U : Uniformity = Uniform> {
+	public Transform transform;
+	public Vertex* raw_mesh;
+	public u32 raw_vertex_count;
+	public u32 raw_tri_count;
+	public Material<U>* material;
 }
 
 public struct Meshlet {

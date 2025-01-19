@@ -145,6 +145,8 @@ const_assert_eq!(std::mem::align_of::<GpuMeshlet>(), 4);
 pub(super) fn map_sphere(sphere: Sphere<f32, f32>) -> Vec4<f32> { sphere.center.with_w(sphere.radius) }
 
 impl BincodeAsset for VirtualMesh {
+	type RealBase = Mesh;
+
 	const UUID: Uuid = uuid!("36e2ce93-453f-4bb2-ad98-83e327a58ae6");
 }
 
@@ -786,6 +788,8 @@ impl VirtualMeshView {
 	pub fn bvh_depth(&self) -> u32 { self.bvh_depth }
 
 	pub fn aabb(&self) -> Aabb<f32> { self.aabb }
+
+	pub fn gpu_aabb(&self) -> GpuAabb { map_aabb(self.aabb) }
 
 	pub fn gpu_ptr(&self) -> GpuPtr<u8> { self.buffer.ptr() }
 

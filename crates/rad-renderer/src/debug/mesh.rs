@@ -9,8 +9,8 @@ use rad_graph::{
 };
 
 use crate::{
-	mesh::{CameraData, GpuVisBufferReaderDebug, RenderOutput},
-	scene::GpuInstance,
+	mesh::{GpuVisBufferReaderDebug, RenderOutput},
+	scene::{camera::GpuCamera, virtual_scene::GpuInstance},
 	util::SliceWriter,
 };
 
@@ -57,7 +57,7 @@ pub struct DebugMesh {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	instances: GpuPtr<GpuInstance>,
-	camera: GpuPtr<CameraData>,
+	camera: GpuPtr<GpuCamera>,
 	read: GpuVisBufferReaderDebug,
 	highlighted: GpuPtr<u32>,
 	highlight_count: u32,
@@ -87,7 +87,7 @@ impl DebugMesh {
 	) -> Res<ImageView> {
 		let mut pass = frame.pass("debug mesh");
 
-		pass.reference(output.scene.instances, BufferUsage::read(Shader::Fragment));
+		pass.reference(output.instances, BufferUsage::read(Shader::Fragment));
 		pass.reference(output.camera, BufferUsage::read(Shader::Fragment));
 		output.reader.add(&mut pass, Shader::Fragment, true);
 
@@ -130,7 +130,7 @@ impl DebugMesh {
 				DebugVis::Overdraw(s) => s,
 				_ => 0.0,
 			};
-			let instances = pass.get(output.scene.instances).ptr();
+			let instances = pass.get(output.instances).ptr();
 			let camera = pass.get(output.camera).ptr();
 			let read = output.reader.get_debug(&mut pass);
 			self.pass.run_one(

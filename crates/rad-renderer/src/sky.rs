@@ -18,7 +18,7 @@ use rad_graph::{
 };
 use vek::Vec3;
 
-use crate::PrimaryViewData;
+use crate::scene::{camera::CameraScene, light::LightScene, WorldRenderer};
 
 pub struct SkyLuts {
 	transmittance: FullscreenPass<()>,
@@ -113,8 +113,11 @@ impl SkyLuts {
 		})
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, data: PrimaryViewData) -> SkySampler {
-		frame.start_region("sky lut");
+	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, rend: &mut WorldRenderer<'pass, '_>) -> SkySampler {
+		let camera = rend.get::<CameraScene>(frame);
+		let lights = rend.get::<LightScene>(frame);
+
+		frame.start_region("sky");
 		let format = Self::FORMAT;
 
 		let mut pass = frame.pass("transmittance");
@@ -203,8 +206,8 @@ impl SkyLuts {
 					transmittance,
 					scattering,
 					sampler: self.sampler,
-					cam_pos: data.transform.position,
-					sun_dir: -data.scene.sun_dir,
+					cam_pos: camera.curr.transform.position,
+					sun_dir: -lights.sun_dir,
 				},
 				&[Attachment {
 					image: lut,
@@ -220,8 +223,8 @@ impl SkyLuts {
 			lut,
 			transmittance: trans,
 			sampler: self.sampler,
-			sun_dir: -data.scene.sun_dir,
-			sun_radiance: data.scene.sun_radiance,
+			sun_dir: -lights.sun_dir,
+			sun_radiance: lights.sun_radiance,
 		}
 	}
 

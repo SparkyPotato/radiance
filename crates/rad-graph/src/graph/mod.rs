@@ -489,4 +489,4 @@ struct PassData<'pass, 'graph> {
 	callback: Box<dyn FnOnce(PassContext<'_, 'graph>) + 'pass, &'graph Arena>,
 }
 
-type ArenaMap<'graph, K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>, &'graph Arena>;
+pub type ArenaMap<'graph, K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>, &'graph Arena>;
