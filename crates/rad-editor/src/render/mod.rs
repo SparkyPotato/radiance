@@ -4,6 +4,7 @@ use rad_renderer::{
 	debug::mesh::DebugMesh,
 	mesh::{self, VisBuffer},
 	pt::{self, PathTracer},
+	scene::{camera::CameraSceneInfo, WorldRenderer},
 	sky::SkyLuts,
 	tonemap::{
 		aces::AcesTonemap,
@@ -83,17 +84,20 @@ impl Renderer {
 				self.camera.control(ctx);
 				self.camera.apply(world.editor_mut());
 				world.edit_tick();
+				let mut rend = WorldRenderer::new(world.world_mut(), frame.arena());
+
+				rend.set_input(CameraSceneInfo {
+					aspect: size.x / size.y,
+				});
 
 				let vis = self.debug_window.debug_vis();
-				let data = world.renderer().update(frame, self.frame);
-
 				let (img, stats, exp) = match self.debug_window.render_mode() {
 					RenderMode::Path => {
-						let sky = self.sky.run(frame, data);
+						let sky = self.sky.run(frame, &mut rend);
 						let (hdr, s) = self.pt.run(
 							frame,
+							&mut rend,
 							pt::RenderInfo {
-								data,
 								sky,
 								size: Vec2::new(size.x as u32, size.y as u32),
 							},
@@ -116,8 +120,8 @@ impl Renderer {
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(
 							frame,
+							&mut rend,
 							mesh::RenderInfo {
-								data,
 								size: Vec2::new(size.x as u32, size.y as u32),
 								debug_info: vis.requires_debug_info(),
 							},

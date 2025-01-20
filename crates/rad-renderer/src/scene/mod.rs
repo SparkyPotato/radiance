@@ -25,6 +25,26 @@ pub mod light;
 pub mod rt_scene;
 pub mod virtual_scene;
 
+pub fn register_gpu_scene<T: GpuScene>(world: &mut World, tick: &mut Tick) {
+	// TODO: only sync if necessary
+	world.insert_resource(SceneRunCondition::<T> {
+		run: if std::any::TypeId::of::<T>() == std::any::TypeId::of::<virtual_scene::VirtualScene>() {
+			false
+		} else {
+			true
+		},
+		_phantom: PhantomData,
+	});
+	T::add_to_world(world, tick);
+}
+
+pub fn register_all_gpu_scenes(world: &mut World, tick: &mut Tick) {
+	register_gpu_scene::<camera::CameraScene>(world, tick);
+	register_gpu_scene::<light::LightScene>(world, tick);
+	register_gpu_scene::<rt_scene::RtScene>(world, tick);
+	register_gpu_scene::<virtual_scene::VirtualScene>(world, tick);
+}
+
 pub trait GpuScene: Copy + 'static {
 	type In;
 	type Res: Resource;
@@ -71,20 +91,22 @@ pub struct WorldRenderer<'pass, 'graph> {
 
 impl<'pass, 'graph> WorldRenderer<'pass, 'graph> {
 	pub fn new(world: &'pass mut World, arena: &'graph Arena) -> Self {
-		Self {
+		let mut this = Self {
 			world: world.as_unsafe_world_cell(),
 			inputs: ArenaMap::with_hasher_in(Default::default(), arena),
 			scene_cache: ArenaMap::with_hasher_in(Default::default(), arena),
-		}
+		};
+		this.set_input(());
+		this
 	}
 
-	pub fn set_input<T: GpuScene>(&mut self, input: T::In) {
+	pub fn set_input<T: 'static>(&mut self, input: T) {
 		self.inputs
 			.insert(TypeId::of::<T>(), Box::new_in(input, *self.inputs.allocator()));
 	}
 
 	pub fn get<T: GpuScene>(&mut self, frame: &mut Frame<'pass, '_>) -> T {
-		let input = self.inputs.get(&TypeId::of::<T>()).unwrap();
+		let input = self.inputs.get(&TypeId::of::<T::In>()).unwrap();
 		let arena = *self.scene_cache.allocator();
 		match self.scene_cache.entry(TypeId::of::<T>()) {
 			Entry::Occupied(e) => *e.get().downcast_ref::<T>().unwrap(),

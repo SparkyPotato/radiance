@@ -263,7 +263,7 @@ impl RtSceneData {
 			update: ComputePass::new(
 				dev,
 				ShaderInfo {
-					shader: "assets.scene.update_rt",
+					shader: "asset.scene.update_rt",
 					spec: &[],
 				},
 			)
@@ -273,7 +273,7 @@ impl RtSceneData {
 			as_: AS::default(),
 			as_instances: ResizableBuffer::new(
 				dev,
-				"rt instances",
+				"rt as instances",
 				std::mem::size_of::<vk::AccelerationStructureInstanceKHR>() as u64 * 1000,
 			)
 			.unwrap(),

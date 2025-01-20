@@ -10,7 +10,7 @@ pub mod components;
 pub mod debug;
 pub mod mesh;
 pub mod pt;
-mod scene;
+pub mod scene;
 pub mod sky;
 pub mod tonemap;
 mod util;
@@ -19,6 +19,11 @@ pub struct RendererModule;
 
 impl Module for RendererModule {
 	fn init(engine: &mut EngineBuilder) {
+		engine.asset_view::<assets::mesh::RaytracingMeshView>();
+		engine.asset_view::<assets::mesh::virtual_mesh::VirtualMeshView>();
+		engine.asset_view::<assets::image::ImageAssetView>();
+		engine.asset_view::<assets::material::MaterialView>();
+
 		engine.component::<components::mesh::MeshComponent>();
 		engine.component_dep_type::<Vec<AssetId<assets::mesh::Mesh>>>();
 		engine.component::<components::light::LightComponent>();

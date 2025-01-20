@@ -6,7 +6,7 @@ use rad_window::winit::{
 	keyboard::{KeyCode, PhysicalKey},
 	window::{CursorGrabMode, Window},
 };
-use rad_world::{transform::Transform, EntityWrite};
+use rad_world::{bevy_ecs::world::EntityMut, transform::Transform};
 
 #[derive(Default)]
 struct MouseGrabber {
@@ -133,8 +133,8 @@ impl CameraController {
 		}
 	}
 
-	pub fn apply(&self, mut entity: EntityWrite<'_>) {
-		let t = entity.component_mut::<Transform>().unwrap();
+	pub fn apply(&self, mut entity: EntityMut<'_>) {
+		let mut t = entity.get_mut::<Transform>().unwrap();
 		t.position = self.pos;
 		t.rotation = Quaternion::identity().rotated_x(self.pitch).rotated_z(self.yaw);
 	}

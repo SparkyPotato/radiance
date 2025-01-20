@@ -5,21 +5,25 @@ use std::{
 	ops::Deref,
 	path::{Path, PathBuf},
 	sync::Arc,
-	time::SystemTime,
 };
 
 use bytemuck::{Pod, Zeroable};
 use parking_lot::RwLock;
-use rad_core::asset::{AssetId, AssetSource, AssetView};
+use rad_core::asset::{
+	aref::{AssetId, UntypedAssetId},
+	Asset,
+	AssetRead,
+	AssetSource,
+	AssetWrite,
+};
 use rad_world::Uuid;
 use rustc_hash::{FxHashMap, FxHashSet};
-use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
 pub struct AssetHeader {
-	pub id: AssetId,
+	pub id: UntypedAssetId,
 	pub ty: Uuid,
 }
 
@@ -57,19 +61,12 @@ impl Dir {
 	}
 }
 
-#[derive(Default, Serialize, Deserialize)]
-#[serde(transparent)]
-struct ImportPaths {
-	paths: FxHashMap<PathBuf, AssetId>,
-}
-
 #[derive(Default)]
 pub struct FsAssetSystem {
 	root: RwLock<Option<PathBuf>>,
-	assets: RwLock<FxHashMap<AssetId, PathBuf>>,
-	by_type: RwLock<FxHashMap<Uuid, FxHashSet<AssetId>>>,
+	assets: RwLock<FxHashMap<UntypedAssetId, PathBuf>>,
+	by_type: RwLock<FxHashMap<Uuid, FxHashSet<UntypedAssetId>>>,
 	dir: RwLock<Dir>,
-	paths: RwLock<ImportPaths>,
 }
 
 impl FsAssetSystem {
@@ -78,7 +75,6 @@ impl FsAssetSystem {
 			root: RwLock::new(std::env::args().nth(1).map(PathBuf::from)),
 			..Default::default()
 		});
-		let _ = this.load_imports();
 		let a = this.clone();
 		// TODO: yuck
 		std::thread::spawn(move || loop {
@@ -92,34 +88,22 @@ impl FsAssetSystem {
 
 	pub fn open(&self, root: PathBuf) { *self.root.write() = Some(root) }
 
-	pub fn create(
-		&self, rel_path: &Path, id: AssetId, ty: Uuid, from: Option<PathBuf>,
-	) -> Result<Box<dyn AssetView>, io::Error> {
-		if let Some(from) = from {
-			self.paths.write().paths.insert(from, id);
-		}
-		let _ = self.write_imports();
+	pub fn create<T: Asset>(&self, rel_path: &Path, id: AssetId<T>) -> Result<FsAssetView, io::Error> {
 		let path = self
 			.abs_path(rel_path)
 			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
 		fs::create_dir_all(path.parent().unwrap())?;
-		let view = FsAssetView::create(&path, id, ty).map(|x| Box::new(x) as Box<_>);
 
-		let header = AssetHeader { id, ty };
-		self.add_asset(rel_path, header);
+		let view = FsAssetView::create(&path, id);
+		self.add_asset(
+			rel_path,
+			AssetHeader {
+				id: id.to_untyped(),
+				ty: T::UUID,
+			},
+		);
 
 		view
-	}
-
-	pub fn import_source_of(&self, path: &Path) -> Option<(AssetId, SystemTime)> {
-		let &id = self.paths.read().paths.get(path)?;
-		let mtime = self.assets.read().get(&id).map(|x| {
-			x.metadata()
-				.ok()
-				.and_then(|x| x.modified().ok())
-				.unwrap_or(SystemTime::UNIX_EPOCH)
-		})?;
-		Some((id, mtime))
 	}
 
 	pub fn dir(&self) -> impl Deref<Target = Dir> + '_ { self.dir.read() }
@@ -186,103 +170,62 @@ impl FsAssetSystem {
 			.as_ref()
 			.map(|x| x.join(rel_path).with_added_extension("radass"))
 	}
-
-	fn load_imports(&self) -> Result<(), io::Error> {
-		let root = self.root.read();
-		let path = root
-			.as_ref()
-			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
-		let path = path.join(".imports.json");
-		let imports = if path.exists() {
-			let file = fs::File::open(&path)?;
-			serde_json::from_reader(file)?
-		} else {
-			ImportPaths::default()
-		};
-		*self.paths.write() = imports;
-		Ok(())
-	}
-
-	fn write_imports(&self) -> Result<(), io::Error> {
-		let root = self.root.read();
-		let path = root
-			.as_ref()
-			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
-		let path = path.join(".imports.json");
-		let file = fs::File::create(&path)?;
-		serde_json::to_writer_pretty(file, &*self.paths.read())?;
-		Ok(())
-	}
 }
 
 impl AssetSource for FsAssetSystem {
-	fn load(&self, id: AssetId) -> Result<(Uuid, Box<dyn AssetView>), io::Error> {
-		let mut view = FsAssetView::open(
-			self.assets
-				.read()
-				.get(&id)
-				.ok_or(io::Error::new(io::ErrorKind::NotFound, "asset not found"))?,
-		)?;
-		Ok((view.header()?.ty, Box::new(view)))
+	fn load(&self, id: UntypedAssetId, ty: Uuid) -> Result<Box<dyn AssetRead>, io::Error> {
+		let assets = self.assets.read();
+		let path = assets
+			.get(&id)
+			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "asset not found"))?;
+		let mut view = FsAssetView::open_ro(path)?;
+		let h = view.header()?;
+		// TODO: cooka
+		if h.ty != ty {
+			return Err(io::Error::new(io::ErrorKind::InvalidData, "asset type mismatch"));
+		}
+		Ok(Box::new(view))
 	}
 }
 
-struct FsAssetView {
+pub struct FsAssetView {
 	file: fs::File,
-	name: String,
 }
 
-impl AssetView for FsAssetView {
-	fn name(&self) -> &str { self.name.as_str() }
-
-	fn clear(&mut self) -> Result<(), io::Error> { self.file.set_len(std::mem::size_of::<AssetHeader>() as _) }
-
-	fn new_section(&mut self) -> Result<Box<dyn io::Write + '_>, io::Error> {
-		Ok(Box::new(zstd::Encoder::new(&mut self.file, 16)?.auto_finish()))
-	}
-
-	fn seek_begin(&mut self) -> Result<(), io::Error> {
-		self.file
-			.seek(io::SeekFrom::Start(std::mem::size_of::<AssetHeader>() as _))?;
-		Ok(())
-	}
-
-	fn read_section(&mut self) -> Result<Box<dyn io::Read + '_>, io::Error> {
-		Ok(Box::new(zstd::Decoder::new(&mut self.file)?))
-	}
+// TODO: buffer and compress
+impl Read for FsAssetView {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.file.read(buf) }
 }
+impl AssetRead for FsAssetView {}
+
+impl Write for FsAssetView {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.file.write(buf) }
+
+	fn flush(&mut self) -> io::Result<()> { self.file.flush() }
+}
+impl AssetWrite for FsAssetView {}
 
 impl FsAssetView {
-	fn name(path: &Path) -> String {
-		path.with_extension("")
-			.file_name()
-			.unwrap()
-			.to_string_lossy()
-			.into_owned()
-	}
-
 	fn open(path: &Path) -> Result<Self, io::Error> {
 		Ok(Self {
 			file: fs::OpenOptions::new().read(true).write(true).create(true).open(path)?,
-			name: Self::name(path),
 		})
 	}
 
 	fn open_ro(path: &Path) -> Result<Self, io::Error> {
 		Ok(Self {
 			file: fs::OpenOptions::new().read(true).open(path)?,
-			name: Self::name(path),
 		})
 	}
 
-	fn create(path: &Path, id: AssetId, ty: Uuid) -> Result<Self, io::Error> {
+	fn create<T: Asset>(path: &Path, id: AssetId<T>) -> Result<Self, io::Error> {
 		let mut file = fs::OpenOptions::new().read(true).write(true).create(true).open(path)?;
-		let header = AssetHeader { id, ty };
+		let header = AssetHeader {
+			id: id.to_untyped(),
+			ty: T::UUID,
+		};
 		file.write_all(bytemuck::bytes_of(&header))?;
-		Ok(Self {
-			file,
-			name: Self::name(path),
-		})
+		Ok(Self { file })
 	}
 
 	fn header(&mut self) -> Result<AssetHeader, io::Error> {

@@ -1,12 +1,14 @@
-use rad_core::asset::aref::ARef;
-use rad_renderer::assets::image::Image;
+use std::io;
+
+use rad_core::asset::aref::{ARef, AssetId, LARef};
+use rad_renderer::assets::image::{ImageAsset, ImageAssetView};
 use rad_ui::{
 	egui::{self, Context, Id, Sense, Window},
 	raw_texture_to_id,
 };
 
 pub struct ImagePreviewer {
-	previews: Vec<ARef<Image>>,
+	previews: Vec<LARef<ImageAssetView>>,
 }
 
 impl ImagePreviewer {
@@ -17,7 +19,7 @@ impl ImagePreviewer {
 		for (i, img) in self.previews.iter().enumerate() {
 			let mut open = true;
 			Window::new("image preview")
-				.id(Id::new("image preview").with(img.asset_id()))
+				.id(Id::new("image preview").with(img.id()))
 				.open(&mut open)
 				.show(ctx, |ui| {
 					let rect = ui.available_rect_before_wrap();
@@ -46,5 +48,8 @@ impl ImagePreviewer {
 		}
 	}
 
-	pub fn add_preview(&mut self, image: ARef<Image>) { self.previews.push(image); }
+	pub fn add_preview(&mut self, image: AssetId<ImageAsset>) -> Result<(), io::Error> {
+		self.previews.push(ARef::loaded(image)?);
+		Ok(())
+	}
 }

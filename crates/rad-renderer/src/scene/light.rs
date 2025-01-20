@@ -150,7 +150,7 @@ impl LightSceneData {
 			update: ComputePass::new(
 				dev,
 				ShaderInfo {
-					shader: "asset.scene.light_update",
+					shader: "asset.scene.update_light",
 					spec: &[],
 				},
 			)

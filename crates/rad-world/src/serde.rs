@@ -67,7 +67,10 @@ pub fn serialize_entity(mut into: &mut dyn io::Write, world: &World, en: EntityR
 fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &ComponentInfo) -> Result<(), io::Error> {
 	let c = bincode::config::standard();
 
-	let Some(ty) = info.type_id() else { return Ok(()) };
+	let Some(ty) = info.type_id() else {
+		panic!("component (`{}`) not reflectable", info.name());
+		return Ok(());
+	};
 	let reg = ty_reg().get(ty).ok_or_else(|| {
 		io::Error::new(
 			io::ErrorKind::InvalidData,
@@ -76,6 +79,7 @@ fn serialize_component(mut into: &mut dyn io::Write, en: EntityRef, info: &Compo
 	})?;
 
 	let Some(ref_rad) = reg.data::<ReflectRadComponent>() else {
+		panic!("component (`{}`) not reflectable", info.name());
 		return Ok(());
 	};
 	let refl = reg
@@ -124,7 +128,7 @@ struct ComponentEncoder<'a> {
 
 impl Encode for ComponentEncoder<'_> {
 	fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
-		Encode::encode(&Compat(self.uuid), encoder)?;
+		Encode::encode(self.uuid.as_bytes(), encoder)?;
 		Encode::encode(&DynEncoder { val: self.comp }, encoder)?;
 
 		Ok(())
@@ -138,11 +142,11 @@ struct CompenentDecoder {
 
 impl Decode for CompenentDecoder {
 	fn decode<D: Decoder>(decoder: &mut D) -> Result<Self, DecodeError> {
-		let uuid: Compat<Uuid> = Decode::decode(decoder)?;
-		let id = uuid_to_ty(uuid.0).ok_or_else(|| DecodeError::Io {
+		let uuid = Uuid::from_bytes(Decode::decode(decoder)?);
+		let id = uuid_to_ty(uuid).ok_or_else(|| DecodeError::Io {
 			inner: io::Error::new(
 				io::ErrorKind::InvalidData,
-				format!("unknown component UUID (`{}`) not registered", uuid.0),
+				format!("unknown component UUID (`{}`) not registered", uuid),
 			),
 			additional: 0,
 		})?;
@@ -166,6 +170,7 @@ struct DynEncoder<'a> {
 
 impl Encode for DynEncoder<'_> {
 	fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), EncodeError> {
+		// TODO: this is incorrect if the entity points to a dead one.
 		if let Some::<&Entity>(e) = self.val.try_downcast_ref() {
 			return Encode::encode(&e.index(), encoder);
 		}

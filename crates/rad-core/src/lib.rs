@@ -11,7 +11,7 @@ use std::{
 
 use rustc_hash::FxHashMap;
 
-use crate::asset::{AssetRegistry, AssetSource, AssetView};
+use crate::asset::{aref::AssetId, Asset, AssetRegistry, AssetSource, AssetView};
 
 pub mod asset;
 
@@ -35,7 +35,11 @@ impl Engine {
 
 	pub fn try_global<T: Any + Send + Sync>(&self) -> Option<&T> { self.globals.get() }
 
-	fn assets(&self) -> &AssetRegistry { &self.assets }
+	pub fn asset_source<T: AssetSource>(&self) -> &T { self.assets.source::<T>() }
+
+	pub fn load_asset<T: Asset>(&self, id: AssetId<T::RealBase>) -> Result<T, std::io::Error> {
+		self.assets.load_asset(id)
+	}
 
 	pub unsafe fn destroy() { std::ptr::drop_in_place(&ENGINE as *const _ as *mut OnceLock<Engine>); }
 }

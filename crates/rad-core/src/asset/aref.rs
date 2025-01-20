@@ -25,6 +25,10 @@ use crate::{
 #[reflect(opaque, Serialize, Deserialize)]
 pub struct UntypedAssetId(#[bincode(with_serde)] Uuid);
 
+impl UntypedAssetId {
+	pub unsafe fn typed<T: Asset>(self) -> AssetId<T> { AssetId(self, PhantomData) }
+}
+
 impl Debug for UntypedAssetId {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
 }
@@ -87,19 +91,21 @@ pub struct ARef<T: AssetView> {
 impl<T: AssetView> ARef<T> {
 	/// Creates an unloaded asset view reference. The returned reference might be loaded if the asset is already loaded.
 	pub fn unloaded(id: AssetId<<T::Base as Asset>::RealBase>) -> Self {
-		Engine::get().assets().cache::<T>().unloaded(id)
+		Engine::get().assets.cache::<T>().unloaded(id)
 	}
 
 	/// Create a loaded asset view reference. This function will block until the asset view is loaded.
 	pub fn loaded(id: AssetId<<T::Base as Asset>::RealBase>) -> Result<LARef<T>, io::Error> {
-		Engine::get().assets().cache::<T>().loaded(id)
+		Engine::get().assets.cache::<T>().loaded(id)
 	}
 
 	/// Load the asset view. This function will block until the asset view is loaded.
 	pub fn load(self) -> Result<LARef<T>, io::Error> {
-		Engine::get().assets().cache::<T>().load(&self.inner)?;
+		Engine::get().assets.cache::<T>().load(&self.inner)?;
 		Ok(LARef { inner: self })
 	}
+
+	pub fn id(&self) -> AssetId<<T::Base as Asset>::RealBase> { self.inner.id }
 }
 
 /// A loaded asset view
@@ -109,6 +115,8 @@ pub struct LARef<T: AssetView> {
 
 impl<T: AssetView> LARef<T> {
 	pub fn into_inner(self) -> ARef<T> { self.inner }
+
+	pub fn id(&self) -> AssetId<<T::Base as Asset>::RealBase> { self.inner.id() }
 }
 
 impl<T: AssetView> Deref for LARef<T> {
@@ -159,7 +167,7 @@ impl<T: AssetView> AssetCache<T> {
 
 	fn load<'a>(&'static self, inner: &'a ARefData<T>) -> Result<&'a T, io::Error> {
 		inner.data.get_or_try_init(|| {
-			let asset = Engine::get().assets().load_asset(inner.id)?;
+			let asset = Engine::get().assets.load_asset(inner.id)?;
 			T::load(&self.context, asset)
 		})
 	}

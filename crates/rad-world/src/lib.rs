@@ -121,7 +121,7 @@ impl Asset for World {
 		Ok(Self { inner })
 	}
 
-	fn save(&self, mut to: Box<dyn AssetWrite>) -> Result<(), io::Error> {
+	fn save(&self, mut to: &mut dyn AssetWrite) -> Result<(), io::Error> {
 		let c = bincode::config::standard();
 		let count = self.inner.entities().len();
 		bincode::encode_into_std_write(count, &mut to, c).map_err(map_enc_err)?;

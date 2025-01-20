@@ -12,7 +12,7 @@ impl Menu {
 	pub fn new() -> Self { Self {} }
 
 	pub fn render(&mut self, ctx: &Context, renderer: &mut Renderer) {
-		let fs: &Arc<FsAssetSystem> = Engine::get().asset_source().unwrap();
+		let fs: &Arc<FsAssetSystem> = Engine::get().asset_source();
 
 		let mut new = ctx.input_mut(|x| x.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::N)));
 		let mut open = ctx.input_mut(|x| x.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::O)));

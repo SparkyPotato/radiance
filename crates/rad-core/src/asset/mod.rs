@@ -1,6 +1,7 @@
 use std::{
 	any::{Any, TypeId},
 	io::{self, Read, Write},
+	sync::Arc,
 };
 
 use bincode::{
@@ -15,15 +16,9 @@ use crate::asset::aref::{AssetCache, AssetId, UntypedAssetId};
 
 pub mod aref;
 
-pub trait AssetRead: Read {
-	fn section_count(&self) -> u32;
+pub trait AssetRead: Read {}
 
-	fn seek_section(&self, id: u32) -> Result<(), io::Error>;
-}
-
-pub trait AssetWrite: Write {
-	fn next_section(&mut self) -> u32;
-}
+pub trait AssetWrite: Write {}
 
 pub trait Asset: Sized {
 	const UUID: Uuid;
@@ -31,7 +26,7 @@ pub trait Asset: Sized {
 
 	fn load(from: Box<dyn AssetRead>) -> Result<Self, io::Error>;
 
-	fn save(&self, to: Box<dyn AssetWrite>) -> Result<(), io::Error>;
+	fn save(&self, to: &mut dyn AssetWrite) -> Result<(), io::Error>;
 }
 
 pub trait BincodeAsset: Encode + Decode + Sized {
@@ -48,7 +43,7 @@ impl<T: BincodeAsset> Asset for T {
 		bincode::decode_from_std_read(&mut from, c).map_err(map_dec_err)
 	}
 
-	fn save(&self, mut to: Box<dyn AssetWrite>) -> Result<(), io::Error> {
+	fn save(&self, mut to: &mut dyn AssetWrite) -> Result<(), io::Error> {
 		let c = bincode::config::standard();
 		bincode::encode_into_std_write(self, &mut to, c).map_err(map_enc_err)?;
 		Ok(())
@@ -85,9 +80,15 @@ pub trait AssetView: Sized + Send + Sync + 'static {
 pub trait AssetSource: Send + Sync + 'static {
 	fn load(&self, id: UntypedAssetId, ty: Uuid) -> Result<Box<dyn AssetRead>, io::Error>;
 }
+impl<T: AssetSource> AssetSource for Arc<T> {
+	fn load(&self, id: UntypedAssetId, ty: Uuid) -> Result<Box<dyn AssetRead>, io::Error> {
+		T::load(self.as_ref(), id, ty)
+	}
+}
 
 pub struct AssetRegistry {
 	sources: Vec<Box<dyn AssetSource>>,
+	source_to_index: FxHashMap<TypeId, usize>,
 	views: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
@@ -95,14 +96,26 @@ impl AssetRegistry {
 	pub fn new() -> Self {
 		Self {
 			sources: Vec::new(),
+			source_to_index: FxHashMap::default(),
 			views: FxHashMap::default(),
 		}
 	}
 
-	pub fn register_source<T: AssetSource>(&mut self, source: T) { self.sources.push(Box::new(source)); }
+	pub fn register_source<T: AssetSource>(&mut self, source: T) {
+		let index = self.sources.len();
+		self.source_to_index.insert(TypeId::of::<T>(), index);
+		self.sources.push(Box::new(source));
+	}
 
 	pub fn register_view<T: AssetView>(&mut self) {
 		self.views.insert(TypeId::of::<T>(), Box::new(AssetCache::<T>::new()));
+	}
+
+	pub fn source<T: AssetSource>(&self) -> &T {
+		match self.source_to_index.get(&TypeId::of::<T>()) {
+			Some(&source) => unsafe { &*(self.sources[source].as_ref() as *const dyn AssetSource as *const T) },
+			None => panic!("source `{}` not registered", std::any::type_name::<T>()),
+		}
 	}
 
 	fn cache<T: AssetView>(&self) -> &AssetCache<T> {

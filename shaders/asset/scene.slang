@@ -75,3 +75,29 @@ void update_rt(u32 id: SV_DispatchThreadID) {
 	RConstants.as_instances[update.index] =
 		VkAccelerationStructureInstanceKHR(update.instance.transform.vk_mat(), 0xff << 24, 0, update.as);
 }
+
+struct VirtualUpdate {
+	u32 index;
+	u32 _pad;
+	u64 as;
+	Instance instance;
+}
+
+struct VirtualConstants {
+	Instance* instances;
+	VirtualUpdate* updates;
+	u32 count;
+}
+
+[vk::push_constant]
+VirtualConstants VConstants;
+
+[shader("compute")]
+[numthreads(64, 1, 1)]
+void update_virtual(u32 id: SV_DispatchThreadID) {
+	if (id >= VConstants.count)
+		return;
+
+	let update = VConstants.updates[id];
+	VConstants.instances[update.index] = update.instance;
+}

@@ -126,7 +126,7 @@ impl Buffer {
 	pub fn data(&self) -> NonNull<[u8]> {
 		unsafe {
 			NonNull::new_unchecked(std::ptr::slice_from_raw_parts_mut(
-				self.alloc.mapped_ptr().unwrap().as_ptr() as _,
+				self.alloc.mapped_ptr().unwrap_or(NonNull::dangling()).as_ptr() as _,
 				self.alloc.size() as _,
 			))
 		}
@@ -171,6 +171,10 @@ impl Resource for Buffer {
 		Self: Sized,
 	{
 		unsafe {
+			if desc.size == 0 {
+				return Ok(Self::default());
+			}
+
 			let info = vk::BufferCreateInfo::default()
 				.size(desc.size)
 				.usage(
@@ -183,7 +187,7 @@ impl Resource for Buffer {
 						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
 						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
 						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
-						// | vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
+						| vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
 				)
 				.sharing_mode(vk::SharingMode::CONCURRENT);
 

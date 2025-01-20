@@ -33,7 +33,7 @@ impl CookedAsset for ImageAsset {
 	type Base = ImageAsset;
 
 	fn cook(base: &Self::Base) -> Self {
-		// TODO: bad
+		// TODO: bad, swizzle to support more formats.
 		let in_fmt = vk::Format::from_raw(base.format);
 		let (in_fmt, out_fmt, out_vk_fmt) =
 			if in_fmt == vk::Format::B8G8R8A8_UNORM || in_fmt == vk::Format::B8G8R8A8_SRGB {
@@ -109,7 +109,7 @@ impl ImageAssetView {
 
 	pub fn view(&self) -> &ImageView { &self.view }
 
-	pub fn id(&self) -> ImageId { self.view.id.unwrap() }
+	pub fn image_id(&self) -> ImageId { self.view.id.unwrap() }
 
 	pub fn new(name: &str, data: ImageAsset) -> Result<Self, std::io::Error> {
 		let device: &Device = Engine::get().global();

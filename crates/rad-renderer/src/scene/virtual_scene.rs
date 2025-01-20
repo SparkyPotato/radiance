@@ -155,12 +155,13 @@ impl VirtualSceneData {
 			update: ComputePass::new(
 				dev,
 				ShaderInfo {
-					shader: "assets.scene.update_rt",
+					shader: "asset.scene.update_virtual",
 					spec: &[],
 				},
 			)
 			.unwrap(),
-			instances: ResizableBuffer::new(dev, "rt scene", std::mem::size_of::<GpuInstance>() as u64 * 1000).unwrap(),
+			instances: ResizableBuffer::new(dev, "virtual scene", std::mem::size_of::<GpuInstance>() as u64 * 1000)
+				.unwrap(),
 			instance_count: 0,
 			bvh_depth: 0,
 			updates: Vec::new(),

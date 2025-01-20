@@ -101,15 +101,7 @@ impl Default for MaterialBuffers {
 	fn default() -> Self {
 		Self {
 			inner: RwLock::new(MaterialBuffersInner {
-				buffers: vec![Buffer::create(
-					Engine::get().global(),
-					BufferDesc {
-						name: "materials",
-						size: Self::BUFFER_SIZE * Self::MATERIAL_SIZE,
-						readback: false,
-					},
-				)
-				.unwrap()],
+				buffers: vec![],
 				free: Vec::new(),
 				bump: 0,
 			}),
@@ -121,13 +113,13 @@ impl MaterialBuffers {
 	const BUFFER_SIZE: u64 = 1024;
 	const MATERIAL_SIZE: u64 = std::mem::size_of::<GpuMaterial>() as u64;
 
-	fn id(i: &Option<LARef<ImageAssetView>>) -> Option<ImageId> { i.as_ref().map(|i| i.id()) }
+	fn id(i: &Option<LARef<ImageAssetView>>) -> Option<ImageId> { i.as_ref().map(|i| i.image_id()) }
 
 	fn load(&'static self, mat: Material) -> MaterialView {
 		let mut inner = self.inner.write().unwrap();
 		let buf = if let Some(free) = inner.free.pop() {
 			free
-		} else if inner.bump < Self::BUFFER_SIZE as u32 {
+		} else if !inner.buffers.is_empty() && inner.bump < Self::BUFFER_SIZE as u32 {
 			let id = inner.bump;
 			inner.bump += 1;
 			BufRef {

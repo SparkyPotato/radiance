@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use rad_core::{asset::Asset, Engine};
-use rad_renderer::assets::{image::Image, material::Material, mesh::Mesh};
+use rad_renderer::assets::{image::ImageAsset, material::Material, mesh::Mesh};
 use rad_ui::{
 	egui::{Button, Context, Grid, Key, KeyboardShortcut, Modifiers, RichText, ScrollArea, TopBottomPanel},
 	icons::{self, icon},
@@ -44,7 +44,7 @@ impl AssetTray {
 				.min_height(100.0)
 				.resizable(true)
 				.show(ctx, |ui| {
-					let fs: &Arc<FsAssetSystem> = Engine::get().asset_source().unwrap();
+					let fs: &Arc<FsAssetSystem> = Engine::get().asset_source();
 
 					if fs.root().is_none() {
 						ui.centered_and_justified(|ui| {
@@ -164,10 +164,10 @@ impl AssetTray {
 												i = 0;
 											}
 
-											let is_world = header.ty == World::uuid();
-											let is_mesh = header.ty == Mesh::uuid();
-											let is_image = header.ty == Image::uuid();
-											let is_mat = header.ty == Material::uuid();
+											let is_world = header.ty == World::UUID;
+											let is_mesh = header.ty == Mesh::UUID;
+											let is_image = header.ty == ImageAsset::UUID;
+											let is_mat = header.ty == Material::UUID;
 											ui.vertical_centered(|ui| {
 												let i = if is_world {
 													icons::MAP
@@ -182,21 +182,21 @@ impl AssetTray {
 												};
 												if ui.add(Button::new(icon(i).size(35.0)).frame(false)).double_clicked()
 												{
-													if is_world {
-														if let Err(e) = world.open(header.id) {
-															error!("failed to open world: {:?}", e);
-														}
-													} else if is_mesh {
-														if let Err(e) = world.open_mesh(header.id) {
-															error!("failed to open mesh: {:?}", e);
-														}
-													} else if is_image {
-														if let Ok(image) = Engine::get().asset(header.id) {
-															self.image_previewer.add_preview(image);
-														}
-													} else if is_mat {
-														if let Err(e) = world.open_material(header.id) {
-															error!("failed to open material: {:?}", e);
+													unsafe {
+														if is_world {
+															if let Err(e) = world.open(header.id.typed()) {
+																error!("failed to open world: {:?}", e);
+															}
+														} else if is_mesh {
+															if let Err(e) = world.open_mesh(header.id.typed()) {
+																error!("failed to open mesh: {:?}", e);
+															}
+														} else if is_image {
+															if let Err(e) =
+																self.image_previewer.add_preview(header.id.typed())
+															{
+																error!("failed to add image preview: {:?}", e);
+															}
 														}
 													}
 												}
