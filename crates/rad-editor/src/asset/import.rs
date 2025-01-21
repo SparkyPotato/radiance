@@ -31,7 +31,7 @@ use rad_renderer::{
 		light::{LightComponent, LightType},
 		mesh::MeshComponent,
 	},
-	vek::{Mat4, Quaternion, Vec2, Vec3},
+	vek::{Mat4, Quaternion, Vec2, Vec3, Vec4},
 };
 use rad_world::{transform::Transform, World};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
@@ -186,6 +186,12 @@ impl GltfImporter {
 
 					Ok::<_, io::Error>(id)
 				})
+				.chain(Some({
+					let id = AssetId::new();
+					let path = Path::new("materials").join("default");
+					self.default_material().save(&mut sys.create(&path, id)?)?;
+					Ok(id)
+				}))
 				.collect::<Result<_, _>>()?
 		};
 
@@ -282,6 +288,19 @@ impl GltfImporter {
 			base: base.to_path_buf(),
 			buffers,
 		})
+	}
+
+	fn default_material(&self) -> Material {
+		Material {
+			base_color: None,
+			base_color_factor: Vec4::new(1.0, 1.0, 1.0, 1.0),
+			metallic_roughness: None,
+			metallic_factor: 1.0,
+			roughness_factor: 1.0,
+			normal: None,
+			emissive: None,
+			emissive_factor: Vec3::zero(),
+		}
 	}
 
 	fn material(&self, name: &str, mat: gltf::Material, images: &[AssetId<ImageAsset>]) -> Material {
@@ -415,10 +434,7 @@ impl GltfImporter {
 				Ok::<_, io::Error>(Mesh {
 					vertices,
 					indices,
-					material: materials[prim.material().index().ok_or_else(|| {
-						io::Error::new(io::ErrorKind::Unsupported, "gltf default material unsupported")
-					})?]
-					.clone(),
+					material: materials[prim.material().index().unwrap_or(materials.len() - 1)].clone(),
 				})
 			})
 			.collect::<Result<Vec<_>, _>>()?;

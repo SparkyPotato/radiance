@@ -24,6 +24,7 @@ use rad_world::{
 	TickStage,
 	World,
 };
+use tracing::warn;
 
 use crate::{
 	assets::{
@@ -311,10 +312,13 @@ fn sync_rt_scene(
 		let inner = m
 			.inner
 			.iter()
-			.map(|&m| {
+			.filter_map(|&m| {
+				let Ok(view) = ARef::loaded(m) else {
+					warn!("failed to load mesh {:?}", m);
+					return None;
+				};
 				let index = r.instance_count;
 				r.instance_count += 1;
-				let view = ARef::loaded(m).unwrap();
 				let (instance, as_) = map_instance(t, &view);
 				r.updates.push(GpuRtInstanceUpdate {
 					index,
@@ -322,7 +326,7 @@ fn sync_rt_scene(
 					as_,
 					instance,
 				});
-				(index, view)
+				Some((index, view))
 			})
 			.collect();
 		cmd.entity(e).insert(KnownRtInstances(inner));

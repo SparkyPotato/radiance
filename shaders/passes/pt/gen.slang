@@ -18,12 +18,6 @@ Ray primary_ray(inout Rng rng, u32x2 pix) {
 	return Ray(origin, dir);
 }
 
-bool unshadowed(Ray ray) {
-	ShadowPayload s = { false };
-	ray.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH, 1, s);
-	return s.unshadowed;
-}
-
 f32x3 li(inout Rng rng, Ray ray) {
 	HitPayload p = {};
 	p.rng = rng;
@@ -36,12 +30,8 @@ f32x3 li(inout Rng rng, Ray ray) {
 
 	for (int bounces = 0; bounces < 10; bounces++) {
 		p.ray.trace(RAY_FLAG_FORCE_OPAQUE, 0, p);
-		if (!p.hit) {
+		if (!p.hit)
 			break;
-		}
-		if (any(p.L_light_sample > 0.f) && unshadowed(p.shadow_ray)) {
-			p.L += p.L_light_sample;
-		}
 
 		if (bounces > 1) {
 			let q = max(0.05f, 1.f - luminance(p.b));
@@ -62,7 +52,7 @@ void main() {
 	let r = primary_ray(rng, pix);
 	var ret = li(rng, r);
 	if (any(isnan(ret) || isinf(ret)))
-		ret = f32x3(1.f, 0.f, 1.f) * 1e7f * 0.f;
+		ret = f32x3(1.f, 0.f, 1.f) * 1e7f;
 
 	let n = Constants.samples;
 	if (n == 0) {

@@ -130,7 +130,7 @@ impl PathTracer {
 								.any_hit_shader(vk::SHADER_UNUSED_KHR)
 								.intersection_shader(vk::SHADER_UNUSED_KHR),
 						])
-						.max_pipeline_ray_recursion_depth(2)
+						.max_pipeline_ray_recursion_depth(1)
 						.layout(device.layout())],
 					None,
 				)

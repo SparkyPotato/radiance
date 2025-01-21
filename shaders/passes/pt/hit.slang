@@ -132,7 +132,7 @@ struct Hit {
 
 struct LightSample {
 	f32x3 L;
-	f32x3 wi;
+	f32x3 wi_world;
 	f32 t;
 	f32 pdf;
 	bool punctual;
@@ -151,7 +151,7 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			let t2 = dot(dir, dir);
 			let L = light.radiance / t2;
 			let t = sqrt(t2);
-			let wi = hit.to_shading(dir / t);
+			let wi = dir / t;
 			let pdf = 1.f;
 			return { L, wi, t, pdf, true };
 		}
@@ -159,7 +159,7 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			// TODO: sample disk and figure out atmosphere transmittance correctly.
 			let dir = -light.pos_or_dir;
 			let L = light.radiance * Constants.sky.sun_transmittance(hit.position, dir);
-			let wi = hit.to_shading(dir);
+			let wi = dir;
 			let pdf = solid_angle_pdf(radians(0.5f));
 			return { L, wi, 1e10f, pdf, true };
 		}
@@ -188,10 +188,9 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 
 			let r = thit.position - hit.position;
 			let t = length(r);
-			let dir = r / t;
-			let wi = hit.to_shading(dir);
-			let d = abs(dot(hit.g_normal, -wi));
-			let pdf = (d != 0.f) ? (dot(dir, dir) / (thit.area * f32(tri_count) * d)) : 0.f;
+			let wi = r / t;
+			let d = abs(dot(hit.g_normal, hit.to_shading(-wi)));
+			let pdf = (d != 0.f) ? (dot(wi, wi) / (thit.area * f32(tri_count) * d)) : 0.f;
 
 			return { L, wi, t, pdf, false };
 		}
@@ -205,7 +204,7 @@ LightSample sample_one_light(inout Rng rng, Hit hit) {
 
 	let l = min(u32(rng.sample() * n), u32(n - 1.f));
 	if (l == 0) {
-		let wi = rng.sample_cos_hemi();
+		let wi = hit.from_shading(rng.sample_cos_hemi());
 		let L = Constants.sky.sample(hit.position, hit.from_shading(wi));
 		let pdf = (wi.z / PI) * light_sample_pdf();
 		return { L, wi, 1e10f, pdf, false };
@@ -216,30 +215,28 @@ LightSample sample_one_light(inout Rng rng, Hit hit) {
 	return ls;
 }
 
-Ray shadow_ray(Hit hit, LightSample ls) {
-	return Ray(hit.ray_origin(), hit.from_shading(ls.wi), ls.t - 2e-5f);
+bool shadowed(Hit hit, LightSample ls) {
+	ShadowPayload s = { true };
+	let ray = Ray(hit.ray_origin(), hit.from_shading(ls.wi_world), ls.t - 2e-5f);
+	ray.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 1,
+			  s);
+	return s.shadowed;
 }
 
-struct SampleEstimate {
-	f32x3 L;
-	Ray ray;
-}
-
-SampleEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
+f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let ls = sample_one_light(rng, hit);
 	if (any(ls.L <= 0.f) || ls.pdf <= 0.f)
-		return { f32x3(0.f), Ray() };
-	let f = eval_bsdf(hit.params, wo, ls.wi);
-	if (any(f <= 0.f))
-		return { f32x3(0.f), Ray() };
-
-	let ray = shadow_ray(hit, ls);
+		return f32x3(0.f);
+	let wi = hit.to_shading(ls.wi_world);
+	let f = eval_bsdf(hit.params, wo, wi);
+	if (any(f <= 0.f) || shadowed(hit, ls))
+		return f32x3(0.f);
 	var L = f * ls.L / ls.pdf;
 	if (!ls.punctual) {
-		let p_bounce = bsdf_pdf(hit.params, wo, ls.wi);
+		let p_bounce = bsdf_pdf(hit.params, wo, wi);
 		L *= pow_heuristic(1, p_bounce, 1, ls.pdf);
 	}
-	return { L, ray };
+	return L;
 }
 
 [shader("closesthit")]
@@ -262,11 +259,8 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	// TODO: disable MIS if the ray hits a light without a bsdf?
 
 	let wo = hit.to_shading(-p.ray.dir);
-	if (hit.params.metallic < 1.f || hit.params.roughness > 0.f) {
-		let es = estimate_with_light_sample(p.rng, hit, wo);
-		p.L_light_sample = p.b * es.L;
-		p.shadow_ray = es.ray;
-	}
+	if (hit.params.metallic < 1.f || hit.params.roughness > 0.f)
+		p.L += p.b * estimate_with_light_sample(p.rng, hit, wo);
 
 	let bs = sample_bsdf(p.rng, hit.params, wo);
 	p.b *= bs.L;

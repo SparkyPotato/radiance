@@ -54,7 +54,7 @@ public struct Ray {
 }
 
 public struct ShadowPayload {
-	public bool unshadowed;
+	public bool shadowed;
 }
 
 public struct HitPayload {
@@ -67,8 +67,6 @@ public struct HitPayload {
 	public f32x3 prev_hit_pos;
 	// chit -> rgen
 	public bool hit;
-	public f32x3 L_light_sample;
-	public Ray shadow_ray;
 }
 
 public f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {
