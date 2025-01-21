@@ -215,33 +215,33 @@ LightSample sample_one_light(inout Rng rng, Hit hit) {
 	return ls;
 }
 
-bool shadowed(Hit hit, LightSample ls) {
-	ShadowPayload s = { true };
-	let ray = Ray(hit.ray_origin(), hit.from_shading(ls.wi_world), ls.t - 2e-5f);
-	ray.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER, 1,
-			  s);
-	return s.shadowed;
+Ray shadow_ray(Hit hit, LightSample ls) {
+	return Ray(hit.ray_origin(), hit.from_shading(ls.wi_world), ls.t - 2e-5f);
 }
 
-f32x3 estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
+struct LightEstimate {
+	f32x3 L;
+	Ray shadow;
+}
+
+LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let ls = sample_one_light(rng, hit);
 	if (any(ls.L <= 0.f) || ls.pdf <= 0.f)
-		return f32x3(0.f);
+		return { f32x3(0.f), Ray() };
 	let wi = hit.to_shading(ls.wi_world);
 	let f = eval_bsdf(hit.params, wo, wi);
-	if (any(f <= 0.f) || shadowed(hit, ls))
-		return f32x3(0.f);
+	if (any(f <= 0.f))
+		return { f32x3(0.f), Ray() };
 	var L = f * ls.L / ls.pdf;
 	if (!ls.punctual) {
 		let p_bounce = bsdf_pdf(hit.params, wo, wi);
 		L *= pow_heuristic(1, p_bounce, 1, ls.pdf);
 	}
-	return L;
+	return { L, shadow_ray(hit, ls) };
 }
 
 [shader("closesthit")]
 void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
-	p.hit = true;
 	let hit = Hit(attrs);
 
 	let le = hit.emissive;
@@ -259,13 +259,27 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	// TODO: disable MIS if the ray hits a light without a bsdf?
 
 	let wo = hit.to_shading(-p.ray.dir);
-	if (hit.params.metallic < 1.f || hit.params.roughness > 0.f)
-		p.L += p.b * estimate_with_light_sample(p.rng, hit, wo);
 
 	let bs = sample_bsdf(p.rng, hit.params, wo);
-	p.b *= bs.L;
 	p.p_bounce = bs.pdf;
 	p.ray = Ray(hit.ray_origin(), hit.from_shading(bs.wi));
 	p.specular = bs.is_specular;
 	p.prev_hit_pos = hit.position;
+
+	// normally, you'd do light shrampling above BSDF sampling,
+	// but by doing it at the very end we can minimize the live state
+	// kept between the shadow ray trace.
+	var el = estimate_with_light_sample(p.rng, hit, wo);
+	if (any(el.L <= 0.f))
+		el.shadow.t = 0.f;
+
+	p.hit = true;
+	el.shadow.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,
+					1, p);
+	if (!p.hit) {
+		p.L += p.b * el.L;
+		p.hit = true;
+	}
+
+	p.b *= bs.L;
 }

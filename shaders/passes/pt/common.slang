@@ -53,10 +53,6 @@ public struct Ray {
 	}
 }
 
-public struct ShadowPayload {
-	public bool shadowed;
-}
-
 public struct HitPayload {
 	public Rng rng;
 	public Ray ray;
