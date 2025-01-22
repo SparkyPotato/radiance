@@ -39,6 +39,10 @@ impl Engine {
 
 	pub fn load_asset<T: Asset>(&self, id: AssetId<T::Root>) -> Result<T, std::io::Error> { self.assets.load_asset(id) }
 
+	pub fn cook_asset<T: CookedAsset>(&self, id: AssetId<T::Root>) -> Result<T, std::io::Error> {
+		self.assets.cook_asset(id)
+	}
+
 	pub unsafe fn destroy() { std::ptr::drop_in_place(&ENGINE as *const _ as *mut OnceLock<Engine>); }
 }
 

@@ -220,6 +220,18 @@ impl AssetRegistry {
 		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
 	}
 
+	pub fn cook_asset<T: CookedAsset>(&self, id: AssetId<T::Root>) -> Result<T, io::Error> {
+		let base: T::Base = self.load_asset(id)?;
+		let mut out = MaybeUninit::<T>::uninit();
+		self.cook_dynamic(
+			id.to_untyped(),
+			T::UUID,
+			&base as *const _ as _,
+			out.as_mut_ptr() as *mut (),
+		);
+		Ok(unsafe { out.assume_init() })
+	}
+
 	pub fn load_asset<T: Asset>(&self, id: AssetId<T::Root>) -> Result<T, io::Error> {
 		let mut out = MaybeUninit::<T>::uninit();
 		self.load_dynamic(id.to_untyped(), T::UUID, out.as_mut_ptr() as *mut ())?;

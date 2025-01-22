@@ -491,3 +491,4 @@ struct PassData<'pass, 'graph> {
 }
 
 pub type ArenaMap<'graph, K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>, &'graph Arena>;
+pub type ArenaSet<'graph, T> = hashbrown::HashSet<T, BuildHasherDefault<FxHasher>, &'graph Arena>;
