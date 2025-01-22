@@ -7,8 +7,8 @@ use rad_graph::{
 		SamplerDesc,
 		ShaderInfo,
 	},
-	graph::{Frame, ImageDesc, ImageUsage, PassBuilder, PassContext, Res},
-	resource::ImageView,
+	graph::{Frame, ImageDesc, ImageUsage, PassBuilder, PassContext, Persist, Res},
+	resource::{Image, ImageView},
 	sync::Shader,
 	util::{
 		pass::{Attachment, Load},
@@ -24,6 +24,8 @@ pub struct SkyLuts {
 	transmittance: FullscreenPass<()>,
 	scattering: FullscreenPass<ScatteringConstants>,
 	eval: FullscreenPass<EvalConstants>,
+	transmittance_image: Persist<Image>,
+	scattering_image: Persist<Image>,
 	sampler: SamplerId,
 }
 
@@ -109,6 +111,8 @@ impl SkyLuts {
 				},
 				&[Self::FORMAT],
 			)?,
+			transmittance_image: Persist::new(),
+			scattering_image: Persist::new(),
 			sampler: device.sampler(SamplerDesc::default()),
 		})
 	}
@@ -129,7 +133,7 @@ impl SkyLuts {
 					depth: 1,
 				},
 				format,
-				persist: Some("sky transmittance"),
+				persist: Some(self.transmittance_image),
 				..Default::default()
 			},
 			ImageUsage::color_attachment(),
@@ -158,8 +162,7 @@ impl SkyLuts {
 					depth: 1,
 				},
 				format,
-				// TODO: make persist API nicer
-				persist: Some("sky scattering"),
+				persist: Some(self.scattering_image),
 				..Default::default()
 			},
 			ImageUsage::color_attachment(),

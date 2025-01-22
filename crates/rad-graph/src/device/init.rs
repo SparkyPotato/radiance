@@ -456,16 +456,15 @@ impl<'a> DeviceBuilder<'a> {
 
 	fn get_device_extensions(extensions: &[&'static CStr]) -> Vec<&'static CStr> {
 		let mut extensions = extensions.to_vec();
-
 		extensions.extend([
 			khr::swapchain::NAME,
 			khr::acceleration_structure::NAME,
 			khr::ray_query::NAME,
 			khr::ray_tracing_pipeline::NAME,
-			// khr::ray_tracing_maintenance1::NAME,
+			khr::ray_tracing_maintenance1::NAME,
 			khr::deferred_host_operations::NAME,
-			// khr::maintenance5::NAME,
-			// khr::maintenance6::NAME,
+			khr::maintenance5::NAME,
+			khr::maintenance6::NAME,
 		]);
 		extensions
 	}

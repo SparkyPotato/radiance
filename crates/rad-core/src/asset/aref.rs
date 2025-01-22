@@ -43,6 +43,7 @@ impl Display for UntypedAssetId {
 #[reflect(opaque, Serialize, Deserialize)]
 #[reflect(type_path = false)]
 #[reflect(where T: Sized)]
+// TODO: support procedural assets without having to go through the asset system.
 pub struct AssetId<T>(UntypedAssetId, PhantomData<fn() -> T>);
 
 impl<T: 'static> TypePath for AssetId<T> {

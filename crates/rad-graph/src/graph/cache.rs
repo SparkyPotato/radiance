@@ -1,4 +1,11 @@
-use std::collections::hash_map::Entry;
+use std::{
+	collections::hash_map::Entry,
+	fmt::Debug,
+	hash::Hash,
+	marker::PhantomData,
+	num::NonZeroU64,
+	sync::atomic::{AtomicU64, Ordering},
+};
 
 use ash::vk;
 use rustc_hash::FxHashMap;
@@ -6,7 +13,7 @@ use rustc_hash::FxHashMap;
 use crate::{
 	device::Device,
 	graph::FRAMES_IN_FLIGHT,
-	resource::{Named, Resource, ToNamed},
+	resource::{Resource, ToNamed},
 	Result,
 };
 
@@ -106,7 +113,7 @@ impl<T: Resource> ResourceCache<T> {
 	/// Get an unused resource with the given descriptor. Is valid until [`Self::reset`] is called.
 	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<(T::Handle, bool)> {
 		let list = self.resources.entry(desc).or_insert_with(ResourceList::new);
-		list.get_or_create(device, desc.to_named("Graph Resource"))
+		list.get_or_create(device, desc.to_named("unnamed graph resource"))
 	}
 
 	pub unsafe fn destroy(self, device: &Device) {
@@ -132,7 +139,7 @@ impl<T: Resource> UniqueCache<T> {
 	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<(T::Handle, bool)> {
 		match self.resources.entry(desc) {
 			Entry::Vacant(v) => {
-				let resource = T::create(device, desc.to_named("Graph Resource"))?;
+				let resource = T::create(device, desc.to_named("unnamed graph resource"))?;
 				let handle = resource.handle();
 				v.insert(TrackedResource {
 					inner: resource,
@@ -175,13 +182,42 @@ impl<T: Resource> UniqueCache<T> {
 
 struct PersistentResource<T: Resource> {
 	resource: TrackedResource<T>,
-	desc: T::Desc<'static>,
+	desc: T::UnnamedDesc,
 	age: u64,
 	layout: vk::ImageLayout,
 }
 
+pub struct Persist<T: Resource> {
+	key: NonZeroU64,
+	_phantom: PhantomData<fn() -> T>,
+}
+impl<T: Resource> Copy for Persist<T> {}
+impl<T: Resource> Clone for Persist<T> {
+	fn clone(&self) -> Self { *self }
+}
+impl<T: Resource> Hash for Persist<T> {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) { self.key.hash(state) }
+}
+impl<T: Resource> PartialEq for Persist<T> {
+	fn eq(&self, other: &Self) -> bool { self.key == other.key }
+}
+impl<T: Resource> Eq for Persist<T> {}
+impl<T: Resource> Debug for Persist<T> {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "Persist({})", self.key.get()) }
+}
+
+static COUNTER: AtomicU64 = AtomicU64::new(1);
+impl<T: Resource> Persist<T> {
+	pub fn new() -> Self {
+		Self {
+			key: NonZeroU64::new(COUNTER.fetch_add(1, Ordering::Relaxed)).unwrap(),
+			_phantom: PhantomData,
+		}
+	}
+}
+
 pub struct PersistentCache<T: Resource> {
-	resources: FxHashMap<&'static str, PersistentResource<T>>,
+	resources: FxHashMap<Persist<T>, PersistentResource<T>>,
 }
 
 impl<T: Resource> PersistentCache<T> {
@@ -194,11 +230,11 @@ impl<T: Resource> PersistentCache<T> {
 
 	/// Get the resource with the given descriptor. Is valid until [`Self::reset`] is called.
 	pub fn get(
-		&mut self, device: &Device, desc: T::Desc<'static>, next_layout: vk::ImageLayout,
+		&mut self, device: &Device, key: Persist<T>, desc: T::UnnamedDesc, next_layout: vk::ImageLayout,
 	) -> Result<(T::Handle, bool, vk::ImageLayout)> {
-		match self.resources.entry(desc.name()) {
+		match self.resources.entry(key) {
 			Entry::Vacant(v) => {
-				let resource = T::create(device, desc)?;
+				let resource = T::create(device, desc.to_named("graph resource"))?;
 				let handle = resource.handle();
 				v.insert(PersistentResource {
 					resource: TrackedResource {
@@ -220,7 +256,7 @@ impl<T: Resource> PersistentCache<T> {
 					r.age += 1;
 					Ok((r.resource.inner.handle(), r.age < 2, old))
 				} else {
-					let resource = T::create(device, desc)?;
+					let resource = T::create(device, desc.to_named("graph resource"))?;
 					let handle = resource.handle();
 					let old = std::mem::replace(
 						&mut r.resource,

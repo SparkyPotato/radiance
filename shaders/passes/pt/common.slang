@@ -65,12 +65,6 @@ public struct HitPayload {
 	public bool hit;
 }
 
-public f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {
-	let f = f_pdf * f32(nf);
-	let g = g_pdf * f32(ng);
-	return f * f / (f * f + g * g);
-}
-
 public f32 light_sample_pdf() {
 	return 1.f / f32(Constants.light_count + 1);
 }

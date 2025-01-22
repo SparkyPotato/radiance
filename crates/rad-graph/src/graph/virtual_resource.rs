@@ -6,8 +6,17 @@ pub use crate::sync::{BufferUsage as BufferUsageType, ImageUsage as ImageUsageTy
 use crate::{
 	arena::{Arena, IteratorAlloc, ToOwnedAlloc},
 	device::Device,
-	graph::{compile::Resource, Caches, Res},
-	resource::{Buffer, BufferHandle, ImageView, ImageViewDescUnnamed, ImageViewUsage, Resource as _, Subresource},
+	graph::{cache::Persist, compile::Resource, Caches, Res},
+	resource::{
+		Buffer,
+		BufferHandle,
+		Image,
+		ImageView,
+		ImageViewDescUnnamed,
+		ImageViewUsage,
+		Resource as _,
+		Subresource,
+	},
 };
 
 /// The location of a GPU buffer.
@@ -25,7 +34,7 @@ pub enum BufferLoc {
 pub struct BufferDesc {
 	pub size: u64,
 	pub loc: BufferLoc,
-	pub persist: Option<&'static str>,
+	pub persist: Option<Persist<Buffer>>,
 }
 
 impl BufferDesc {
@@ -45,11 +54,18 @@ impl BufferDesc {
 		}
 	}
 
-	pub fn readback(size: u64, name: &'static str) -> Self {
+	pub fn persist(self, persist: Persist<Buffer>) -> Self {
+		Self {
+			persist: Some(persist),
+			..self
+		}
+	}
+
+	pub fn readback(size: u64, persist: Persist<Buffer>) -> Self {
 		Self {
 			size,
 			loc: BufferLoc::Readback,
-			persist: Some(name),
+			persist: Some(persist),
 		}
 	}
 }
@@ -145,7 +161,7 @@ pub struct ImageDesc {
 	pub levels: u32,
 	pub layers: u32,
 	pub samples: vk::SampleCountFlags,
-	pub persist: Option<&'static str>,
+	pub persist: Option<Persist<Image>>,
 }
 
 impl Default for ImageDesc {

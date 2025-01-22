@@ -1,4 +1,5 @@
 import graph;
+import passes.bsdf;
 import common;
 
 [shader("miss")]

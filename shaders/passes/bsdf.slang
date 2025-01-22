@@ -181,6 +181,12 @@ f32 ggx_pdf(f32x3 wo, f32x3 wm, f32 roughness) {
 	return dv_ggx(wo, wm, roughness) / (4.f * l_h);
 }
 
+public f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {
+	let f = f_pdf * f32(nf);
+	let g = g_pdf * f32(ng);
+	return f * f / (f * f + g * g);
+}
+
 public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
 	let n_l = brdf_cos(wi);
 	let fd = eval_lambert(params, wo, wi);
@@ -190,6 +196,7 @@ public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
 
 public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
 	let lambert_chance = lerp(0.5f, 0.f, params.metallic);
+	let spec_chance = 1.f - lambert_chance;
 	BsdfSample ret;
 	if (rng.sample() < lambert_chance) {
 		ret = sample_lambert(rng, params, wo);
@@ -197,9 +204,8 @@ public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
 		ret.pdf *= lambert_chance;
 	} else {
 		ret = sample_ggx(rng, params, wo);
-		let spec_chanc = 1.f - lambert_chance;
-		ret.L /= spec_chanc;
-		ret.pdf *= spec_chanc;
+		ret.L /= spec_chance;
+		ret.pdf *= spec_chance;
 	}
 	return ret;
 }

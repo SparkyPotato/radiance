@@ -328,17 +328,12 @@ impl<'graph> ResourceAliaser<'graph> {
 							size: data.desc.size,
 							readback: matches!(data.desc.loc, BufferLoc::Readback),
 						};
-						let per_desc = |name| crate::resource::BufferDesc {
-							name,
-							size: desc.size,
-							readback: desc.readback,
-						};
 						(data.handle, data.uninit) = match (data.desc.loc, data.desc.persist) {
-							(BufferLoc::GpuOnly, Some(name)) => {
+							(BufferLoc::GpuOnly, Some(persist)) => {
 								let x = graph
 									.caches
 									.persistent_buffers
-									.get(device, per_desc(name), vk::ImageLayout::UNDEFINED)
+									.get(device, persist, desc, vk::ImageLayout::UNDEFINED)
 									.expect("failed to allocated graph buffer");
 								(x.0, x.1)
 							},
@@ -354,9 +349,9 @@ impl<'graph> ResourceAliaser<'graph> {
 									.expect("failed to allocated graph buffer")
 							},
 							(BufferLoc::Readback, x) => {
-								let name = x.expect("readback buffers must be persistent");
+								let persist = x.expect("readback buffers must be persistent");
 								let x = graph.caches.readback_buffers[graph.curr_frame]
-									.get(device, per_desc(name), vk::ImageLayout::UNDEFINED)
+									.get(device, persist, desc, vk::ImageLayout::UNDEFINED)
 									.expect("failed to allocated graph buffer");
 								(x.0, x.1)
 							},
@@ -381,25 +376,12 @@ impl<'graph> ResourceAliaser<'graph> {
 							samples: data.desc.samples,
 							usage: usage_flags(data.usages.values().flat_map(|x| x.usages.iter().copied())),
 						};
-						(data.handle, data.uninit) = if let Some(name) = data.desc.persist {
+						(data.handle, data.uninit) = if let Some(persist) = data.desc.persist {
 							let next_layout = data.usages.last_key_value().unwrap().1.as_prev().image_layout;
 							let x = graph
 								.caches
 								.persistent_images
-								.get(
-									device,
-									crate::resource::ImageDesc {
-										name,
-										flags,
-										format: desc.format,
-										size: desc.size,
-										levels: desc.levels,
-										layers: desc.layers,
-										samples: desc.samples,
-										usage: desc.usage,
-									},
-									next_layout,
-								)
+								.get(device, persist, desc, next_layout)
 								.expect("failed to allocate graph image");
 							((x.0, x.2), x.1)
 						} else {

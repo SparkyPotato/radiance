@@ -12,6 +12,7 @@ use rustc_hash::FxHasher;
 use tracing::{span, Level};
 
 pub use crate::graph::{
+	cache::Persist,
 	frame_data::{Deletable, Resource},
 	virtual_resource::{
 		BufferDesc,

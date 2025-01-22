@@ -12,9 +12,10 @@ use rad_graph::{
 		ImageUsageType,
 		PassBuilder,
 		PassContext,
+		Persist,
 		Res,
 	},
-	resource::{BufferHandle, ImageView, Subresource},
+	resource::{Buffer, BufferHandle, Image, ImageView, Subresource},
 	sync::Shader,
 };
 use vek::Vec2;
@@ -175,6 +176,8 @@ impl Resources {
 
 pub struct Setup {
 	pub stats: CullStats,
+	hzb: Persist<Image>,
+	stats_readback: Persist<Buffer>,
 }
 
 fn prev_pot(x: u32) -> u32 { 1 << x.ilog2() }
@@ -183,6 +186,8 @@ impl Setup {
 	pub fn new() -> Self {
 		Self {
 			stats: CullStats::default(),
+			hzb: Persist::new(),
+			stats_readback: Persist::new(),
 		}
 	}
 
@@ -208,7 +213,7 @@ impl Setup {
 				},
 				format: vk::Format::R32_SFLOAT,
 				levels: size.x.max(size.y).ilog2(),
-				persist: Some("persistent hzb"),
+				persist: Some(self.hzb),
 				..Default::default()
 			},
 			ImageUsage {
@@ -237,8 +242,8 @@ impl Setup {
 		let meshlet_queue = pass.resource(desc, usage);
 		let meshlet_render = pass.resource(desc, usage);
 		let stats = pass.resource(
-			BufferDesc::readback(std::mem::size_of::<CullStats>() as u64, "cull stats readback"),
-			BufferUsage { usages: &[] },
+			BufferDesc::readback(std::mem::size_of::<CullStats>() as u64, self.stats_readback),
+			BufferUsage::none(),
 		);
 
 		let desc = ImageDesc {

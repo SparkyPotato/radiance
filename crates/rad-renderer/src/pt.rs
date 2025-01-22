@@ -8,8 +8,8 @@ use rad_graph::{
 		SamplerDesc,
 		ShaderInfo,
 	},
-	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Res},
-	resource::{self, Buffer, GpuPtr, ImageView, Resource},
+	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Persist, Res},
+	resource::{self, Buffer, GpuPtr, Image, ImageView, Resource},
 	sync::Shader,
 	Result,
 };
@@ -34,6 +34,7 @@ pub struct PathTracer {
 	miss: vk::StridedDeviceAddressRegionKHR,
 	hit: vk::StridedDeviceAddressRegionKHR,
 	sampler: SamplerId,
+	accum: Persist<Image>,
 	cached: Option<Vec2<u32>>,
 	samples: u32,
 }
@@ -202,6 +203,7 @@ impl PathTracer {
 				miss,
 				hit,
 				sampler: device.sampler(SamplerDesc::default()),
+				accum: Persist::new(),
 				cached: None,
 				samples: 0,
 			})
@@ -235,7 +237,7 @@ impl PathTracer {
 				levels: 1,
 				layers: 1,
 				samples: vk::SampleCountFlags::TYPE_1,
-				persist: Some("path tracer accum"),
+				persist: Some(self.accum),
 			},
 			ImageUsage::read_write_2d(Shader::RayTracing),
 		);

@@ -1,8 +1,8 @@
 use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
-	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, Res},
-	resource::{GpuPtr, ImageView},
+	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, Persist, Res},
+	resource::{Buffer, GpuPtr, ImageView},
 	sync::Shader,
 	util::compute::ComputePass,
 	Result,
@@ -20,6 +20,7 @@ struct PushConstants {
 
 pub struct ExposureCalc {
 	histogram: ComputePass<PushConstants>,
+	histogram_readback: Persist<Buffer>,
 	exposure: f32,
 	target_exposure: f32,
 	scene_exposure: f32,
@@ -65,6 +66,7 @@ impl ExposureCalc {
 					spec: &[],
 				},
 			)?,
+			histogram_readback: Persist::new(),
 			exposure: 0.0,
 			target_exposure: 0.0,
 			scene_exposure: 0.0,
@@ -79,6 +81,7 @@ impl ExposureCalc {
 
 		let Self {
 			histogram: hist,
+			histogram_readback,
 			exposure,
 			target_exposure,
 			scene_exposure,
@@ -115,7 +118,7 @@ impl ExposureCalc {
 
 		let mut pass = frame.pass("readback histogram");
 		let histogram_read = pass.resource(
-			BufferDesc::readback(histogram_size, "histogram readback"),
+			BufferDesc::readback(histogram_size, *histogram_readback),
 			BufferUsage::transfer_write(),
 		);
 		pass.reference(histogram, BufferUsage::transfer_read());

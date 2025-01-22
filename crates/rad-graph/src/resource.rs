@@ -19,17 +19,13 @@ use crate::{
 };
 
 pub trait ToNamed {
-	type Named<'a>: Named<'a>;
+	type Named<'a>;
 
 	fn to_named(self, name: &str) -> Self::Named<'_>;
 }
 
-pub trait Named<'a> {
-	fn name(&self) -> &'a str;
-}
-
 pub trait Resource: Default + Sized {
-	type Desc<'a>: Copy + Eq + Hash + Named<'a>;
+	type Desc<'a>: Copy + Eq + Hash;
 	type UnnamedDesc: Copy + Eq + Hash + for<'a> ToNamed<Named<'a> = Self::Desc<'a>>;
 	type Handle: Copy;
 
@@ -54,10 +50,6 @@ pub struct BufferDesc<'a> {
 pub struct BufferDescUnnamed {
 	pub size: u64,
 	pub readback: bool,
-}
-
-impl<'a> Named<'a> for BufferDesc<'a> {
-	fn name(&self) -> &'a str { self.name }
 }
 
 impl ToNamed for BufferDescUnnamed {
@@ -266,10 +258,6 @@ pub struct ImageDescUnnamed {
 	pub usage: vk::ImageUsageFlags,
 }
 
-impl<'a> Named<'a> for ImageDesc<'a> {
-	fn name(&self) -> &'a str { self.name }
-}
-
 impl ToNamed for ImageDescUnnamed {
 	type Named<'a> = ImageDesc<'a>;
 
@@ -459,10 +447,6 @@ pub struct ImageViewDescUnnamed {
 	pub subresource: Subresource,
 }
 
-impl<'a> Named<'a> for ImageViewDesc<'a> {
-	fn name(&self) -> &'a str { self.name }
-}
-
 impl ToNamed for ImageViewDescUnnamed {
 	type Named<'a> = ImageViewDesc<'a>;
 
@@ -573,10 +557,6 @@ pub struct ASDescUnnamed {
 	pub size: u64,
 }
 
-impl<'a> Named<'a> for ASDesc<'a> {
-	fn name(&self) -> &'a str { self.name }
-}
-
 impl ToNamed for ASDescUnnamed {
 	type Named<'a> = ASDesc<'a>;
 
@@ -653,39 +633,4 @@ impl Resource for AS {
 		device.as_ext().destroy_acceleration_structure(self.inner, None);
 		self.buffer.destroy(device);
 	}
-}
-
-impl<'a> Named<'a> for () {
-	fn name(&self) -> &'a str { "event" }
-}
-
-impl ToNamed for () {
-	type Named<'a> = ();
-
-	fn to_named(self, _: &str) -> Self::Named<'_> { () }
-}
-
-#[derive(Default)]
-pub struct Event {
-	inner: vk::Event,
-}
-
-impl Resource for Event {
-	type Desc<'a> = ();
-	type Handle = vk::Event;
-	type UnnamedDesc = ();
-
-	fn handle(&self) -> Self::Handle { self.inner }
-
-	fn create(device: &Device, _: Self::Desc<'_>) -> Result<Self> {
-		unsafe {
-			let inner = device.device().create_event(
-				&vk::EventCreateInfo::default().flags(vk::EventCreateFlags::DEVICE_ONLY),
-				None,
-			)?;
-			Ok(Self { inner })
-		}
-	}
-
-	unsafe fn destroy(self, device: &Device) { device.device().destroy_event(self.inner, None); }
 }
