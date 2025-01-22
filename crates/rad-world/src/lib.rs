@@ -66,6 +66,8 @@ impl Module for WorldModule {
 			uuid_map: FxHashMap::default(),
 		});
 
+		engine.asset::<World>();
+
 		engine.component::<transform::Transform>();
 	}
 }

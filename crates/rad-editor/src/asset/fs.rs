@@ -190,7 +190,7 @@ impl AssetSource for FsAssetSystem {
 		let mut view = FsAssetRead::open(path)?;
 		// TODO: cooka
 		if view.header().ty != ty {
-			return Err(io::Error::new(io::ErrorKind::InvalidData, "asset type mismatch"));
+			return Err(io::Error::new(io::ErrorKind::NotFound, "asset type mismatch"));
 		}
 		Ok(Box::new(view))
 	}

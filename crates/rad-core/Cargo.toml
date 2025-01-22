@@ -9,4 +9,5 @@ bincode = { workspace = true }
 bytemuck = { workspace = true }
 rustc-hash = { workspace = true }
 serde = { workspace = true }
+tracing = { workspace = true }
 uuid = { workspace = true }

@@ -1,6 +1,8 @@
 use std::{
+	alloc::Layout,
 	any::{Any, TypeId},
 	io::{self, Read, Write},
+	mem::MaybeUninit,
 	sync::Arc,
 };
 
@@ -10,6 +12,7 @@ use bincode::{
 	Encode,
 };
 use rustc_hash::FxHashMap;
+use tracing::{trace_span, warn};
 pub use uuid::Uuid;
 
 use crate::asset::aref::{AssetCache, AssetId, UntypedAssetId};
@@ -86,20 +89,29 @@ impl<T: AssetSource> AssetSource for Arc<T> {
 	}
 }
 
-type ErasedKitchen = fn(base: *const (), out: *mut ());
+struct Kitchen {
+	base: Uuid,
+	layout: Layout,
+	cook: fn(base: *const (), out: *mut ()),
+}
+type ErasedAssetLoad = fn(from: Box<dyn AssetRead>, out: *mut ()) -> Result<(), io::Error>;
 
 pub struct AssetRegistry {
+	cook_at_runtime: bool,
 	sources: Vec<Box<dyn AssetSource>>,
 	source_to_index: FxHashMap<TypeId, usize>,
+	assets: FxHashMap<Uuid, ErasedAssetLoad>,
 	views: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
-	kitchens: FxHashMap<TypeId, ErasedKitchen>,
+	kitchens: FxHashMap<Uuid, Kitchen>,
 }
 
 impl AssetRegistry {
 	pub fn new() -> Self {
 		Self {
+			cook_at_runtime: false,
 			sources: Vec::new(),
 			source_to_index: FxHashMap::default(),
+			assets: FxHashMap::default(),
 			views: FxHashMap::default(),
 			kitchens: FxHashMap::default(),
 		}
@@ -111,19 +123,39 @@ impl AssetRegistry {
 		self.sources.push(Box::new(source));
 	}
 
+	pub fn register_asset<T: Asset>(&mut self) {
+		self.assets.insert(T::UUID, |from, out| {
+			let out = out as *mut T;
+			unsafe {
+				out.write(T::load(from)?);
+			}
+			Ok(())
+		});
+	}
+
+	pub fn register_cooked<T: CookedAsset>(&mut self) {
+		self.register_asset::<T>();
+		self.kitchens.insert(
+			T::UUID,
+			Kitchen {
+				base: T::Base::UUID,
+				layout: Layout::new::<T>(),
+				cook: |base, out| {
+					let base = unsafe { &*(base as *const T::Base) };
+					let out = out as *mut T;
+					unsafe {
+						out.write(T::cook(base));
+					}
+				},
+			},
+		);
+	}
+
 	pub fn register_view<T: AssetView>(&mut self) {
 		self.views.insert(TypeId::of::<T>(), Box::new(AssetCache::<T>::new()));
 	}
 
-	pub fn register_cooked<T: CookedAsset>(&mut self) {
-		self.kitchens.insert(TypeId::of::<T>(), |base, out| {
-			let base = unsafe { &*(base as *const T::Base) };
-			let out = out as *mut T;
-			unsafe {
-				out.write(T::cook(base));
-			}
-		});
-	}
+	pub fn cook_at_runtime(&mut self) { self.cook_at_runtime = true; }
 
 	pub fn source<T: AssetSource>(&self) -> &T {
 		match self.source_to_index.get(&TypeId::of::<T>()) {
@@ -143,15 +175,54 @@ impl AssetRegistry {
 		}
 	}
 
-	pub fn load_asset<T: Asset>(&self, id: AssetId<T::Root>) -> Result<T, io::Error> {
+	#[inline(always)]
+	fn cook_dynamic(&self, id: UntypedAssetId, ty: Uuid, base: *const (), into: *mut ()) {
+		let s = trace_span!("cook asset", id = %id, ty = %ty);
+		let _e = s.enter();
+
+		(self.kitchens.get(&ty).expect("asset not registered").cook)(base, into);
+	}
+
+	fn load_dynamic(&self, id: UntypedAssetId, ty: Uuid, into: *mut ()) -> Result<(), io::Error> {
+		let s = trace_span!("load asset", id = %id, ty = %ty);
+		let _e = s.enter();
+
 		for src in self.sources.iter().rev() {
-			match src.load(id.to_untyped(), T::UUID) {
-				Ok(from) => return T::load(from),
+			match src.load(id, ty) {
+				Ok(from) => {
+					let load = self.assets.get(&ty).expect("asset not registered");
+					load(from, into)?;
+					return Ok(());
+				},
 				Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
 				Err(e) => return Err(e),
 			}
 		}
 
+		if let Some(kitchen) = self.kitchens.get(&ty) {
+			if !self.cook_at_runtime {
+				warn!(
+					"runtime cooking is disabled, but asset (id={}, ty={}) not found, cooking at runtime instead",
+					id, ty
+				);
+			}
+
+			let base = unsafe { std::alloc::alloc(kitchen.layout) as _ };
+			if let Err(e) = self.load_dynamic(id, kitchen.base, base) {
+				unsafe { std::alloc::dealloc(base as _, kitchen.layout) };
+				return Err(e);
+			}
+			self.cook_dynamic(id, ty, base, into);
+			unsafe { std::alloc::dealloc(base as _, kitchen.layout) };
+			return Ok(());
+		}
+
 		Err(io::Error::new(io::ErrorKind::NotFound, "asset not found"))
+	}
+
+	pub fn load_asset<T: Asset>(&self, id: AssetId<T::Root>) -> Result<T, io::Error> {
+		let mut out = MaybeUninit::<T>::uninit();
+		self.load_dynamic(id.to_untyped(), T::UUID, out.as_mut_ptr() as *mut ())?;
+		Ok(unsafe { out.assume_init() })
 	}
 }

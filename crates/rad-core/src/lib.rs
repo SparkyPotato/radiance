@@ -11,7 +11,7 @@ use std::{
 
 use rustc_hash::FxHashMap;
 
-use crate::asset::{aref::AssetId, Asset, AssetRegistry, AssetSource, AssetView};
+use crate::asset::{aref::AssetId, Asset, AssetRegistry, AssetSource, AssetView, CookedAsset};
 
 pub mod asset;
 
@@ -59,6 +59,10 @@ impl EngineBuilder {
 	pub fn global<T: Any + Send + Sync>(&mut self, value: T) { self.inner.globals.insert(value); }
 
 	pub fn asset_source<T: AssetSource>(&mut self, source: T) { self.inner.assets.register_source(source); }
+
+	pub fn asset<T: Asset>(&mut self) { self.inner.assets.register_asset::<T>(); }
+
+	pub fn cooked_asset<T: CookedAsset>(&mut self) { self.inner.assets.register_cooked::<T>(); }
 
 	pub fn asset_view<T: AssetView>(&mut self) { self.inner.assets.register_view::<T>(); }
 

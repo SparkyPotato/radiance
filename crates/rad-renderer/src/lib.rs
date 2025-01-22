@@ -19,6 +19,11 @@ pub struct RendererModule;
 
 impl Module for RendererModule {
 	fn init(engine: &mut EngineBuilder) {
+		engine.asset::<assets::mesh::Mesh>();
+		engine.asset::<assets::material::Material>();
+		engine.cooked_asset::<assets::mesh::virtual_mesh::VirtualMesh>();
+		engine.cooked_asset::<assets::image::ImageAsset>();
+
 		engine.asset_view::<assets::mesh::RaytracingMeshView>();
 		engine.asset_view::<assets::mesh::virtual_mesh::VirtualMeshView>();
 		engine.asset_view::<assets::image::ImageAssetView>();

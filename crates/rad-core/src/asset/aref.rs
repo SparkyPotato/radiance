@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-	asset::{Asset, AssetView, CookedAsset},
+	asset::{Asset, AssetView},
 	Engine,
 };
 
@@ -107,15 +107,6 @@ impl<T: AssetView> ARef<T> {
 	pub fn id(&self) -> AssetId<<T::Base as Asset>::Root> { self.inner.id }
 }
 
-impl<T: AssetView> ARef<T>
-where
-	T::Base: CookedAsset,
-{
-	pub fn cooked(id: AssetId<<T::Base as Asset>::Root>) -> Result<LARef<T>, io::Error> {
-		Engine::get().assets.cache::<T>().cooked(id)
-	}
-}
-
 /// A loaded asset view
 pub struct LARef<T: AssetView> {
 	inner: ARef<T>,
@@ -177,25 +168,6 @@ impl<T: AssetView> AssetCache<T> {
 		inner.data.get_or_try_init(|| {
 			let asset = Engine::get().assets.load_asset(inner.id)?;
 			T::load(&self.context, asset)
-		})
-	}
-}
-
-impl<T: AssetView> AssetCache<T>
-where
-	T::Base: CookedAsset,
-{
-	pub fn cooked(&'static self, id: AssetId<<T::Base as Asset>::Root>) -> Result<LARef<T>, io::Error> {
-		let inner = self.unloaded(id);
-		self.cook(&inner.inner)?;
-		Ok(LARef { inner })
-	}
-
-	fn cook<'a>(&'static self, inner: &'a ARefData<T>) -> Result<&'a T, io::Error> {
-		inner.data.get_or_try_init(|| {
-			let asset = Engine::get().assets.load_asset(inner.id)?;
-			let cooked = T::Base::cook(&asset);
-			T::load(&self.context, cooked)
 		})
 	}
 }
