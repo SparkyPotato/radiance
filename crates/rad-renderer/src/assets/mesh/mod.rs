@@ -20,6 +20,7 @@ use rad_graph::{
 	sync::{get_global_barrier, GlobalBarrier, UsageType},
 };
 use static_assertions::const_assert_eq;
+use tracing::trace_span;
 use vek::{Vec2, Vec3};
 
 use crate::{
@@ -71,72 +72,28 @@ impl AssetView for RaytracingMeshView {
 		let device: &Device = Engine::get().global();
 		// TODO: fips.
 		let name = "raytracing mesh";
+		let s = trace_span!("load raytracing mesh", name = name);
+		let _e = s.enter();
 
-		let buffer = Buffer::create(
-			device,
-			BufferDesc {
-				name: &format!("{name} raw buffer"),
-				size: (cast_slice::<_, u8>(&m.vertices).len() + cast_slice::<_, u8>(&m.indices).len()) as u64,
-				readback: false,
-			},
-		)?;
-		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
-		writer.write_slice(&m.vertices);
-		writer.write_slice(&m.indices);
-
-		unsafe {
-			let geo = [vk::AccelerationStructureGeometryKHR::default()
-				.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
-				.geometry(vk::AccelerationStructureGeometryDataKHR {
-					triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
-						.vertex_format(vk::Format::R32G32B32_SFLOAT)
-						.vertex_data(vk::DeviceOrHostAddressConstKHR {
-							device_address: buffer.ptr::<u8>().addr(),
-						})
-						.vertex_stride(std::mem::size_of::<GpuVertex>() as _)
-						.max_vertex(m.indices.len() as u32 - 1)
-						.index_type(vk::IndexType::UINT32)
-						.index_data(vk::DeviceOrHostAddressConstKHR {
-							device_address: buffer.ptr::<u8>().addr() + cast_slice::<_, u8>(&m.vertices).len() as u64,
-						}),
-				})];
-			let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
-				.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
-				.flags(
-					vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE
-						| vk::BuildAccelerationStructureFlagsKHR::ALLOW_COMPACTION,
-				)
-				.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-				.geometries(&geo);
-			let mut sinfo = vk::AccelerationStructureBuildSizesInfoKHR::default();
-			let tri_count = m.indices.len() as u32 / 3;
-			device.as_ext().get_acceleration_structure_build_sizes(
-				vk::AccelerationStructureBuildTypeKHR::DEVICE,
-				&info,
-				&[tri_count],
-				&mut sinfo,
-			);
-
-			let old = AS::create(
-				device,
-				ASDesc {
-					name: &format!("{name} uncompacted AS"),
-					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
-					ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-					size: sinfo.acceleration_structure_size,
-				},
-			)?;
-			let scratch = Buffer::create(
+		let buffer = {
+			let s = trace_span!("load");
+			let _e = s.enter();
+			let buffer = Buffer::create(
 				device,
 				BufferDesc {
-					name: &format!("{name} AS build scratch"),
-					size: sinfo.build_scratch_size,
+					name: &format!("{name} raw buffer"),
+					size: (cast_slice::<_, u8>(&m.vertices).len() + cast_slice::<_, u8>(&m.indices).len()) as u64,
 					readback: false,
 				},
 			)?;
-			info.dst_acceleration_structure = old.handle();
-			info.scratch_data.device_address = scratch.ptr::<u8>().addr();
+			let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
+			writer.write_slice(&m.vertices);
+			writer.write_slice(&m.indices);
+			buffer
+		};
 
+		let tri_count = m.indices.len() as u32 / 3;
+		unsafe {
 			let mut pool = CommandPool::new(device, device.queue_families().compute)?;
 			let qpool = device
 				.device()
@@ -148,83 +105,145 @@ impl AssetView for RaytracingMeshView {
 				)
 				.unwrap();
 			let cmd = pool.next(device)?;
+			let old = {
+				let s = trace_span!("build AS");
+				let _e = s.enter();
+				let geo = [vk::AccelerationStructureGeometryKHR::default()
+					.geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+					.geometry(vk::AccelerationStructureGeometryDataKHR {
+						triangles: vk::AccelerationStructureGeometryTrianglesDataKHR::default()
+							.vertex_format(vk::Format::R32G32B32_SFLOAT)
+							.vertex_data(vk::DeviceOrHostAddressConstKHR {
+								device_address: buffer.ptr::<u8>().addr(),
+							})
+							.vertex_stride(std::mem::size_of::<GpuVertex>() as _)
+							.max_vertex(m.indices.len() as u32 - 1)
+							.index_type(vk::IndexType::UINT32)
+							.index_data(vk::DeviceOrHostAddressConstKHR {
+								device_address: buffer.ptr::<u8>().addr()
+									+ cast_slice::<_, u8>(&m.vertices).len() as u64,
+							}),
+					})];
+				let mut info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
+					.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
+					.flags(
+						vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE
+							| vk::BuildAccelerationStructureFlagsKHR::ALLOW_COMPACTION,
+					)
+					.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+					.geometries(&geo);
+				let mut sinfo = vk::AccelerationStructureBuildSizesInfoKHR::default();
+				device.as_ext().get_acceleration_structure_build_sizes(
+					vk::AccelerationStructureBuildTypeKHR::DEVICE,
+					&info,
+					&[tri_count],
+					&mut sinfo,
+				);
 
-			device
-				.device()
-				.begin_command_buffer(
+				let old = AS::create(
+					device,
+					ASDesc {
+						name: &format!("{name} uncompacted AS"),
+						flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
+						ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+						size: sinfo.acceleration_structure_size,
+					},
+				)?;
+				let scratch = Buffer::create(
+					device,
+					BufferDesc {
+						name: &format!("{name} AS build scratch"),
+						size: sinfo.build_scratch_size,
+						readback: false,
+					},
+				)?;
+				info.dst_acceleration_structure = old.handle();
+				info.scratch_data.device_address = scratch.ptr::<u8>().addr();
+
+				device
+					.device()
+					.begin_command_buffer(
+						cmd,
+						&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+					)
+					.unwrap();
+				device.device().cmd_reset_query_pool(cmd, qpool, 0, 1);
+				device.as_ext().cmd_build_acceleration_structures(
 					cmd,
-					&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-				)
-				.unwrap();
-			device.device().cmd_reset_query_pool(cmd, qpool, 0, 1);
-			device.as_ext().cmd_build_acceleration_structures(
-				cmd,
-				&[info],
-				&[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
-					.primitive_count(tri_count)
-					.primitive_offset(0)
-					.first_vertex(0)]],
-			);
-			device.device().cmd_pipeline_barrier2(
-				cmd,
-				&vk::DependencyInfo::default().memory_barriers(&[get_global_barrier(&GlobalBarrier {
-					previous_usages: &[UsageType::AccelerationStructureBuildWrite],
-					next_usages: &[UsageType::AccelerationStructureBuildRead],
-				})]),
-			);
-			device.as_ext().cmd_write_acceleration_structures_properties(
-				cmd,
-				&[old.handle()],
-				vk::QueryType::ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
-				qpool,
-				0,
-			);
-			device.device().end_command_buffer(cmd).unwrap();
-			let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[], vk::Fence::null())?;
-			sync.wait(device)?;
-			pool.reset(device)?;
-			scratch.destroy(device);
-
-			let mut size = [0u64];
-			device
-				.device()
-				.get_query_pool_results(
+					&[info],
+					&[&[vk::AccelerationStructureBuildRangeInfoKHR::default()
+						.primitive_count(tri_count)
+						.primitive_offset(0)
+						.first_vertex(0)]],
+				);
+				device.device().cmd_pipeline_barrier2(
+					cmd,
+					&vk::DependencyInfo::default().memory_barriers(&[get_global_barrier(&GlobalBarrier {
+						previous_usages: &[UsageType::AccelerationStructureBuildWrite],
+						next_usages: &[UsageType::AccelerationStructureBuildRead],
+					})]),
+				);
+				device.as_ext().cmd_write_acceleration_structures_properties(
+					cmd,
+					&[old.handle()],
+					vk::QueryType::ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
 					qpool,
 					0,
-					&mut size,
-					vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
-				)
-				.unwrap();
-			device.device().destroy_query_pool(qpool, None);
+				);
+				device.device().end_command_buffer(cmd).unwrap();
+				let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[], vk::Fence::null())?;
+				sync.wait(device)?;
+				pool.reset(device)?;
+				scratch.destroy(device);
 
-			let as_ = AS::create(
-				device,
-				ASDesc {
-					name: &format!("{name} AS"),
-					flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
-					ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
-					size: size[0],
-				},
-			)?;
-			device
-				.device()
-				.begin_command_buffer(
+				old
+			};
+
+			let as_ = {
+				let s = trace_span!("compact AS");
+				let _e = s.enter();
+				let mut size = [0u64];
+				device
+					.device()
+					.get_query_pool_results(
+						qpool,
+						0,
+						&mut size,
+						vk::QueryResultFlags::TYPE_64 | vk::QueryResultFlags::WAIT,
+					)
+					.unwrap();
+				device.device().destroy_query_pool(qpool, None);
+
+				let as_ = AS::create(
+					device,
+					ASDesc {
+						name: &format!("{name} AS"),
+						flags: vk::AccelerationStructureCreateFlagsKHR::empty(),
+						ty: vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL,
+						size: size[0],
+					},
+				)?;
+				device
+					.device()
+					.begin_command_buffer(
+						cmd,
+						&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+					)
+					.unwrap();
+				device.as_ext().cmd_copy_acceleration_structure(
 					cmd,
-					&vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
-				)
-				.unwrap();
-			device.as_ext().cmd_copy_acceleration_structure(
-				cmd,
-				&vk::CopyAccelerationStructureInfoKHR::default()
-					.src(old.handle())
-					.dst(as_.handle())
-					.mode(vk::CopyAccelerationStructureModeKHR::COMPACT),
-			);
-			device.device().end_command_buffer(cmd).unwrap();
-			let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[], vk::Fence::null())?;
-			sync.wait(device)?;
-			pool.destroy(device);
-			old.destroy(device);
+					&vk::CopyAccelerationStructureInfoKHR::default()
+						.src(old.handle())
+						.dst(as_.handle())
+						.mode(vk::CopyAccelerationStructureModeKHR::COMPACT),
+				);
+				device.device().end_command_buffer(cmd).unwrap();
+				let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[], vk::Fence::null())?;
+				sync.wait(device)?;
+				pool.destroy(device);
+				old.destroy(device);
+				as_
+			};
 
 			Ok(Self {
 				buffer,

@@ -1,7 +1,7 @@
 use std::{
 	collections::BTreeMap,
 	fs,
-	io::{self, Read, Seek, Write},
+	io::{self, BufReader, Read, Write},
 	ops::Deref,
 	path::{Path, PathBuf},
 	sync::Arc,
@@ -18,7 +18,9 @@ use rad_core::asset::{
 };
 use rad_world::Uuid;
 use rustc_hash::{FxHashMap, FxHashSet};
+use tracing::trace_span;
 use walkdir::WalkDir;
+use zstd::{stream::AutoFinishEncoder, Decoder, Encoder};
 
 #[derive(Copy, Clone, Pod, Zeroable)]
 #[repr(C)]
@@ -88,13 +90,16 @@ impl FsAssetSystem {
 
 	pub fn open(&self, root: PathBuf) { *self.root.write() = Some(root) }
 
-	pub fn create<T: Asset>(&self, rel_path: &Path, id: AssetId<T>) -> Result<FsAssetView, io::Error> {
+	pub fn create<T: Asset>(&self, rel_path: &Path, id: AssetId<T>) -> Result<FsAssetWrite, io::Error> {
+		let s = trace_span!("create asset", path = %rel_path.display(), id = %id);
+		let _e = s.enter();
+
 		let path = self
 			.abs_path(rel_path)
 			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no system opened"))?;
 		fs::create_dir_all(path.parent().unwrap())?;
 
-		let view = FsAssetView::create(&path, id);
+		let view = FsAssetWrite::create(&path, id);
 		self.add_asset(
 			rel_path,
 			AssetHeader {
@@ -127,10 +132,8 @@ impl FsAssetSystem {
 			let path = entry.path();
 			let is_file = path.is_file();
 			if is_file && path.extension().and_then(|x| x.to_str()) == Some("radass") {
-				if let Ok(mut view) = FsAssetView::open_ro(entry.path()) {
-					if let Ok(header) = view.header() {
-						new.add_asset_abs(path, header);
-					}
+				if let Ok(mut view) = FsAssetRead::open(entry.path()) {
+					new.add_asset_abs(path, view.header());
 				}
 			} else if !is_file {
 				new.add_dir_abs(path);
@@ -174,64 +177,65 @@ impl FsAssetSystem {
 
 impl AssetSource for FsAssetSystem {
 	fn load(&self, id: UntypedAssetId, ty: Uuid) -> Result<Box<dyn AssetRead>, io::Error> {
+		let s = trace_span!("load asset", id = %id, ty = %ty);
+		let _e = s.enter();
+
 		let assets = self.assets.read();
 		let path = assets
 			.get(&id)
 			.ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "asset not found"))?;
-		let mut view = FsAssetView::open_ro(path)?;
-		let h = view.header()?;
+		let mut view = FsAssetRead::open(path)?;
 		// TODO: cooka
-		if h.ty != ty {
+		if view.header().ty != ty {
 			return Err(io::Error::new(io::ErrorKind::InvalidData, "asset type mismatch"));
 		}
 		Ok(Box::new(view))
 	}
 }
 
-pub struct FsAssetView {
-	file: fs::File,
+pub struct FsAssetRead {
+	header: AssetHeader,
+	read: Decoder<'static, BufReader<fs::File>>,
 }
-
-// TODO: buffer and compress
-impl Read for FsAssetView {
-	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.file.read(buf) }
+impl Read for FsAssetRead {
+	fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.read.read(buf) }
 }
-impl AssetRead for FsAssetView {}
+impl AssetRead for FsAssetRead {}
 
-impl Write for FsAssetView {
-	fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.file.write(buf) }
-
-	fn flush(&mut self) -> io::Result<()> { self.file.flush() }
-}
-impl AssetWrite for FsAssetView {}
-
-impl FsAssetView {
+impl FsAssetRead {
 	fn open(path: &Path) -> Result<Self, io::Error> {
+		let mut file = fs::OpenOptions::new().read(true).open(path)?;
+		let mut header = AssetHeader::zeroed();
+		file.read_exact(bytemuck::bytes_of_mut(&mut header))?;
 		Ok(Self {
-			file: fs::OpenOptions::new().read(true).write(true).create(true).open(path)?,
+			header,
+			read: Decoder::new(file)?,
 		})
 	}
 
-	fn open_ro(path: &Path) -> Result<Self, io::Error> {
-		Ok(Self {
-			file: fs::OpenOptions::new().read(true).open(path)?,
-		})
-	}
+	fn header(&mut self) -> AssetHeader { self.header }
+}
 
+pub struct FsAssetWrite {
+	write: AutoFinishEncoder<'static, fs::File>,
+}
+impl Write for FsAssetWrite {
+	fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.write.write(buf) }
+
+	fn flush(&mut self) -> io::Result<()> { self.write.flush() }
+}
+impl AssetWrite for FsAssetWrite {}
+
+impl FsAssetWrite {
 	fn create<T: Asset>(path: &Path, id: AssetId<T>) -> Result<Self, io::Error> {
-		let mut file = fs::OpenOptions::new().read(true).write(true).create(true).open(path)?;
+		let mut file = fs::OpenOptions::new().write(true).create(true).open(path)?;
 		let header = AssetHeader {
 			id: id.to_untyped(),
 			ty: T::UUID,
 		};
 		file.write_all(bytemuck::bytes_of(&header))?;
-		Ok(Self { file })
-	}
-
-	fn header(&mut self) -> Result<AssetHeader, io::Error> {
-		let mut header = AssetHeader::zeroed();
-		self.file.seek(io::SeekFrom::Start(0))?;
-		self.file.read_exact(bytemuck::bytes_of_mut(&mut header))?;
-		Ok(header)
+		Ok(Self {
+			write: Encoder::new(file, 5)?.auto_finish(),
+		})
 	}
 }

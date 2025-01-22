@@ -111,14 +111,19 @@ impl GltfImporter {
 							Some(uri.to_string())
 						})
 						.unwrap_or_else(|| id.to_string());
+					let s = trace_span!("import image", name = name);
+					let _e = s.enter();
+
 					let path = Path::new("images").join(&name);
 					let mut d = {
-						let s = trace_span!("load image", name = name);
+						let s = trace_span!("load");
 						let _e = s.enter();
 						image::Data::from_source(image.source(), Some(self.base.as_path()), &self.buffers)
 							.map_err(io::Error::other)?
 					};
 					if d.format == image::Format::R8G8B8 {
+						let s = trace_span!("add alpha");
+						let _e = s.enter();
 						d.pixels = d
 							.pixels
 							.chunks_exact(3)
@@ -126,24 +131,30 @@ impl GltfImporter {
 							.collect();
 						d.format = image::Format::R8G8B8A8;
 					}
-					ImageAsset {
-						size: Vec3::new(d.width, d.height, 1),
-						format: match d.format {
-							image::Format::R8 => vk::Format::R8_UNORM,
-							image::Format::R8G8 => vk::Format::R8G8_UNORM,
-							image::Format::R8G8B8 => vk::Format::R8G8B8_UNORM,
-							image::Format::R8G8B8A8 => vk::Format::R8G8B8A8_UNORM,
-							image::Format::R16 => vk::Format::R16_UNORM,
-							image::Format::R16G16 => vk::Format::R16G16_UNORM,
-							image::Format::R16G16B16 => vk::Format::R16G16B16_UNORM,
-							image::Format::R16G16B16A16 => vk::Format::R16G16B16A16_UNORM,
-							image::Format::R32G32B32FLOAT => vk::Format::R32G32B32_SFLOAT,
-							image::Format::R32G32B32A32FLOAT => vk::Format::R32G32B32A32_SFLOAT,
+
+					{
+						let s = trace_span!("save");
+						let _e = s.enter();
+						ImageAsset {
+							size: Vec3::new(d.width, d.height, 1),
+							format: match d.format {
+								image::Format::R8 => vk::Format::R8_UNORM,
+								image::Format::R8G8 => vk::Format::R8G8_UNORM,
+								image::Format::R8G8B8 => vk::Format::R8G8B8_UNORM,
+								image::Format::R8G8B8A8 => vk::Format::R8G8B8A8_UNORM,
+								image::Format::R16 => vk::Format::R16_UNORM,
+								image::Format::R16G16 => vk::Format::R16G16_UNORM,
+								image::Format::R16G16B16 => vk::Format::R16G16B16_UNORM,
+								image::Format::R16G16B16A16 => vk::Format::R16G16B16A16_UNORM,
+								image::Format::R32G32B32FLOAT => vk::Format::R32G32B32_SFLOAT,
+								image::Format::R32G32B32A32FLOAT => vk::Format::R32G32B32A32_SFLOAT,
+							}
+							.as_raw(),
+							data: d.pixels,
 						}
-						.as_raw(),
-						data: d.pixels,
+						.save(&mut sys.create(&path, id)?)?;
 					}
-					.save(&mut sys.create(&path, id)?)?;
+
 					let old = prog.fetch_add(1, Ordering::Relaxed);
 					progress(
 						ImportProgress {
@@ -171,8 +182,36 @@ impl GltfImporter {
 				.map(|mat| {
 					let id = AssetId::new();
 					let name = mat.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
+					let s = trace_span!("import material", name = name);
+					let _e = s.enter();
+
 					let path = Path::new("materials").join(&name);
-					self.material(&name, mat, &images).save(&mut sys.create(&path, id)?)?;
+					{
+						let s = trace_span!("save");
+						let _e = s.enter();
+						let m = mat.pbr_metallic_roughness();
+						let es = mat.emissive_strength().unwrap_or(1.0);
+						Material {
+							base_color: m
+								.base_color_texture()
+								.map(|x| images[x.texture().source().index()].clone()),
+							base_color_factor: m.base_color_factor().into(),
+							metallic_roughness: m
+								.metallic_roughness_texture()
+								.map(|x| images[x.texture().source().index()].clone()),
+							metallic_factor: m.metallic_factor(),
+							roughness_factor: m.roughness_factor(),
+							normal: mat
+								.normal_texture()
+								.map(|x| images[x.texture().source().index()].clone()),
+							emissive: mat
+								.emissive_texture()
+								.map(|x| images[x.texture().source().index()].clone()),
+							emissive_factor: mat.emissive_factor().map(|x| x * es).into(),
+						}
+						.save(&mut sys.create(&path, id)?)?;
+					}
+
 					let old = prog.fetch_add(1, Ordering::Relaxed);
 					progress(
 						ImportProgress {
@@ -205,6 +244,9 @@ impl GltfImporter {
 				.into_par_iter()
 				.map(|mesh| {
 					let name = mesh.name().map(|x| x.to_string());
+					let s = trace_span!("import mesh", name = name);
+					let _e = s.enter();
+
 					let prims = self.conv_to_meshes(mesh, &materials).map_err(io::Error::other)?;
 					let c = prims.len();
 					let ids = prims
@@ -218,6 +260,9 @@ impl GltfImporter {
 							} else {
 								format!("{name}-{i}")
 							};
+							let s = trace_span!("save primitive", i = i);
+							let _e = s.enter();
+
 							let path = Path::new("meshes").join(&name);
 							m.save(&mut sys.create(&path, id)?)?;
 							Ok::<_, io::Error>(id)
@@ -248,10 +293,17 @@ impl GltfImporter {
 			self.gltf.scenes().par_bridge().try_for_each(|scene| {
 				let id = AssetId::<World>::new();
 				let name = scene.name().map(|x| x.to_string()).unwrap_or_else(|| id.to_string());
+				let s = trace_span!("import scene", name = name);
+				let _e = s.enter();
+
 				let path = Path::new("scenes").join(&name);
-				self.scene(&name, scene, &meshes)
-					.map_err(io::Error::other)?
-					.save(&mut sys.create(&path, id)?)?;
+				let scene = self.scene(&name, scene, &meshes).map_err(io::Error::other)?;
+				{
+					let s = trace_span!("save");
+					let _e = s.enter();
+					scene.save(&mut sys.create(&path, id)?)?;
+				}
+
 				let old = prog.fetch_add(1, Ordering::Relaxed);
 				progress(
 					ImportProgress {
@@ -300,33 +352,6 @@ impl GltfImporter {
 			normal: None,
 			emissive: None,
 			emissive_factor: Vec3::zero(),
-		}
-	}
-
-	fn material(&self, name: &str, mat: gltf::Material, images: &[AssetId<ImageAsset>]) -> Material {
-		let s = span!(Level::INFO, "importing material", name = name);
-		let _e = s.enter();
-
-		let m = mat.pbr_metallic_roughness();
-		let es = mat.emissive_strength().unwrap_or(1.0);
-
-		Material {
-			base_color: m
-				.base_color_texture()
-				.map(|x| images[x.texture().source().index()].clone()),
-			base_color_factor: m.base_color_factor().into(),
-			metallic_roughness: m
-				.metallic_roughness_texture()
-				.map(|x| images[x.texture().source().index()].clone()),
-			metallic_factor: m.metallic_factor(),
-			roughness_factor: m.roughness_factor(),
-			normal: mat
-				.normal_texture()
-				.map(|x| images[x.texture().source().index()].clone()),
-			emissive: mat
-				.emissive_texture()
-				.map(|x| images[x.texture().source().index()].clone()),
-			emissive_factor: mat.emissive_factor().map(|x| x * es).into(),
 		}
 	}
 
@@ -396,7 +421,7 @@ impl GltfImporter {
 	}
 
 	fn conv_to_meshes(&self, mesh: gltf::Mesh, materials: &[AssetId<Material>]) -> Result<Vec<Mesh>, io::Error> {
-		let s = trace_span!("convert from gltf");
+		let s = trace_span!("load mesh");
 		let _e = s.enter();
 
 		let out = mesh

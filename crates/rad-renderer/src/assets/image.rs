@@ -14,6 +14,7 @@ use rad_graph::{
 	resource::{Buffer, BufferDesc, Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, Subresource},
 	sync::{get_image_barrier, ImageBarrier, UsageType},
 };
+use tracing::trace_span;
 use vek::Vec3;
 
 #[derive(Encode, Decode)]
@@ -112,6 +113,9 @@ impl ImageAssetView {
 	pub fn image_id(&self) -> ImageId { self.view.id.unwrap() }
 
 	pub fn new(name: &str, data: ImageAsset) -> Result<Self, std::io::Error> {
+		let s = trace_span!("load image", name = name);
+		let _e = s.enter();
+
 		let device: &Device = Engine::get().global();
 		let size = vk::Extent3D {
 			width: data.size.x,

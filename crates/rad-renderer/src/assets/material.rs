@@ -16,6 +16,7 @@ use rad_graph::{
 	resource::{Buffer, BufferDesc, GpuPtr, Resource},
 };
 use rad_world::Uuid;
+use tracing::trace_span;
 use vek::{Vec3, Vec4};
 
 use crate::assets::image::{ImageAsset, ImageAssetView};
@@ -116,6 +117,9 @@ impl MaterialBuffers {
 	fn id(i: &Option<LARef<ImageAssetView>>) -> Option<ImageId> { i.as_ref().map(|i| i.image_id()) }
 
 	fn load(&'static self, mat: Material) -> MaterialView {
+		let s = trace_span!("load material");
+		let _e = s.enter();
+
 		let mut inner = self.inner.write().unwrap();
 		let buf = if let Some(free) = inner.free.pop() {
 			free
