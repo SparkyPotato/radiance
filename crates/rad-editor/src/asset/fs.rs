@@ -118,6 +118,9 @@ impl FsAssetSystem {
 	// }
 
 	fn rescan(&self) {
+		let s = trace_span!("rescan assets");
+		let _e = s.enter();
+
 		let r = self.root.read().clone();
 		let Some(ref root) = r else {
 			return;

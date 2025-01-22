@@ -20,21 +20,21 @@ pub trait AssetRead: Read {}
 
 pub trait AssetWrite: Write {}
 
-pub trait Asset: Sized {
+pub trait Asset: Sized + 'static {
 	const UUID: Uuid;
-	type RealBase: Asset = Self;
+	type Root: Asset = Self;
 
 	fn load(from: Box<dyn AssetRead>) -> Result<Self, io::Error>;
 
 	fn save(&self, to: &mut dyn AssetWrite) -> Result<(), io::Error>;
 }
 
-pub trait BincodeAsset: Encode + Decode + Sized {
+pub trait BincodeAsset: Encode + Decode + Sized + 'static {
 	const UUID: Uuid;
-	type RealBase: Asset = Self;
+	type Root: Asset = Self;
 }
 impl<T: BincodeAsset> Asset for T {
-	type RealBase = T::RealBase;
+	type Root = T::Root;
 
 	const UUID: Uuid = T::UUID;
 
@@ -65,7 +65,7 @@ pub fn map_dec_err(e: DecodeError) -> io::Error {
 }
 
 pub trait CookedAsset: Asset {
-	type Base: Asset;
+	type Base: Asset<Root = Self::Root>;
 
 	fn cook(base: &Self::Base) -> Self;
 }
@@ -86,10 +86,13 @@ impl<T: AssetSource> AssetSource for Arc<T> {
 	}
 }
 
+type ErasedKitchen = fn(base: *const (), out: *mut ());
+
 pub struct AssetRegistry {
 	sources: Vec<Box<dyn AssetSource>>,
 	source_to_index: FxHashMap<TypeId, usize>,
 	views: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
+	kitchens: FxHashMap<TypeId, ErasedKitchen>,
 }
 
 impl AssetRegistry {
@@ -98,6 +101,7 @@ impl AssetRegistry {
 			sources: Vec::new(),
 			source_to_index: FxHashMap::default(),
 			views: FxHashMap::default(),
+			kitchens: FxHashMap::default(),
 		}
 	}
 
@@ -109,6 +113,16 @@ impl AssetRegistry {
 
 	pub fn register_view<T: AssetView>(&mut self) {
 		self.views.insert(TypeId::of::<T>(), Box::new(AssetCache::<T>::new()));
+	}
+
+	pub fn register_cooked<T: CookedAsset>(&mut self) {
+		self.kitchens.insert(TypeId::of::<T>(), |base, out| {
+			let base = unsafe { &*(base as *const T::Base) };
+			let out = out as *mut T;
+			unsafe {
+				out.write(T::cook(base));
+			}
+		});
 	}
 
 	pub fn source<T: AssetSource>(&self) -> &T {
@@ -129,7 +143,7 @@ impl AssetRegistry {
 		}
 	}
 
-	pub fn load_asset<T: Asset>(&self, id: AssetId<T::RealBase>) -> Result<T, io::Error> {
+	pub fn load_asset<T: Asset>(&self, id: AssetId<T::Root>) -> Result<T, io::Error> {
 		for src in self.sources.iter().rev() {
 			match src.load(id.to_untyped(), T::UUID) {
 				Ok(from) => return T::load(from),

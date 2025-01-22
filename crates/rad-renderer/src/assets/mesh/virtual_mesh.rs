@@ -145,7 +145,7 @@ const_assert_eq!(std::mem::align_of::<GpuMeshlet>(), 4);
 pub(super) fn map_sphere(sphere: Sphere<f32, f32>) -> Vec4<f32> { sphere.center.with_w(sphere.radius) }
 
 impl BincodeAsset for VirtualMesh {
-	type RealBase = Mesh;
+	type Root = Mesh;
 
 	const UUID: Uuid = uuid!("36e2ce93-453f-4bb2-ad98-83e327a58ae6");
 }
@@ -804,6 +804,9 @@ impl AssetView for VirtualMeshView {
 		let device: &Device = Engine::get().global();
 		// TODO: fips.
 		let name = "virtual mesh";
+
+		let s = trace_span!("loading virtual mesh", name = name);
+		let _e = s.enter();
 
 		let bvh_byte_offset = 0;
 		let bvh_byte_len = (m.bvh.len() * std::mem::size_of::<GpuBvhNode>()) as u64;

@@ -28,11 +28,7 @@ pub mod virtual_scene;
 pub fn register_gpu_scene<T: GpuScene>(world: &mut World, tick: &mut Tick) {
 	// TODO: only sync if necessary
 	world.insert_resource(SceneRunCondition::<T> {
-		run: if std::any::TypeId::of::<T>() == std::any::TypeId::of::<virtual_scene::VirtualScene>() {
-			false
-		} else {
-			true
-		},
+		run: true,
 		_phantom: PhantomData,
 	});
 	T::add_to_world(world, tick);

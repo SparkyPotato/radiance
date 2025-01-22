@@ -203,7 +203,8 @@ fn sync_virtual_scene(
 			.map(|&m| {
 				let index = r.instance_count;
 				r.instance_count += 1;
-				let view = ARef::loaded(m).unwrap();
+				// TODO: this whole thing is cringe.
+				let view = ARef::cooked(m).unwrap();
 				r.push_instance(index, t, &view);
 				(index, view)
 			})

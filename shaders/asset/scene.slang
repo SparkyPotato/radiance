@@ -79,7 +79,6 @@ void update_rt(u32 id: SV_DispatchThreadID) {
 struct VirtualUpdate {
 	u32 index;
 	u32 _pad;
-	u64 as;
 	Instance instance;
 }
 

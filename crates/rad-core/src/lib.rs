@@ -37,9 +37,7 @@ impl Engine {
 
 	pub fn asset_source<T: AssetSource>(&self) -> &T { self.assets.source::<T>() }
 
-	pub fn load_asset<T: Asset>(&self, id: AssetId<T::RealBase>) -> Result<T, std::io::Error> {
-		self.assets.load_asset(id)
-	}
+	pub fn load_asset<T: Asset>(&self, id: AssetId<T::Root>) -> Result<T, std::io::Error> { self.assets.load_asset(id) }
 
 	pub unsafe fn destroy() { std::ptr::drop_in_place(&ENGINE as *const _ as *mut OnceLock<Engine>); }
 }

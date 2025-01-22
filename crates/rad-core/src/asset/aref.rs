@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-	asset::{Asset, AssetView},
+	asset::{Asset, AssetView, CookedAsset},
 	Engine,
 };
 
@@ -79,7 +79,7 @@ impl<T> AssetId<T> {
 }
 
 struct ARefData<T: AssetView> {
-	id: AssetId<<T::Base as Asset>::RealBase>,
+	id: AssetId<<T::Base as Asset>::Root>,
 	data: OnceLock<T>,
 }
 
@@ -91,12 +91,10 @@ pub struct ARef<T: AssetView> {
 
 impl<T: AssetView> ARef<T> {
 	/// Creates an unloaded asset view reference. The returned reference might be loaded if the asset is already loaded.
-	pub fn unloaded(id: AssetId<<T::Base as Asset>::RealBase>) -> Self {
-		Engine::get().assets.cache::<T>().unloaded(id)
-	}
+	pub fn unloaded(id: AssetId<<T::Base as Asset>::Root>) -> Self { Engine::get().assets.cache::<T>().unloaded(id) }
 
 	/// Create a loaded asset view reference. This function will block until the asset view is loaded.
-	pub fn loaded(id: AssetId<<T::Base as Asset>::RealBase>) -> Result<LARef<T>, io::Error> {
+	pub fn loaded(id: AssetId<<T::Base as Asset>::Root>) -> Result<LARef<T>, io::Error> {
 		Engine::get().assets.cache::<T>().loaded(id)
 	}
 
@@ -106,7 +104,16 @@ impl<T: AssetView> ARef<T> {
 		Ok(LARef { inner: self })
 	}
 
-	pub fn id(&self) -> AssetId<<T::Base as Asset>::RealBase> { self.inner.id }
+	pub fn id(&self) -> AssetId<<T::Base as Asset>::Root> { self.inner.id }
+}
+
+impl<T: AssetView> ARef<T>
+where
+	T::Base: CookedAsset,
+{
+	pub fn cooked(id: AssetId<<T::Base as Asset>::Root>) -> Result<LARef<T>, io::Error> {
+		Engine::get().assets.cache::<T>().cooked(id)
+	}
 }
 
 /// A loaded asset view
@@ -117,7 +124,7 @@ pub struct LARef<T: AssetView> {
 impl<T: AssetView> LARef<T> {
 	pub fn into_inner(self) -> ARef<T> { self.inner }
 
-	pub fn id(&self) -> AssetId<<T::Base as Asset>::RealBase> { self.inner.id() }
+	pub fn id(&self) -> AssetId<<T::Base as Asset>::Root> { self.inner.id() }
 }
 
 impl<T: AssetView> Deref for LARef<T> {
@@ -128,7 +135,7 @@ impl<T: AssetView> Deref for LARef<T> {
 
 pub struct AssetCache<T: AssetView> {
 	context: T::Ctx,
-	loaded: RwLock<FxHashMap<AssetId<<T::Base as Asset>::RealBase>, Arc<ARefData<T>>>>,
+	loaded: RwLock<FxHashMap<AssetId<<T::Base as Asset>::Root>, Arc<ARefData<T>>>>,
 }
 
 impl<T: AssetView> AssetCache<T> {
@@ -139,7 +146,7 @@ impl<T: AssetView> AssetCache<T> {
 		}
 	}
 
-	pub fn unloaded(&self, id: AssetId<<T::Base as Asset>::RealBase>) -> ARef<T> {
+	pub fn unloaded(&self, id: AssetId<<T::Base as Asset>::Root>) -> ARef<T> {
 		let read = self.loaded.read().unwrap();
 		match read.get(&id) {
 			Some(data) => ARef { inner: data.clone() },
@@ -160,7 +167,7 @@ impl<T: AssetView> AssetCache<T> {
 		}
 	}
 
-	pub fn loaded(&'static self, id: AssetId<<T::Base as Asset>::RealBase>) -> Result<LARef<T>, io::Error> {
+	pub fn loaded(&'static self, id: AssetId<<T::Base as Asset>::Root>) -> Result<LARef<T>, io::Error> {
 		let inner = self.unloaded(id);
 		self.load(&inner.inner)?;
 		Ok(LARef { inner })
@@ -170,6 +177,25 @@ impl<T: AssetView> AssetCache<T> {
 		inner.data.get_or_try_init(|| {
 			let asset = Engine::get().assets.load_asset(inner.id)?;
 			T::load(&self.context, asset)
+		})
+	}
+}
+
+impl<T: AssetView> AssetCache<T>
+where
+	T::Base: CookedAsset,
+{
+	pub fn cooked(&'static self, id: AssetId<<T::Base as Asset>::Root>) -> Result<LARef<T>, io::Error> {
+		let inner = self.unloaded(id);
+		self.cook(&inner.inner)?;
+		Ok(LARef { inner })
+	}
+
+	fn cook<'a>(&'static self, inner: &'a ARefData<T>) -> Result<&'a T, io::Error> {
+		inner.data.get_or_try_init(|| {
+			let asset = Engine::get().assets.load_asset(inner.id)?;
+			let cooked = T::Base::cook(&asset);
+			T::load(&self.context, cooked)
 		})
 	}
 }

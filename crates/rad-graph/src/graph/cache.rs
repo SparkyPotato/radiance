@@ -254,7 +254,7 @@ impl<T: Resource> PersistentCache<T> {
 					let old = r.layout;
 					r.layout = next_layout;
 					r.age += 1;
-					Ok((r.resource.inner.handle(), r.age < 2, old))
+					Ok((r.resource.inner.handle(), r.age < 1, old))
 				} else {
 					let resource = T::create(device, desc.to_named("graph resource"))?;
 					let handle = resource.handle();
