@@ -122,21 +122,19 @@ f32x3 shlick(f32 u, f32x3 f0) {
 	return f + f0 * (1.f - f);
 }
 
+// Sampling with spherical caps:
+// https://arxiv.org/abs/2306.05044
 f32x3 sample_ggx_vndf(inout Rng rng, f32x3 wo, f32 roughness) {
 	let u = rng.sample2();
 	let vh = normalize(f32x3(roughness * wo.xy, wo.z));
-	let lensq = dot(vh.xy, vh.xy);
-	let T1 = lensq > 0.f ? f32x3(-vh.y, vh.x, 0.f) / sqrt(lensq) : f32x3(1.f, 0.f, 0.f);
-	let T2 = cross(vh, T1);
 
-	let r = sqrt(u.x);
-	let phi = 2.f * PI * u.y;
-	let t1 = r * cos(phi);
-	var t2 = r * sin(phi);
-	let s = 0.5f * (1.f + vh.z);
-	t2 = (1.f - s) * sqrt(1.f - t1 * t1) + s * t2;
+	let phi = 2.f * PI * u.x;
+	let z = fma(1.f - u.y, 1.f + vh.z, -vh.z);
+	let sin_theta = sqrt(clamp(1.f - z * z, 0.f, 1.f));
+	let x = sin_theta * cos(phi);
+	let y = sin_theta * sin(phi);
+	let nh = f32x3(x, y, z) + vh;
 
-	let nh = t1 * T1 + t2 * T2 + sqrt(max(0.f, 1.f - t1 * t1 - t2 * t2)) * vh;
 	return normalize(f32x3(roughness * nh.xy, max(0.f, nh.z)));
 }
 
