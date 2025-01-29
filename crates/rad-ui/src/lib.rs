@@ -79,7 +79,7 @@ impl<T: App> rad_window::App for UiApp<T> {
 		let ctx = Engine::get().global::<Context>();
 		self.arena.reset();
 
-		let mut frame = self.graph.frame(Engine::get().global(), &self.arena);
+		let mut frame = self.graph.frame(Engine::get().global(), &self.arena)?;
 
 		ctx.begin_pass(self.state.as_mut().unwrap().take_egui_input(window));
 		self.inner.render(window, &mut frame, ctx)?;

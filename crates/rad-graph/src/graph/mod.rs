@@ -93,13 +93,14 @@ impl RenderGraph {
 
 	pub fn frame<'pass, 'graph>(
 		&'graph mut self, device: &'graph Device, arena: &'graph Arena,
-	) -> Frame<'pass, 'graph> {
-		Frame {
+	) -> Result<Frame<'pass, 'graph>> {
+		self.frame_data[self.curr_frame].reset(device)?;
+		Ok(Frame {
 			graph: self,
 			device,
 			passes: Vec::new_in(arena),
 			virtual_resources: Vec::new_in(arena),
-		}
+		})
 	}
 
 	pub fn destroy(self, device: &Device) {
@@ -173,8 +174,7 @@ impl Frame<'_, '_> {
 
 		let device = self.device;
 		let arena = self.arena();
-		let data = &mut self.graph.frame_data[self.graph.curr_frame];
-		data.reset(device)?;
+		// SAFETY: data is reset when the frame is constructed.
 		unsafe {
 			self.graph.caches.upload_buffers[self.graph.curr_frame].reset(device);
 			self.graph.caches.buffers.reset(device);
