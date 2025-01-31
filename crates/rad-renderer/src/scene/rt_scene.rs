@@ -155,7 +155,10 @@ impl GpuScene for RtScene {
 			})];
 		let info = vk::AccelerationStructureBuildGeometryInfoKHR::default()
 			.ty(vk::AccelerationStructureTypeKHR::TOP_LEVEL)
-			.flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+			.flags(
+				vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE
+					| vk::BuildAccelerationStructureFlagsKHR::ALLOW_DATA_ACCESS,
+			)
 			.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
 			.geometries(&geo);
 		let mut sinfo = vk::AccelerationStructureBuildSizesInfoKHR::default();

@@ -362,16 +362,28 @@ public struct Cull {
 	}
 
 	public f32 error_scale() {
+		return sin(atan(this.h / this.screen.y));
 		// Don't divide by 2 because the error is already divided by 2 during build.
 		return this.screen.y * this.h;
 	}
 
+	bool should_visit_nv(f32x4 lod_bounds, f32 parent_error) {
+		let sphere_dist = length(mul(this.curr_mv, f32x4(lod_bounds.xyz, 1.f)).xyz);
+		let err_dist = max(this.near, sphere_dist - lod_bounds.w * this.scale);
+		let err_over_dist = parent_error * this.scale / err_dist;
+		return err_over_dist >= this.error_scale();
+	}
+
 	public bool should_visit_bvh(f32x4 lod_bounds, f32 parent_error) {
+		return this.should_visit_nv(lod_bounds, parent_error);
+
 		let min_dist = this.error_scale() * this.min_scale * parent_error;
 		return this.error_distance(lod_bounds) <= min_dist;
 	}
 
 	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge) {
+		return bool2(!this.should_visit_nv(lod_bounds, error), true);
+
 		let dist = this.error_distance(lod_bounds);
 		let scale = this.error_scale();
 		let min_dist = scale * this.min_scale * error;

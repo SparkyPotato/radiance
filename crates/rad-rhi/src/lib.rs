@@ -1,6 +1,6 @@
 use rad_core::{EngineBuilder, Module};
 use rad_graph::{
-	ash::{ext, vk},
+	ash::{ext, khr, vk},
 	device::Device,
 };
 
@@ -9,7 +9,11 @@ pub struct RhiModule;
 impl Module for RhiModule {
 	fn init(engine: &mut EngineBuilder) {
 		let device = Device::builder()
-			.device_extensions(&[ext::mesh_shader::NAME, ext::shader_image_atomic_int64::NAME])
+			.device_extensions(&[
+				ext::mesh_shader::NAME,
+				ext::shader_image_atomic_int64::NAME,
+				khr::ray_tracing_position_fetch::NAME,
+			])
 			.features(
 				vk::PhysicalDeviceFeatures2::default()
 					.features(
@@ -40,6 +44,10 @@ impl Module for RhiModule {
 					.push_next(
 						&mut vk::PhysicalDeviceShaderImageAtomicInt64FeaturesEXT::default()
 							.shader_image_int64_atomics(true),
+					)
+					.push_next(
+						&mut vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR::default()
+							.ray_tracing_position_fetch(true),
 					),
 			)
 			.build()

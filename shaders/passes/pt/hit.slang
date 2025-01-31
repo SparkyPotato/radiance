@@ -9,6 +9,12 @@ struct WorldVertex {
 	f32x2 uv;
 }
 
+f32x3[3] get_positions() {
+	return spirv_asm {
+		result:$$f32x3[3] = OpLoad builtin(HitTriangleVertexPositionsKHR:f32x3[3])
+	};
+}
+
 struct WorldTriHit {
 	WorldVertex v0;
 	WorldVertex v1;
@@ -16,6 +22,7 @@ struct WorldTriHit {
 	f32x3 position;
 	f32x2 uv;
 	f32x3 normal;
+	f32x3 g_normal;
 	f32 area;
 
 	__init(u32 instance, u32 tri, f32x2 b) {
@@ -40,7 +47,9 @@ struct WorldTriHit {
 		this.uv = bary.x * v0.uv + bary.y * v1.uv + bary.z * v2.uv;
 		let obj_norm = f32x4(bary.x * v0.normal + bary.y * v1.normal + bary.z * v2.normal, 0.f);
 		this.normal = normalize(mul(tmat, obj_norm).xyz);
-		this.area = length(cross(v1p - v0p, v2p - v0p)) * 0.5f;
+		this.g_normal = cross(v1p - v0p, v2p - v0p);
+		this.area = length(this.g_normal) * 0.5f;
+		this.g_normal = normalize(this.g_normal);
 	}
 }
 
@@ -89,10 +98,10 @@ struct Hit {
 	__init(BuiltInTriangleIntersectionAttributes attrs) {
 		let thit = WorldTriHit(InstanceIndex(), PrimitiveIndex(), attrs.barycentrics);
 		this.position = thit.position;
-		this.g_normal = thit.normal;
+		this.g_normal = thit.g_normal;
 		this.area = thit.area;
 
-		let tbn = Tbn(thit.v0, thit.v1, thit.v2, this.g_normal);
+		let tbn = Tbn(thit.v0, thit.v1, thit.v2, thit.normal);
 		this.to_shading_basis = f32x3x3(tbn.tangent, tbn.bitangent, tbn.normal);
 		this.from_shading_basis = transpose(this.to_shading_basis);
 
@@ -200,16 +209,10 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 }
 
 LightSample sample_one_light(inout Rng rng, Hit hit) {
-	let n = f32(Constants.light_count + 1);
+	let n = f32(Constants.light_count);
 
 	let l = min(u32(rng.sample() * n), u32(n - 1.f));
-	if (l == 0) {
-		let wi = hit.from_shading(rng.sample_cos_hemi());
-		let L = Constants.sky.sample(hit.position, hit.from_shading(wi));
-		let pdf = (wi.z / PI) * light_sample_pdf();
-		return { L, wi, 1e10f, pdf, false };
-	}
-	let light = Constants.lights[l - 1];
+	let light = Constants.lights[l];
 	var ls = sample_light(rng, hit, light);
 	ls.pdf *= light_sample_pdf();
 	return ls;

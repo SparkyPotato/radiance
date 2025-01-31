@@ -120,6 +120,7 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 	let pix = Constants.read.decode(input.uv);
 	if (pix == none)
 		return f32x4(0.f, 0.f, 0.f, 1.f);
+	return f32x4(1.f);
 	let p = pix.value;
 
 	let tri = DecodedTri(Constants.instances, Constants.camera[0], input.uv, Constants.read.size(), p);

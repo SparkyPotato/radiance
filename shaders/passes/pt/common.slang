@@ -66,5 +66,5 @@ public struct HitPayload {
 }
 
 public f32 light_sample_pdf() {
-	return 1.f / f32(Constants.light_count + 1);
+	return 1.f / f32(Constants.light_count);
 }
