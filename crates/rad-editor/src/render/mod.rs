@@ -19,6 +19,7 @@ use rad_ui::{
 	to_texture_id,
 };
 use rad_window::winit::{event::WindowEvent, window::Window};
+use tracing::trace_span;
 
 use crate::{
 	render::{
@@ -85,6 +86,9 @@ impl Renderer {
 				self.camera.apply(world.editor_mut());
 				world.edit_tick();
 				let mut rend = WorldRenderer::new(world.world_mut(), frame.arena());
+
+				let s = trace_span!("render viewport");
+				let _e = s.enter();
 
 				rend.set_input(CameraSceneInfo {
 					aspect: size.x / size.y,

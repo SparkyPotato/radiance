@@ -121,9 +121,9 @@ struct Hit {
 		this.params.roughness = max(rough * rough, 0.0001f);
 		this.emissive = em.sample(s, thit.uv, white).xyz * mat->emissive_factor;
 
-		let norm_world = this.from_shading(nm.sample(s, thit.uv, blue).xyz);
-		this.from_shading_basis._m02_m12_m22 = norm_world;
-		this.to_shading_basis._m20_m21_m22 = norm_world;
+		// let norm_world = this.from_shading(nm.sample(s, thit.uv, blue).xyz);
+		// this.from_shading_basis._m02_m12_m22 = norm_world;
+		// this.to_shading_basis._m20_m21_m22 = norm_world;
 	}
 
 	f32x3 ray_origin() {
@@ -168,9 +168,8 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			// TODO: sample disk and figure out atmosphere transmittance correctly.
 			let dir = -light.pos_or_dir;
 			let L = light.radiance * Constants.sky.sun_transmittance(hit.position, dir);
-			let wi = dir;
 			let pdf = solid_angle_pdf(radians(0.5f));
-			return { L, wi, 1e10f, pdf, true };
+			return { L, dir, 1e10f, pdf, true };
 		}
 		case LightType.Emissive: {
 			let i = asuint(light.radiance.x);
@@ -219,7 +218,7 @@ LightSample sample_one_light(inout Rng rng, Hit hit) {
 }
 
 Ray shadow_ray(Hit hit, LightSample ls) {
-	return Ray(hit.ray_origin(), hit.from_shading(ls.wi_world), ls.t - 2e-5f);
+	return Ray(hit.ray_origin(), ls.wi_world, ls.t - 2e-5f);
 }
 
 struct LightEstimate {
