@@ -33,7 +33,7 @@ nvtt_rs = { path = "ext/nvtt/nvtt", features = ["cuda"] }
 vek = { path = "ext/vek", features = ["bytemuck", "serde"] }
 
 ash = "0.38.0"
-bevy_ecs = { version = "0.15.0", features = ["bevy_reflect", "serialize", "trace"] }
+bevy_ecs = { version = "0.15.0", features = ["bevy_reflect", "multi_threaded", "serialize", "trace"] }
 bevy_reflect = "0.15.0"
 bincode = { version = "2.0.0-rc.3", features = ["serde"] }
 bytemuck = { version = "1.15.0", features = ["derive"] }

@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use ash::vk;
 use bytemuck::NoUninit;
 use rad_core::{
@@ -13,6 +15,7 @@ use rad_graph::{
 };
 use rad_world::{
 	bevy_ecs::{
+		batching::BatchingStrategy,
 		component::{Component, StorageType},
 		entity::Entity,
 		query::{Changed, Or, Without},
@@ -311,15 +314,27 @@ fn sync_rt_scene(
 	unknown: Query<(Entity, &Transform, &MeshComponent), Without<KnownRtInstances>>,
 	_: Query<(&Transform, &MeshComponent, &KnownRtInstances), Or<(Changed<Transform>, Changed<MeshComponent>)>>,
 ) {
-	for (e, t, m) in unknown.iter() {
-		let inner = m
-			.inner
-			.iter()
-			.filter_map(|&m| {
-				let Ok(view) = ARef::loaded(m) else {
-					warn!("failed to load mesh {:?}", m);
-					return None;
-				};
+	let mut cache = Mutex::new(Vec::new());
+	unknown
+		.par_iter()
+		.batching_strategy(BatchingStrategy::fixed(1))
+		.for_each(|(e, t, m)| {
+			let x: Vec<_> = m
+				.inner
+				.iter()
+				.filter_map(|&m| {
+					ARef::loaded(m)
+						.map_err(|e| warn!("failed to load mesh {:?}: {:?}", m, e))
+						.ok()
+				})
+				.collect();
+			cache.lock().unwrap().push((e, t, x));
+		});
+
+	for (e, t, inner) in cache.into_inner().unwrap() {
+		let inner = inner
+			.into_iter()
+			.map(|view| {
 				let index = r.instance_count;
 				r.instance_count += 1;
 				let (instance, as_) = map_instance(t, &view);
@@ -329,7 +344,7 @@ fn sync_rt_scene(
 					as_,
 					instance,
 				});
-				Some((index, view))
+				(index, view)
 			})
 			.collect();
 		cmd.entity(e).insert(KnownRtInstances(inner));
