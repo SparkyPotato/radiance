@@ -32,7 +32,6 @@ use crate::{
 		get_access_info,
 		is_write_access,
 		AccessInfo,
-		GlobalBarrier,
 		GlobalBarrierAccess,
 		ImageBarrierAccess,
 		UsageType,
@@ -540,6 +539,7 @@ impl<'graph> InProgressDependencyInfo<'graph> {
 
 struct SyncBuilder<'graph> {
 	sync: Vec<InProgressSync<'graph>, &'graph Arena>,
+	last_pass: usize,
 }
 
 impl<'graph> SyncBuilder<'graph> {
@@ -556,6 +556,12 @@ impl<'graph> SyncBuilder<'graph> {
 			})
 			.take(passes.len() + 1)
 			.collect_in(arena),
+			last_pass: passes
+				.iter()
+				.enumerate()
+				.rev()
+				.find_map(|(i, x)| matches!(x, FrameEvent::Pass(_)).then_some(i))
+				.unwrap_or(0),
 		}
 	}
 
@@ -677,15 +683,13 @@ impl<'graph> SyncBuilder<'graph> {
 		let arena = *self.sync.allocator();
 		let mut all_sync: Vec<_, _> = self.sync.into_iter().map(|x| x.finish()).collect_in(arena);
 
-		if let Some(sync) = all_sync.last_mut() {
-			sync.queue.barriers.barriers.push(
-				GlobalBarrier {
-					previous_usages: &[UsageType::General],
-					next_usages: &[UsageType::HostRead],
-				}
-				.into(),
-			);
-		}
+		all_sync[self.last_pass + 1].queue.barriers.barriers.push(
+			vk::MemoryBarrier2::default()
+				.src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+				.src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+				.dst_stage_mask(vk::PipelineStageFlags2::HOST)
+				.dst_access_mask(vk::AccessFlags2::HOST_READ),
+		);
 
 		Ok(all_sync)
 	}

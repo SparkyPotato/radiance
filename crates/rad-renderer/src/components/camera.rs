@@ -23,6 +23,6 @@ mod view {
 	use super::*;
 
 	#[derive(Copy, Clone, PartialEq, RadComponent)]
-	#[uuid("5bbc8e09-36c5-4283-863e-9685a2c91c70")]
-	pub struct PrimaryViewComponent(pub CameraComponent);
+	#[uuid("201a2ef5-1bcc-442b-ad1d-1af7e7ac63e5")]
+	pub struct PrimaryViewComponent;
 }

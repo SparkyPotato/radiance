@@ -43,7 +43,6 @@ pub struct Renderer {
 	tony_mcmapface: TonyMcMapfaceTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
-	frame: u64,
 }
 
 impl Renderer {
@@ -60,7 +59,6 @@ impl Renderer {
 			tony_mcmapface: TonyMcMapfaceTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
-			frame: 0,
 		})
 	}
 
@@ -141,8 +139,6 @@ impl Renderer {
 			.inner;
 
 		self.debug_window.render(frame.device(), ctx, stats, pt);
-
-		self.frame += 1;
 	}
 
 	pub unsafe fn destroy(self) {

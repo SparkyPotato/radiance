@@ -1,5 +1,6 @@
 use ash::vk;
 use bytemuck::NoUninit;
+use rad_core::Engine;
 use rad_graph::{
 	c_str,
 	device::{
@@ -301,5 +302,9 @@ impl PathTracer {
 	}
 
 	// TODO: destroy
-	pub unsafe fn destroy(self) {}
+	pub unsafe fn destroy(self) {
+		let device = Engine::get().global();
+		self.sbt.destroy(device);
+		device.device().destroy_pipeline(self.pipeline, None);
+	}
 }

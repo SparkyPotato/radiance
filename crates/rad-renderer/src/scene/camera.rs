@@ -5,6 +5,7 @@ use rad_graph::{
 };
 use rad_world::{
 	bevy_ecs::{
+		query::With,
 		schedule::IntoSystemConfigs,
 		system::{Query, ResMut, Resource},
 	},
@@ -91,13 +92,15 @@ pub struct CameraSceneData {
 }
 impl Resource for CameraSceneData {}
 
-fn find_primary_view(mut r: ResMut<CameraSceneData>, q: Query<(&Transform, &PrimaryViewComponent)>) {
+fn find_primary_view(
+	mut r: ResMut<CameraSceneData>, q: Query<(&Transform, &CameraComponent), With<PrimaryViewComponent>>,
+) {
 	let mut iter = q.iter();
 	if let Some((t, c)) = iter.next() {
 		r.prev = r.curr;
 		r.curr = Camera {
 			transform: *t,
-			camera: c.0,
+			camera: *c,
 		};
 	} else {
 		warn!("no primary view found, using default camera");

@@ -59,8 +59,7 @@ impl WorldContext {
 		self.editor = self
 			.edit
 			.spawn_empty()
-			.insert(PrimaryViewComponent(CameraComponent::default()))
-			.insert(DoNotSerialize)
+			.insert((CameraComponent::default(), PrimaryViewComponent, DoNotSerialize))
 			.id();
 		// TODO: move somewhere else.
 		register_all_gpu_scenes(&mut self.edit, &mut self.edit_tick);
