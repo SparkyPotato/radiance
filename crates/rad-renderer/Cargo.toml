@@ -21,6 +21,5 @@ rand = { workspace = true }
 rayon = { workspace = true }
 rustc-hash = { workspace = true }
 static_assertions = { workspace = true }
-thread_local = { workspace = true }
 tracing = { workspace = true }
 vek = { workspace = true }

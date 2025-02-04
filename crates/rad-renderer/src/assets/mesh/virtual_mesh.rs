@@ -1,8 +1,8 @@
-use std::{array, cell::RefCell, collections::BTreeMap, io, ops::Range};
+use std::{array, collections::BTreeMap, io, ops::Range};
 
 use bincode::{Decode, Encode};
 use bytemuck::{Pod, Zeroable};
-use meshopt::VertexDataAdapter;
+use meshopt::{VertexDataAdapter, VertexStream};
 use metis::Graph;
 use rad_core::{
 	asset::{
@@ -20,9 +20,8 @@ use rad_graph::{
 };
 use rad_world::Uuid;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use static_assertions::const_assert_eq;
-use thread_local::ThreadLocal;
 use tracing::{debug_span, field, trace_span};
 use vek::{Aabb, Sphere, Vec3, Vec4};
 
@@ -154,13 +153,21 @@ impl CookedAsset for VirtualMesh {
 	type Base = Mesh;
 
 	fn cook(mesh: &Self::Base) -> Self {
+		let (_, remap) = meshopt::generate_vertex_remap_multi(
+			mesh.vertices.len(),
+			&[VertexStream::new_with_stride::<Vec3<f32>, _>(
+				mesh.vertices.as_ptr() as *const Vec3<f32>,
+				std::mem::size_of::<Vertex>(),
+			)],
+			Some(&mesh.indices),
+		);
+
 		let mut boundary = vec![false; mesh.vertices.len()];
-		compute_boundary(&mesh.indices, &mut boundary);
 		let mut meshlets = generate_meshlets(&mesh.vertices, &mesh.indices, None);
 
 		let mut bvh = BvhBuilder::default();
-		let mut simplify = 0..meshlets.meshlets.len();
-		let mut lod = 1;
+		let mut simplify: Vec<_> = (0..meshlets.meshlets.len() as u32).collect();
+		let mut lod = 0;
 		while simplify.len() > 1 {
 			let s = debug_span!(
 				"generating lod",
@@ -173,50 +180,64 @@ impl CookedAsset for VirtualMesh {
 			);
 			let _e = s.enter();
 
-			let next_start = meshlets.meshlets.len();
-
-			let groups = generate_groups(simplify.clone(), &mut meshlets);
-
+			let groups = generate_groups(&simplify, &mut meshlets, &remap);
+			compute_boundary(&mut boundary, &meshlets, &remap, &groups);
+			simplify.clear();
 			s.record("groups", groups.len());
-			let tls = ThreadLocal::new();
+
 			let par: Vec<_> = groups
 				.into_par_iter()
-				.filter(|x| x.meshlets.len() > 1)
-				.filter_map(|group| {
-					let tls = tls.get_or(|| RefCell::new(vec![false; mesh.vertices.len()]));
-					let (indices, parent_error) = simplify_group(
-						&mesh.vertices,
-						&boundary,
-						&meshlets,
-						&group,
-						tls.borrow_mut().as_mut_slice(),
-					)?;
+				.map(|mut group| {
+					if group.meshlets().count() == 1 {
+						return Err(group);
+					}
+
+					let Some((indices, parent_error)) = simplify_group(&mesh.vertices, &boundary, &meshlets, &group)
+					else {
+						return Err(group);
+					};
+
+					group.parent_error = parent_error;
 					let n_meshlets =
 						generate_meshlets(&mesh.vertices, &indices, Some((group.lod_bounds, parent_error)));
 					let size = group
-						.meshlets
-						.clone()
+						.meshlets()
 						.map(|x| {
 							let m = &meshlets.meshlets[x as usize];
 							(m.vertices().len() * std::mem::size_of::<Vertex>() + m.tris().len()) as f32
 						})
 						.sum();
-					Some((group, parent_error, n_meshlets, size))
+					Ok((group, n_meshlets, size))
 				})
 				.collect();
+
+			let count = par.len();
+			let first_group = meshlets.groups.len();
+
 			let mut min_size = f32::MAX;
 			let mut avg_size = 0.0f32;
 			let mut max_size = 0.0f32;
-			let count = par.len();
-			let first = meshlets.groups.len();
-			for (mut group, parent_error, n_meshlets, size) in par {
-				meshlets.add(n_meshlets);
-				group.parent_error = parent_error;
-				meshlets.groups.push(group);
-
-				min_size = min_size.min(size);
-				avg_size += size;
-				max_size = max_size.max(size);
+			let mut tris = 0;
+			let mut stuck_tris = 0;
+			let mut stuck = Vec::new();
+			for x in par {
+				match x {
+					Ok((group, n_meshlets, size)) => {
+						tris += n_meshlets.tris.len() / 3;
+						simplify.extend(meshlets.add(n_meshlets));
+						meshlets.groups.push(group);
+						min_size = min_size.min(size);
+						avg_size += size;
+						max_size = max_size.max(size);
+					},
+					Err(group) => {
+						stuck.extend(group.meshlets());
+						stuck_tris += group
+							.meshlets()
+							.map(|x| meshlets.meshlets[x as usize].tri_count as usize)
+							.sum::<usize>();
+					},
+				}
 			}
 			if count > 0 {
 				s.record("min_size", min_size);
@@ -224,12 +245,15 @@ impl CookedAsset for VirtualMesh {
 				s.record("max_size", max_size);
 			}
 
-			bvh.add_lod(first as _, &meshlets.groups[first..]);
-			simplify = next_start..meshlets.meshlets.len();
+			if tris > stuck_tris / 3 {
+				simplify.extend(stuck);
+			}
+
+			bvh.add_lod(first_group as _, &meshlets.groups[first_group..]);
 			lod += 1;
 		}
 
-		let (bvh, depth) = bvh.build(&meshlets.groups);
+		let (bvh, depth) = bvh.build(&mut meshlets);
 		convert_meshlets(mesh, meshlets, bvh, depth)
 	}
 }
@@ -239,7 +263,32 @@ struct MeshletGroup {
 	aabb: Aabb<f32>,
 	lod_bounds: Sphere<f32, f32>,
 	parent_error: f32,
-	meshlets: Range<u32>,
+	meshlets: [u32; 12],
+}
+
+impl Default for MeshletGroup {
+	fn default() -> Self {
+		Self {
+			aabb: aabb_default(),
+			lod_bounds: Sphere::default(),
+			parent_error: f32::MAX,
+			meshlets: [u32::MAX; 12],
+		}
+	}
+}
+
+impl MeshletGroup {
+	fn meshlets(&self) -> impl Iterator<Item = u32> + '_ {
+		self.meshlets.iter().copied().take_while(|&x| x != u32::MAX)
+	}
+
+	fn push(&mut self, meshlet: u32) {
+		let mut i = 0;
+		while self.meshlets[i] != u32::MAX {
+			i += 1;
+		}
+		self.meshlets[i] = meshlet;
+	}
 }
 
 struct Meshlets {
@@ -250,7 +299,7 @@ struct Meshlets {
 }
 
 impl Meshlets {
-	fn add(&mut self, other: Meshlets) {
+	fn add(&mut self, other: Meshlets) -> Range<u32> {
 		let vertex_offset = self.vertex_remap.len() as u32;
 		let tri_offset = self.tris.len() as u32;
 		let meshlet_offset = self.meshlets.len() as u32;
@@ -262,10 +311,12 @@ impl Meshlets {
 		self.vertex_remap.extend(other.vertex_remap);
 		self.tris.extend(other.tris);
 		self.groups.extend(other.groups.into_iter().map(|mut g| {
-			g.meshlets.start += meshlet_offset;
-			g.meshlets.end += meshlet_offset;
+			for m in g.meshlets.iter_mut() {
+				*m += meshlet_offset;
+			}
 			g
 		}));
+		meshlet_offset..self.meshlets.len() as u32
 	}
 }
 
@@ -325,12 +376,12 @@ fn generate_meshlets(vertices: &[Vertex], indices: &[u32], error: Option<(Sphere
 	}
 }
 
-fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> Vec<MeshletGroup> {
+fn generate_groups(range: &[u32], meshlets: &Meshlets, remap: &[u32]) -> Vec<MeshletGroup> {
 	let s = trace_span!("grouping meshlets");
 	let _e = s.enter();
 
 	// TODO: locality links
-	let connections = find_connections(range.clone(), meshlets);
+	let connections = find_connections(range, meshlets, remap);
 
 	let mut xadj = Vec::with_capacity(range.len() + 1);
 	let mut adj = Vec::new();
@@ -346,70 +397,44 @@ fn generate_groups(range: Range<usize>, meshlets: &mut Meshlets) -> Vec<MeshletG
 	xadj.push(adj.len() as i32);
 
 	let mut group_of = vec![0; range.len()];
-	let group_count = range.len().div_ceil(16);
+	let group_count = range.len().div_ceil(8);
 	Graph::new(1, group_count as _, &xadj, &adj)
 		.unwrap()
 		.set_adjwgt(&weights)
 		.part_kway(&mut group_of)
 		.unwrap();
 
-	let mut meshlet_reorder: Vec<_> = range.clone().collect();
-	meshlet_reorder.sort_unstable_by_key(|&x| group_of[x - range.start]);
+	let mut out = vec![MeshletGroup::default(); group_count];
+	for (i, group) in group_of.into_iter().enumerate() {
+		let group = &mut out[group as usize];
+		let mid = range[i];
+		let m = &meshlets.meshlets[mid as usize];
 
-	let mut order = vec![Meshlet::default(); meshlet_reorder.len()];
-	let mut out = Vec::with_capacity(group_count);
-	let mut last_group = 0;
-	let mut group = MeshletGroup {
-		aabb: aabb_default(),
-		lod_bounds: Sphere::default(),
-		parent_error: f32::MAX,
-		meshlets: range.start as u32..0,
-	};
-	for (i, p) in meshlet_reorder.into_iter().enumerate() {
-		let next = group_of[p - range.start];
-		if last_group != next {
-			let end = (i + range.start) as u32;
-			group.meshlets.end = end;
-			out.push(group.clone());
-
-			last_group = next;
-			group.aabb = aabb_default();
-			group.lod_bounds = Sphere::default();
-			group.meshlets.start = end;
-		}
-
-		let m = meshlets.meshlets[p];
+		group.push(mid);
 		group.aabb = group.aabb.union(m.aabb);
 		group.lod_bounds = merge_spheres(group.lod_bounds, m.lod_bounds);
-		order[i] = m;
 	}
-	group.meshlets.end = (order.len() + range.start) as u32;
-	out.push(group);
-
-	meshlets.meshlets[range.start..].copy_from_slice(&order);
-
 	out
 }
 
 fn simplify_group(
-	vertices: &[Vertex], mesh_boundary: &[bool], meshlets: &Meshlets, group: &MeshletGroup, group_boundary: &mut [bool],
+	vertices: &[Vertex], locked: &[bool], meshlets: &Meshlets, group: &MeshletGroup,
 ) -> Option<(Vec<u32>, f32)> {
 	let s = trace_span!("simplifying group");
 	let _e = s.enter();
 
-	let ms = &meshlets.meshlets[(group.meshlets.start as usize)..(group.meshlets.end as usize)];
-	let indices: Vec<_> = ms
-		.iter()
+	let indices: Vec<_> = group
+		.meshlets()
 		.flat_map(|m| {
+			let m = &meshlets.meshlets[m as usize];
 			let verts = &meshlets.vertex_remap[m.vertices()];
 			meshlets.tris[m.tris()].iter().map(move |&x| verts[x as usize])
 		})
 		.collect();
 
-	compute_boundary(&indices, group_boundary);
-	for (g, &m) in group_boundary.iter_mut().zip(mesh_boundary) {
-		*g = *g && !m;
-	}
+	let norm_weight = 2.0;
+	let uv_weight = 0.5;
+	let target = ((indices.len() / 3) / 2) * 3;
 
 	let mut error = 0.0;
 	let simplified = unsafe {
@@ -424,10 +449,10 @@ fn simplify_group(
 			std::mem::size_of::<Vertex>() as _,
 			data.as_ptr().add(3),
 			std::mem::size_of::<Vertex>() as _,
-			[0.065, 0.065, 0.065, 0.005, 0.005].as_ptr(),
+			[norm_weight, norm_weight, norm_weight, uv_weight, uv_weight].as_ptr(),
 			5,
-			group_boundary.as_ptr() as *const _,
-			indices.len() / 2,
+			locked.as_ptr() as *const _,
+			target,
 			f32::MAX,
 			(meshopt::SimplifyOptions::Sparse | meshopt::SimplifyOptions::ErrorAbsolute).bits(),
 			&mut error,
@@ -437,8 +462,8 @@ fn simplify_group(
 	};
 	error *= 0.5;
 
-	for m in ms {
-		error = error.max(m.error);
+	for m in group.meshlets() {
+		error = error.max(meshlets.meshlets[m as usize].error);
 	}
 
 	if (simplified.len() as f32 / indices.len() as f32) < 0.55 {
@@ -448,24 +473,27 @@ fn simplify_group(
 	}
 }
 
-fn find_connections(range: Range<usize>, meshlets: &Meshlets) -> Vec<Vec<(usize, usize)>> {
+// For each meshlet in `range`, all the meshlets that share edges with it, and how many edges they
+// share.
+// Note that the returned meshlets are indices into `range`, not the full meshlet list.
+fn find_connections(range: &[u32], meshlets: &Meshlets, remap: &[u32]) -> Vec<Vec<(u32, u32)>> {
 	let s = trace_span!("generating meshlet graph");
 	let _e = s.enter();
 
 	let mut shared_edges = FxHashMap::default();
-	for mid in range.clone() {
-		let m = &meshlets.meshlets[mid];
+	for (im, &mid) in range.iter().enumerate() {
+		let m = &meshlets.meshlets[mid as usize];
 		let verts = &meshlets.vertex_remap[m.vertices()];
 		for i in meshlets.tris[m.tris()].chunks(3) {
 			for j in 0..3 {
 				let i0 = i[j] as usize;
 				let i1 = i[(j + 1) % 3] as usize;
-				let v0 = verts[i0];
-				let v1 = verts[i1];
+				let v0 = remap[verts[i0] as usize];
+				let v1 = remap[verts[i1] as usize];
 				let edge = (v0.min(v1), v0.max(v1));
 				let out = shared_edges.entry(edge).or_insert(Vec::new());
-				if out.last() != Some(&mid) {
-					out.push(mid);
+				if out.last() != Some(&(im as u32)) {
+					out.push(im as u32);
 				}
 			}
 		}
@@ -483,11 +511,9 @@ fn find_connections(range: Range<usize>, meshlets: &Meshlets) -> Vec<Vec<(usize,
 	}
 
 	let mut connections = vec![Vec::new(); range.len()];
-	for ((mut m1, mut m2), count) in shared_count {
-		m1 -= range.start;
-		m2 -= range.start;
-		connections[m1].push((m2, count));
-		connections[m2].push((m1, count));
+	for ((m1, m2), count) in shared_count {
+		connections[m1 as usize].push((m2, count));
+		connections[m2 as usize].push((m1, count));
 	}
 	connections
 }
@@ -529,25 +555,27 @@ fn convert_meshlets(
 	}
 }
 
-fn compute_boundary(indices: &[u32], out: &mut [bool]) {
-	let mut edge_set = FxHashSet::default();
-	let mut edge_edge_set = FxHashSet::default();
-	for tri in indices.chunks(3) {
-		for (v0, v1) in [(tri[0], tri[1]), (tri[1], tri[2]), (tri[0], tri[2])] {
-			let edge = (v0.min(v1), v0.max(v1));
-			if edge_set.insert(edge) {
-				// Never seen this before, it's on the boundary.
-				edge_edge_set.insert(edge);
-			} else {
-				edge_edge_set.remove(&edge);
+// https://github.com/zeux/meshoptimizer/blob/master/demo/nanite.cpp
+fn compute_boundary(out: &mut [bool], meshlets: &Meshlets, remap: &[u32], groups: &[MeshletGroup]) {
+	let mut group_map = vec![-1; out.len()];
+
+	for (g, group) in groups.iter().enumerate() {
+		for mid in group.meshlets() {
+			let m = &meshlets.meshlets[mid as usize];
+			let verts = &meshlets.vertex_remap[m.vertices()];
+			for &i in meshlets.tris[m.tris()].iter() {
+				let v = remap[verts[i as usize] as usize] as usize;
+				if group_map[v] == -1 || group_map[v] == g as i32 {
+					group_map[v] = g as i32;
+				} else {
+					group_map[v] = -2;
+				}
 			}
 		}
 	}
 
-	out.fill(false);
-	for (v0, v1) in edge_edge_set {
-		out[v0 as usize] = true;
-		out[v1 as usize] = true;
+	for (v, &r) in out.iter_mut().zip(remap) {
+		*v = group_map[r as usize] == -2;
 	}
 }
 
@@ -601,7 +629,6 @@ impl BvhBuilder {
 		let start = self.nodes.len() as u32;
 		self.nodes.extend(groups.iter().enumerate().map(|(i, g)| TempNode {
 			group: i as u32 + offset,
-			// TODO: wait shouldn't this be the group's lod bounds, not simple spatial bounds???
 			aabb: g.aabb,
 			children: Vec::new(),
 		}));
@@ -737,8 +764,8 @@ impl BvhBuilder {
 				out.aabbs[i] = group.aabb;
 				out.lod_bounds[i] = group.lod_bounds;
 				out.parent_errors[i] = group.parent_error;
-				out.child_offsets[i] = group.meshlets.start;
-				out.child_counts[i] = group.meshlets.len() as u8;
+				out.child_offsets[i] = group.meshlets[0];
+				out.child_counts[i] = group.meshlets[1] as _;
 			} else {
 				let child_id = self.build_inner(groups, out, max_depth, child_id, depth + 1);
 				let child = &out[child_id as usize];
@@ -767,11 +794,27 @@ impl BvhBuilder {
 		onode as _
 	}
 
-	fn build(mut self, groups: &[MeshletGroup]) -> (Vec<BvhNode>, u32) {
+	fn build(mut self, meshlets: &mut Meshlets) -> (Vec<BvhNode>, u32) {
+		let s = trace_span!("build bvh");
+		let _e = s.enter();
+
+		// The BVH requires group meshlets to be contiguous, so remap them first.
+		let mut remap = Vec::with_capacity(meshlets.meshlets.len());
+		for group in meshlets.groups.iter_mut() {
+			let first = remap.len();
+			let count = group.meshlets().count();
+			for m in group.meshlets() {
+				remap.push(meshlets.meshlets[m as usize]);
+			}
+			group.meshlets[0] = first as u32;
+			group.meshlets[1] = count as u32;
+		}
+		meshlets.meshlets = remap;
+
 		let root = self.build_temp();
 		let mut out = vec![];
 		let mut max_depth = 0;
-		let root = self.build_inner(groups, &mut out, &mut max_depth, root, 1);
+		let root = self.build_inner(&meshlets.groups, &mut out, &mut max_depth, root, 1);
 		assert_eq!(root, 0, "root must be 0");
 		(out, max_depth)
 	}

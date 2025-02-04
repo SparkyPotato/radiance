@@ -402,4 +402,3 @@ public struct Cull {
 		return true;
 	}
 }
-

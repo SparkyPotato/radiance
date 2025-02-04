@@ -314,7 +314,7 @@ fn sync_rt_scene(
 	unknown: Query<(Entity, &Transform, &MeshComponent), Without<KnownRtInstances>>,
 	_: Query<(&Transform, &MeshComponent, &KnownRtInstances), Or<(Changed<Transform>, Changed<MeshComponent>)>>,
 ) {
-	let mut cache = Mutex::new(Vec::new());
+	let cache = Mutex::new(Vec::new());
 	unknown
 		.par_iter()
 		.batching_strategy(BatchingStrategy::fixed(1))

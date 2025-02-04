@@ -1,3 +1,5 @@
+use std::sync::Mutex;
+
 use bytemuck::NoUninit;
 use rad_core::{
 	asset::aref::{ARef, LARef},
@@ -12,6 +14,7 @@ use rad_graph::{
 };
 use rad_world::{
 	bevy_ecs::{
+		batching::BatchingStrategy,
 		component::{Component, StorageType},
 		entity::Entity,
 		query::{Changed, Or, Without},
@@ -23,6 +26,7 @@ use rad_world::{
 	TickStage,
 	World,
 };
+use tracing::warn;
 
 use crate::{
 	assets::{
@@ -196,14 +200,29 @@ fn sync_virtual_scene(
 	unknown: Query<(Entity, &Transform, &MeshComponent), Without<KnownVirtualInstances>>,
 	_: Query<(&Transform, &MeshComponent, &KnownVirtualInstances), Or<(Changed<Transform>, Changed<MeshComponent>)>>,
 ) {
-	for (e, t, m) in unknown.iter() {
-		let inner = m
-			.inner
-			.iter()
-			.map(|&m| {
+	let cache = Mutex::new(Vec::new());
+	unknown
+		.par_iter()
+		.batching_strategy(BatchingStrategy::fixed(1))
+		.for_each(|(e, t, m)| {
+			let x: Vec<_> = m
+				.inner
+				.iter()
+				.filter_map(|&m| {
+					ARef::loaded(m)
+						.map_err(|e| warn!("failed to load mesh {:?}: {:?}", m, e))
+						.ok()
+				})
+				.collect();
+			cache.lock().unwrap().push((e, t, x));
+		});
+
+	for (e, t, inner) in cache.into_inner().unwrap() {
+		let inner = inner
+			.into_iter()
+			.map(|view| {
 				let index = r.instance_count;
 				r.instance_count += 1;
-				let view = ARef::loaded(m).unwrap();
 				r.push_instance(index, t, &view);
 				(index, view)
 			})
