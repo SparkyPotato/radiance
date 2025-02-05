@@ -15,7 +15,7 @@ crossbeam-channel = { workspace = true }
 hashbrown = { workspace = true }
 meshopt = { workspace = true }
 metis = { workspace = true }
-nvtt_rs = { workspace = true }
+# nvtt_rs = { workspace = true }
 parking_lot = { workspace = true }
 rand = { workspace = true }
 rayon = { workspace = true }

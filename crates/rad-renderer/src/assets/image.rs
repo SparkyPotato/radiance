@@ -2,7 +2,8 @@ use std::io::{self, Write};
 
 use ash::vk;
 use bincode::{Decode, Encode};
-use nvtt_rs::{CompressionOptions, Container, Context, Format, InputFormat, OutputOptions, Surface, CUDA_SUPPORTED};
+// use nvtt_rs::{CompressionOptions, Container, Context, Format, InputFormat, OutputOptions, Surface,
+// CUDA_SUPPORTED};
 use rad_core::{
 	asset::{AssetView, BincodeAsset, CookedAsset, Uuid},
 	uuid,
@@ -34,69 +35,75 @@ impl CookedAsset for ImageAsset {
 	type Base = ImageAsset;
 
 	fn cook(base: &Self::Base) -> Self {
-		// TODO: bad, swizzle to support more formats.
-		let in_fmt = vk::Format::from_raw(base.format);
-		let (in_fmt, out_fmt, out_vk_fmt) =
-			if in_fmt == vk::Format::B8G8R8A8_UNORM || in_fmt == vk::Format::B8G8R8A8_SRGB {
-				(
-					InputFormat::Bgra8Ub {
-						data: &base.data,
-						unsigned_to_signed: false,
-					},
-					Format::Bc7,
-					if in_fmt == vk::Format::B8G8R8A8_SRGB {
-						vk::Format::BC7_SRGB_BLOCK
-					} else {
-						vk::Format::BC7_UNORM_BLOCK
-					},
-				)
-			} else if in_fmt == vk::Format::B8G8R8A8_SNORM {
-				(
-					InputFormat::Bgra8Sb(&base.data),
-					Format::Bc7,
-					vk::Format::BC7_UNORM_BLOCK,
-				)
-			} else if in_fmt == vk::Format::R16G16B16A16_SFLOAT {
-				(
-					InputFormat::Rgba16f(&base.data),
-					Format::Bc6S,
-					vk::Format::BC6H_SFLOAT_BLOCK,
-				)
-			} else if in_fmt == vk::Format::R32G32B32A32_SFLOAT {
-				(
-					InputFormat::Rgba32f(&base.data),
-					Format::Bc6S,
-					vk::Format::BC6H_SFLOAT_BLOCK,
-				)
-			} else if in_fmt == vk::Format::R32_SFLOAT {
-				(
-					InputFormat::R32f(&base.data),
-					Format::Bc6S,
-					vk::Format::BC6H_SFLOAT_BLOCK,
-				)
-			} else {
-				panic!("unsupported format")
-			};
-		let image = Surface::image(in_fmt, base.size.x, base.size.y, base.size.z).expect("invalid data");
-
-		let mut context = Context::new();
-		if *CUDA_SUPPORTED {
-			context.set_cuda_acceleration(true);
-		}
-
-		let mut opts = CompressionOptions::new();
-		opts.set_format(out_fmt);
-
-		let mut out_opts = OutputOptions::new();
-		out_opts.set_srgb_flag(true);
-		out_opts.set_output_header(false);
-		out_opts.set_container(Container::Dds10);
-
 		Self {
 			size: base.size,
-			format: out_vk_fmt.as_raw(),
-			data: context.compress(&image, &opts, &out_opts).unwrap(),
+			format: base.format,
+			data: base.data.clone(),
 		}
+
+		// TODO: bad, swizzle to support more formats.
+		// let in_fmt = vk::Format::from_raw(base.format);
+		// let (in_fmt, out_fmt, out_vk_fmt) =
+		// 	if in_fmt == vk::Format::B8G8R8A8_UNORM || in_fmt == vk::Format::B8G8R8A8_SRGB {
+		// 		(
+		// 			InputFormat::Bgra8Ub {
+		// 				data: &base.data,
+		// 				unsigned_to_signed: false,
+		// 			},
+		// 			Format::Bc7,
+		// 			if in_fmt == vk::Format::B8G8R8A8_SRGB {
+		// 				vk::Format::BC7_SRGB_BLOCK
+		// 			} else {
+		// 				vk::Format::BC7_UNORM_BLOCK
+		// 			},
+		// 		)
+		// 	} else if in_fmt == vk::Format::B8G8R8A8_SNORM {
+		// 		(
+		// 			InputFormat::Bgra8Sb(&base.data),
+		// 			Format::Bc7,
+		// 			vk::Format::BC7_UNORM_BLOCK,
+		// 		)
+		// 	} else if in_fmt == vk::Format::R16G16B16A16_SFLOAT {
+		// 		(
+		// 			InputFormat::Rgba16f(&base.data),
+		// 			Format::Bc6S,
+		// 			vk::Format::BC6H_SFLOAT_BLOCK,
+		// 		)
+		// 	} else if in_fmt == vk::Format::R32G32B32A32_SFLOAT {
+		// 		(
+		// 			InputFormat::Rgba32f(&base.data),
+		// 			Format::Bc6S,
+		// 			vk::Format::BC6H_SFLOAT_BLOCK,
+		// 		)
+		// 	} else if in_fmt == vk::Format::R32_SFLOAT {
+		// 		(
+		// 			InputFormat::R32f(&base.data),
+		// 			Format::Bc6S,
+		// 			vk::Format::BC6H_SFLOAT_BLOCK,
+		// 		)
+		// 	} else {
+		// 		panic!("unsupported format")
+		// 	};
+		// let image = Surface::image(in_fmt, base.size.x, base.size.y, base.size.z).expect("invalid data");
+		//
+		// let mut context = Context::new();
+		// if *CUDA_SUPPORTED {
+		// 	context.set_cuda_acceleration(true);
+		// }
+		//
+		// let mut opts = CompressionOptions::new();
+		// opts.set_format(out_fmt);
+		//
+		// let mut out_opts = OutputOptions::new();
+		// out_opts.set_srgb_flag(true);
+		// out_opts.set_output_header(false);
+		// out_opts.set_container(Container::Dds10);
+		//
+		// Self {
+		// 	size: base.size,
+		// 	format: out_vk_fmt.as_raw(),
+		// 	data: context.compress(&image, &opts, &out_opts).unwrap(),
+		// }
 	}
 }
 

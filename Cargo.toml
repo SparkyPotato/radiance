@@ -29,7 +29,7 @@ rad-window = { path = "crates/rad-window" }
 rad-world = { path = "crates/rad-world" }
 rad-world-derive = { path = "crates/rad-world-derive" }
 
-nvtt_rs = { path = "ext/nvtt/nvtt", features = ["cuda"] }
+# nvtt_rs = { path = "ext/nvtt/nvtt", features = ["cuda"] }
 vek = { path = "ext/vek", features = ["bytemuck", "serde"] }
 
 ash = "0.38.0"
