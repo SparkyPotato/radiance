@@ -21,7 +21,7 @@ struct TonyMcMapface : Tonemap {
 	f32x3 map(f32x3 color) {
 		color /= color + 1.f;
 		let uv = color * ((LUT_SIZE - 1.f) / LUT_SIZE) + (0.5f / LUT_SIZE);
-		return this.lut.sample(this.sampler, uv);
+		return this.lut.sample_mip(this.sampler, uv, 0.f);
 	}
 }
 

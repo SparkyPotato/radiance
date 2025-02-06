@@ -25,7 +25,7 @@ public struct SkySampler {
 
 	public f32x3 sun_transmittance(f32x3 pos, f32x3 dir) {
 		let pos = f32x3(pos.xy / 1000000.f, (pos.z + 500.f) / 1000000.f + GROUND_RADIUS_MM);
-		return this.transmittance.sample(this.sampler, lut_uv(pos, dir));
+		return this.transmittance.sample_mip(this.sampler, lut_uv(pos, dir), 0.f);
 	}
 
 	public f32x3 sample_primary(f32x3 pos, f32x3 dir) {
@@ -64,6 +64,6 @@ public struct SkySampler {
 
 		let v = 0.5f + 0.5f * sign(altitude) * sqrt(abs(altitude) * 2.f / PI);
 		let uv = f32x2(azimuth / (2.f * PI), v);
-		return this.sky.sample(this.sampler, uv) * this.sun_radiance;
+		return this.sky.sample_mip(this.sampler, uv, 0.f) * this.sun_radiance;
 	}
 }

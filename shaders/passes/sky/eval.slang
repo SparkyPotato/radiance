@@ -33,8 +33,8 @@ f32x3 raymarch(f32x3 pos, f32x3 dir, f32x3 sun_dir, f32 t_max) {
 
 		let s = get_scattering(new_pos);
 		let sample_trans = exp(-dt * s.extinction);
-		let sun_trans = Constants.sun_transmittance.sample(Constants.sampler, lut_uv(new_pos, sun_dir));
-		let ms = Constants.sun_scattering.sample(Constants.sampler, lut_uv(new_pos, sun_dir));
+		let sun_trans = Constants.sun_transmittance.sample_mip(Constants.sampler, lut_uv(new_pos, sun_dir), 0.f);
+		let ms = Constants.sun_scattering.sample_mip(Constants.sampler, lut_uv(new_pos, sun_dir), 0.f);
 
 		let rayleigh_inscatter = s.rayleigh * (rayleigh * sun_trans + ms);
 		let mie_inscatter = s.mie * (mie * sun_trans + ms);

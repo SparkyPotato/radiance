@@ -64,7 +64,8 @@ Scatter sun_scattering(f32x3 pos, f32x3 sun_dir) {
 				let scatter_f = (scatter_no_phase - scatter_no_phase * sample_trans) / s.extinction;
 				lum_f += trans * scatter_f;
 
-				let sun_trans = Constants.sun_transmittance.sample(Constants.sampler, lut_uv(new_pos, sun_dir));
+				let sun_trans =
+					Constants.sun_transmittance.sample_mip(Constants.sampler, lut_uv(new_pos, sun_dir), 0.f);
 
 				let rayleigh_in = s.rayleigh * rayleigh;
 				let mie_in = s.mie * mie;
@@ -79,7 +80,7 @@ Scatter sun_scattering(f32x3 pos, f32x3 sun_dir) {
 				if (dot(pos, sun_dir) > 0.f) {
 					let hit = normalize(pos + ground_dist * dir) * GROUND_RADIUS_MM;
 					lum += trans * GROUND_ALBEDO *
-						   Constants.sun_transmittance.sample(Constants.sampler, lut_uv(hit, sun_dir));
+						   Constants.sun_transmittance.sample_mip(Constants.sampler, lut_uv(hit, sun_dir), 0.f);
 				}
 			}
 
