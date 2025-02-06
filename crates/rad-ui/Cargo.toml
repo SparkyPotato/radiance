@@ -12,6 +12,7 @@ ash = { workspace = true }
 bytemuck = { workspace = true }
 egui = { workspace = true, features = ["bytemuck"] }
 egui-winit = { workspace = true }
+hashbrown = { workspace = true }
 rustc-hash = { workspace = true }
 tracing = { workspace = true }
 tracy = { workspace = true }

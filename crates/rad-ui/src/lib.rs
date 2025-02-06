@@ -120,7 +120,7 @@ impl<T> Drop for UiApp<T> {
 	fn drop(&mut self) {
 		unsafe {
 			ManuallyDrop::take(&mut self.graph).destroy(Engine::get().global());
-			ManuallyDrop::take(&mut self.renderer).destroy(Engine::get().global());
+			ManuallyDrop::take(&mut self.renderer).destroy();
 		}
 	}
 }

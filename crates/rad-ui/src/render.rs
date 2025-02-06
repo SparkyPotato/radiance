@@ -1,9 +1,7 @@
-use std::collections::hash_map::Entry;
-
 use ash::vk;
 use bytemuck::NoUninit;
 use egui::{
-	epaint::{ImageDelta, Primitive, Vertex},
+	epaint::{Primitive, Vertex},
 	ClippedPrimitive,
 	ImageData,
 	Rect,
@@ -13,8 +11,9 @@ use egui::{
 	TextureWrapMode,
 	TexturesDelta,
 };
+use hashbrown::hash_map::Entry;
 use rad_graph::{
-	arena::{Arena, IteratorAlloc},
+	arena::IteratorAlloc,
 	device::{
 		descriptor::{ImageId, SamplerId},
 		Device,
@@ -23,28 +22,21 @@ use rad_graph::{
 		ShaderInfo,
 	},
 	graph::{
-		self,
+		ArenaMap,
 		BufferDesc,
 		BufferUsage,
-		ExternalImage,
 		Frame,
+		ImageDesc,
 		ImageUsage,
+		ImageUsageType,
+		PassBuilder,
 		PassContext,
+		Persist,
 		Res,
 		Shader,
 		VirtualResourceDesc,
 	},
-	resource::{
-		BufferHandle,
-		GpuPtr,
-		Image,
-		ImageDesc,
-		ImageView,
-		ImageViewDesc,
-		ImageViewUsage,
-		Resource,
-		Subresource,
-	},
+	resource::{BufferHandle, GpuPtr, Image, ImageView, Subresource},
 	util::{
 		pass::{Attachment, ImageCopy, Load},
 		pipeline::{default_blend, no_cull, simple_blend},
@@ -66,17 +58,18 @@ pub struct ScreenDescriptor {
 }
 
 pub struct Renderer {
-	images: FxHashMap<u64, (Image, Vec2<u32>, ImageView, SamplerId)>,
+	images: FxHashMap<u64, (Persist<Image>, Vec2<u32>, SamplerId)>,
 	pass: RenderPass<PushConstantsStatic>,
 	vertex_size: u64,
 	index_size: u64,
 	default_sampler: SamplerId,
 }
 
-struct PassIO {
+struct PassIO<'a> {
 	vertex: Res<BufferHandle>,
 	index: Res<BufferHandle>,
 	out: Res<ImageView>,
+	imgs: ArenaMap<'a, u64, Res<ImageView>>,
 }
 
 #[repr(C)]
@@ -131,8 +124,7 @@ impl Renderer {
 	) where
 		'graph: 'pass,
 	{
-		let imgs = self.generate_images(frame, delta);
-		let img_usage = ImageUsage::format_sampled_2d(vk::Format::R8G8B8A8_UNORM, Shader::Fragment);
+		let mut imgs = self.generate_images(frame, delta);
 
 		let span = span!(Level::TRACE, "setup ui pass");
 		let _e = span.enter();
@@ -147,9 +139,7 @@ impl Renderer {
 
 		let mut pass = frame.pass("ui");
 
-		for x in imgs {
-			pass.reference(x, img_usage);
-		}
+		self.reference_images(&mut pass, &mut imgs);
 
 		let vertex_size = vertices * std::mem::size_of::<Vertex>();
 		while vertex_size as u64 > self.vertex_size {
@@ -168,9 +158,10 @@ impl Renderer {
 			for tris in tris.iter() {
 				match &tris.primitive {
 					Primitive::Mesh(m) => match m.texture_id {
-						TextureId::User(x) if (x & (1 << 63)) == 0 => {
-							pass.reference::<ImageView>(Res::from_raw(x as _), img_usage)
-						},
+						TextureId::User(x) if (x & (1 << 63)) == 0 => pass.reference::<ImageView>(
+							Res::from_raw(x as _),
+							ImageUsage::format_sampled_2d(vk::Format::R8G8B8A8_UNORM, Shader::Fragment),
+						),
 						_ => {},
 					},
 					_ => {},
@@ -178,20 +169,26 @@ impl Renderer {
 			}
 		}
 
-		pass.build(move |pass| self.execute(pass, PassIO { vertex, index, out }, &tris, &screen));
+		pass.build(move |pass| {
+			self.execute(
+				pass,
+				PassIO {
+					vertex,
+					index,
+					out,
+					imgs,
+				},
+				&tris,
+				&screen,
+			)
+		});
 	}
 
 	/// # Safety
 	/// Appropriate synchronization must be performed.
-	pub unsafe fn destroy(self, device: &Device) {
-		for (_, (image, _, view, _)) in self.images {
-			view.destroy(device);
-			image.destroy(device);
-		}
-		self.pass.destroy();
-	}
+	pub unsafe fn destroy(self) { self.pass.destroy(); }
 
-	fn execute(&mut self, mut pass: PassContext, io: PassIO, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
+	fn execute(&mut self, mut pass: PassContext, io: PassIO<'_>, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
 		Self::generate_buffers(&mut pass, io.vertex, io.index, tris);
 
 		let vertex_buffer = pass.get(io.vertex).ptr();
@@ -228,8 +225,9 @@ impl Renderer {
 
 					let (image, sampler) = match m.texture_id {
 						TextureId::Managed(x) => {
-							let (_, _, image, sampler) = &self.images[&x];
-							(image.id.unwrap(), *sampler)
+							let &img = io.imgs.get(&x).unwrap();
+							let &(_, _, sampler) = self.images.get(&x).unwrap();
+							(pass.pass.get(img).id.unwrap(), sampler)
 						},
 						TextureId::User(x) => {
 							let masked = x & !(1 << 63);
@@ -279,55 +277,77 @@ impl Renderer {
 
 	fn generate_images<'pass, 'graph>(
 		&mut self, frame: &mut Frame<'pass, 'graph>, delta: TexturesDelta,
-	) -> Vec<Res<ImageView>, &'graph Arena>
+	) -> ArenaMap<'graph, u64, Res<ImageView>>
 	where
 		'graph: 'pass,
 	{
-		let mut imgs = Vec::new_in(frame.arena());
-		if !delta.set.is_empty() {
-			for (id, data) in delta.set {
-				let x = match id {
-					TextureId::Managed(x) => x,
-					TextureId::User(_) => continue,
-				};
+		let mut imgs = ArenaMap::with_capacity_and_hasher_in(self.images.len(), Default::default(), frame.arena());
+		for (id, data) in delta.set {
+			let x = match id {
+				TextureId::Managed(x) => x,
+				TextureId::User(_) => continue,
+			};
 
-				let (handle, desc) = self.get_image_for(frame, x, &data);
-				let pos = data.pos.unwrap_or([0, 0]);
-				let stage = ImageCopy {
-					row_stride: 0,
-					plane_stride: 0,
-					subresource: Subresource::default(),
-					offset: vk::Offset3D {
-						x: pos[0] as i32,
-						y: pos[1] as i32,
-						z: 0,
-					},
-					extent: vk::Extent3D {
-						width: data.image.width() as u32,
-						height: data.image.height() as u32,
-						depth: 1,
-					},
-				};
-				let vec = match data.image {
-					ImageData::Color(c) => c.pixels.to_vec_in(frame.arena()),
-					ImageData::Font(f) => f.srgba_pixels(None).collect_in(frame.arena()),
-				};
-				let img = frame.stage_image_new(
-					"upload ui image",
-					ExternalImage {
-						handle,
-						layout: if data.pos.is_some() {
-							vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL
-						} else {
-							vk::ImageLayout::UNDEFINED
+			let pos = data.pos.unwrap_or([0; 2]);
+			let extent: Vec2<usize> = Vec2::from(data.image.size());
+			let size: Vec2<usize> = extent + Vec2::from(pos);
+			let size = size.map(|x| x as u32);
+			let (persist, size, _) = self.images.entry(x).or_insert_with(|| {
+				let sampler = Self::get_sampler(frame.device(), data.options);
+				(Persist::new(), size, sampler)
+			});
+			let persist = *persist;
+			let size = *size;
+			let size = vk::Extent3D {
+				width: size.x,
+				height: size.y,
+				depth: 1,
+			};
+
+			let vec = ByteReader(match data.image {
+				ImageData::Color(c) => c.pixels.to_vec_in(frame.arena()),
+				ImageData::Font(f) => f.srgba_pixels(None).collect_in(frame.arena()),
+			});
+
+			let mut pass = frame.pass("upload egui image");
+			let staging = pass.resource(
+				BufferDesc::upload(vec.as_ref().len() as _),
+				BufferUsage::transfer_read(),
+			);
+			let img = pass.resource(
+				ImageDesc {
+					size,
+					format: vk::Format::R8G8B8A8_UNORM,
+					persist: Some(persist),
+					..Default::default()
+				},
+				ImageUsage::transfer_write(),
+			);
+			pass.build(move |mut pass| {
+				pass.write(staging, 0, vec.as_ref());
+				pass.copy_buffer_to_image(
+					staging,
+					img,
+					0,
+					ImageCopy {
+						row_stride: 0,
+						plane_stride: 0,
+						subresource: Subresource::default(),
+						offset: vk::Offset3D {
+							x: pos[0] as i32,
+							y: pos[1] as i32,
+							z: 0,
 						},
-						desc,
+						extent: vk::Extent3D {
+							width: extent.x as _,
+							height: extent.y as _,
+							depth: 1,
+						},
 					},
-					stage,
-					ByteReader(vec),
 				);
-				imgs.push(img);
-			}
+			});
+
+			imgs.insert(x, img);
 		}
 
 		for free in delta.free {
@@ -335,73 +355,41 @@ impl Renderer {
 				TextureId::Managed(x) => x,
 				TextureId::User(_) => continue,
 			};
-			let (image, _, view, _) = self.images.remove(&x).unwrap();
-			frame.delete(view);
-			frame.delete(image);
+			self.images.remove(&x);
 		}
 
 		imgs
 	}
 
-	fn get_image_for(&mut self, frame: &mut Frame, id: u64, delta: &ImageDelta) -> (vk::Image, graph::ImageDesc) {
-		let size: Vec2<usize> = Vec2::from(delta.image.size()) + Vec2::from(delta.pos.unwrap_or([0; 2]));
-		let size = size.map(|x| x as u32);
-		match self.images.entry(id) {
-			Entry::Occupied(mut x) => {
-				let curr_size = x.get().1;
-				if Vec2::max(curr_size, size) != curr_size {
-					let (image, _, view, _) = x.insert(Self::make_image(frame.device(), size, delta.options));
-					frame.delete(image);
-					frame.delete(view);
-				}
-				let i = &x.get().0;
-				(i.handle(), i.desc())
-			},
-			Entry::Vacant(x) => {
-				let i = x.insert(Self::make_image(frame.device(), size, delta.options));
-				(i.0.handle(), i.0.desc())
-			},
+	fn reference_images(&self, pass: &mut PassBuilder, imgs: &mut ArenaMap<'_, u64, Res<ImageView>>) {
+		for (&id, &(image, size, _)) in self.images.iter() {
+			match imgs.entry(id) {
+				Entry::Occupied(x) => pass.reference(*x.get(), ImageUsage::sampled_2d(Shader::Fragment)),
+				Entry::Vacant(v) => {
+					v.insert(pass.resource(
+						ImageDesc {
+							size: vk::Extent3D {
+								width: size.x,
+								height: size.y,
+								depth: 1,
+							},
+							format: vk::Format::R8G8B8A8_UNORM,
+							persist: Some(image),
+							..Default::default()
+						},
+						ImageUsage {
+							format: vk::Format::UNDEFINED,
+							usages: &[
+								ImageUsageType::ShaderReadSampledImage(Shader::Fragment),
+								ImageUsageType::AddUsage(vk::ImageUsageFlags::TRANSFER_DST),
+							],
+							view_type: Some(vk::ImageViewType::TYPE_2D),
+							subresource: Subresource::default(),
+						},
+					));
+				},
+			}
 		}
-	}
-
-	fn make_image(device: &Device, size: Vec2<u32>, opts: TextureOptions) -> (Image, Vec2<u32>, ImageView, SamplerId) {
-		let extent = vk::Extent3D {
-			width: size.x,
-			height: size.y,
-			depth: 1,
-		};
-		let image = Image::create(
-			device,
-			ImageDesc {
-				name: "egui image",
-				format: vk::Format::R8G8B8A8_UNORM,
-				size: extent,
-				levels: 1,
-				layers: 1,
-				samples: vk::SampleCountFlags::TYPE_1,
-				usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
-				flags: vk::ImageCreateFlags::MUTABLE_FORMAT,
-			},
-		)
-		.unwrap();
-
-		let view = ImageView::create(
-			device,
-			ImageViewDesc {
-				name: "egui image",
-				image: image.handle(),
-				size: extent,
-				view_type: vk::ImageViewType::TYPE_2D,
-				format: vk::Format::R8G8B8A8_UNORM,
-				usage: ImageViewUsage::Sampled,
-				subresource: Subresource::default(),
-			},
-		)
-		.unwrap();
-
-		let id = Self::get_sampler(device, opts);
-
-		(image, size, view, id)
 	}
 
 	fn get_sampler(device: &Device, opts: TextureOptions) -> SamplerId {

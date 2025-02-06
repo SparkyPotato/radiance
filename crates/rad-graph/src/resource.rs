@@ -206,7 +206,11 @@ impl Resource for Buffer {
 				.allocate(&AllocationCreateDesc {
 					name: desc.name,
 					requirements: device.device().get_buffer_memory_requirements(buffer),
-					location: MemoryLocation::CpuToGpu,
+					location: if desc.readback {
+						MemoryLocation::GpuToCpu
+					} else {
+						MemoryLocation::CpuToGpu
+					},
 					linear: true,
 					allocation_scheme: AllocationScheme::GpuAllocatorManaged,
 				})

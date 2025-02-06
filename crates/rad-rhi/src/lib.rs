@@ -1,3 +1,5 @@
+use std::ffi::CStr;
+
 use rad_core::{EngineBuilder, Module};
 use rad_graph::{
 	ash::{ext, khr, vk},
@@ -14,6 +16,7 @@ impl Module for RhiModule {
 					ext::mesh_shader::NAME,
 					ext::shader_image_atomic_int64::NAME,
 					khr::ray_tracing_position_fetch::NAME,
+					CStr::from_bytes_with_nul(b"VK_KHR_shader_relaxed_extended_instruction\0").unwrap(),
 				])
 				.features(
 					vk::PhysicalDeviceFeatures2::default()
@@ -26,7 +29,9 @@ impl Module for RhiModule {
 						.push_next(
 							&mut vk::PhysicalDeviceVulkan11Features::default()
 								.storage_push_constant16(true)
-								.storage_buffer16_bit_access(true),
+								.storage_buffer16_bit_access(true)
+								.variable_pointers(true)
+								.variable_pointers_storage_buffer(true),
 						)
 						.push_next(
 							&mut vk::PhysicalDeviceVulkan12Features::default()

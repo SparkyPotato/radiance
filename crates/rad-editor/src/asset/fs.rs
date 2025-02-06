@@ -79,10 +79,12 @@ impl FsAssetSystem {
 		});
 		let a = this.clone();
 		// TODO: yuck
-		std::thread::spawn(move || loop {
-			a.rescan();
-			std::thread::sleep(std::time::Duration::from_secs(5));
-		});
+		let _ = std::thread::Builder::new()
+			.name("asset rescan".to_string())
+			.spawn(move || loop {
+				a.rescan();
+				std::thread::sleep(std::time::Duration::from_secs(5));
+			});
 		this
 	}
 
