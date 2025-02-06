@@ -73,7 +73,7 @@ impl GpuScene for CameraScene {
 		let curr = data.curr;
 		let aspect = input.aspect;
 		pass.build(move |mut pass| {
-			pass.write(buf, 0, &[GpuCamera::new(aspect, prev), GpuCamera::new(aspect, curr)]);
+			pass.write(buf, 0, &[GpuCamera::new(aspect, curr), GpuCamera::new(aspect, prev)]);
 		});
 		Self { buf, prev, curr }
 	}

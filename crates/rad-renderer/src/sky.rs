@@ -41,7 +41,7 @@ pub struct GpuSkySampler {
 
 #[derive(Copy, Clone)]
 pub struct SkySampler {
-	lut: Res<ImageView>,
+	pub lut: Res<ImageView>,
 	transmittance: Res<ImageView>,
 	sampler: SamplerId,
 	sun_dir: Vec3<f32>,
