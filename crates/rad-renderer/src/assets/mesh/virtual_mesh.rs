@@ -167,8 +167,9 @@ impl CookedAsset for VirtualMesh {
 
 		let mut bvh = BvhBuilder::default();
 		let mut simplify: Vec<_> = (0..meshlets.meshlets.len() as u32).collect();
+		let mut stuck = Vec::new();
 		let mut lod = 0;
-		while simplify.len() > 1 {
+		while !simplify.is_empty() {
 			let s = debug_span!(
 				"generating lod",
 				lod,
@@ -181,8 +182,8 @@ impl CookedAsset for VirtualMesh {
 			let _e = s.enter();
 
 			let groups = generate_groups(&simplify, &mut meshlets, &remap);
-			compute_boundary(&mut boundary, &meshlets, &remap, &groups);
 			simplify.clear();
+			compute_boundary(&mut boundary, &meshlets, &remap, &groups);
 			s.record("groups", groups.len());
 
 			let par: Vec<_> = groups
@@ -219,23 +220,22 @@ impl CookedAsset for VirtualMesh {
 			let mut max_size = 0.0f32;
 			let mut tris = 0;
 			let mut stuck_tris = 0;
-			let mut stuck = Vec::new();
 			for x in par {
 				match x {
 					Ok((group, n_meshlets, size)) => {
 						tris += n_meshlets.tris.len() / 3;
-						simplify.extend(meshlets.add(n_meshlets));
-						meshlets.groups.push(group);
 						min_size = min_size.min(size);
 						avg_size += size;
 						max_size = max_size.max(size);
+						simplify.extend(meshlets.add(n_meshlets));
+						meshlets.groups.push(group);
 					},
 					Err(group) => {
-						stuck.extend(group.meshlets());
 						stuck_tris += group
 							.meshlets()
 							.map(|x| meshlets.meshlets[x as usize].tri_count as usize)
 							.sum::<usize>();
+						stuck.push(group);
 					},
 				}
 			}
@@ -246,11 +246,17 @@ impl CookedAsset for VirtualMesh {
 			}
 
 			if tris > stuck_tris / 3 {
-				simplify.extend(stuck);
+				simplify.extend(stuck.drain(..).as_ref().iter().flat_map(|x| x.meshlets()));
 			}
 
-			bvh.add_lod(first_group as _, &meshlets.groups[first_group..]);
+			bvh.add_lod(first_group as _, &meshlets.groups);
 			lod += 1;
+		}
+
+		if !stuck.is_empty() {
+			let first_group = meshlets.groups.len();
+			meshlets.groups.extend(stuck);
+			bvh.add_lod(first_group as _, &meshlets.groups);
 		}
 
 		let (bvh, depth) = bvh.build(&mut meshlets);
@@ -460,7 +466,6 @@ fn simplify_group(
 		res.set_len(count);
 		res
 	};
-	error *= 0.5;
 
 	for m in group.meshlets() {
 		error = error.max(meshlets.meshlets[m as usize].error);
@@ -627,13 +632,16 @@ pub struct BvhBuilder {
 impl BvhBuilder {
 	fn add_lod(&mut self, offset: u32, groups: &[MeshletGroup]) {
 		let start = self.nodes.len() as u32;
-		self.nodes.extend(groups.iter().enumerate().map(|(i, g)| TempNode {
-			group: i as u32 + offset,
-			aabb: g.aabb,
-			children: Vec::new(),
-		}));
+		self.nodes
+			.extend(groups.iter().enumerate().skip(offset as _).map(|(i, g)| TempNode {
+				group: i as u32,
+				aabb: g.aabb,
+				children: Vec::new(),
+			}));
 		let end = self.nodes.len() as u32;
-		self.lods.push(start..end);
+		if start != end {
+			self.lods.push(start..end);
+		}
 	}
 
 	fn cost(&self, nodes: &[u32]) -> f32 {
@@ -734,8 +742,7 @@ impl BvhBuilder {
 
 	fn build_temp(&mut self) -> u32 {
 		let mut lods = Vec::with_capacity(self.lods.len());
-		let l = std::mem::take(&mut self.lods);
-		for lod in l {
+		for lod in std::mem::take(&mut self.lods) {
 			let mut lod: Vec<_> = lod.collect();
 			let root = self.build_temp_inner(&mut lod, true);
 			let node = &self.nodes[root as usize];
@@ -794,6 +801,19 @@ impl BvhBuilder {
 		onode as _
 	}
 
+	fn mark_reachable(&self, out: &[BvhNode], reachable: &mut [bool], node: u32) {
+		let node = &out[node as usize];
+		for i in 0..8 {
+			if node.child_counts[i] == u8::MAX {
+				self.mark_reachable(out, reachable, node.child_offsets[i]);
+			} else {
+				for m in 0..node.child_counts[i] as u32 {
+					reachable[(m + node.child_offsets[i]) as usize] = true;
+				}
+			}
+		}
+	}
+
 	fn build(mut self, meshlets: &mut Meshlets) -> (Vec<BvhNode>, u32) {
 		let s = trace_span!("build bvh");
 		let _e = s.enter();
@@ -811,11 +831,29 @@ impl BvhBuilder {
 		}
 		meshlets.meshlets = remap;
 
-		let root = self.build_temp();
 		let mut out = vec![];
 		let mut max_depth = 0;
-		let root = self.build_inner(&meshlets.groups, &mut out, &mut max_depth, root, 1);
-		assert_eq!(root, 0, "root must be 0");
+
+		if self.nodes.len() == 1 {
+			let mut o = BvhNode::default();
+			let group = &meshlets.groups[0];
+			o.aabbs[0] = group.aabb;
+			o.lod_bounds[0] = group.lod_bounds;
+			o.parent_errors[0] = group.parent_error;
+			o.child_offsets[0] = group.meshlets[0];
+			o.child_counts[0] = group.meshlets[1] as _;
+			out.push(o);
+			max_depth = 1;
+		} else {
+			let root = self.build_temp();
+			let root = self.build_inner(&meshlets.groups, &mut out, &mut max_depth, root, 1);
+			assert_eq!(root, 0, "root must be 0");
+		}
+
+		let mut reachable = vec![false; meshlets.meshlets.len()];
+		self.mark_reachable(&out, &mut reachable, 0);
+		assert!(reachable.iter().all(|&x| x), "all meshlets must be reachable");
+
 		(out, max_depth)
 	}
 }

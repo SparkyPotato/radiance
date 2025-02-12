@@ -318,77 +318,35 @@ public struct Cull {
 		return true;
 	}
 
-	// 2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere (Michael Mara, Morgan McGuire).
-	// We get the projected bounds on the axis that is the longest upon projection (need to be conservative!),
-	// which is the one from (0, 0) to the sphere's center.
-	public f32 error_distance(f32x4 bounds) {
-		let center = mul(this.curr_mv, f32x4(bounds.xyz, 1.f)).xyz;
-		let radius = bounds.w * this.scale;
-
-		if (center.y + radius <= this.near)
-			return 0.f;
-
-		let dist2 = dot(center, center);
-		let a = sqrt(dist2 - center.y * center.y);
-		let proj_center = f32x2(a, center.y);
-		let t2 = dist2 - radius * radius;
-		var t = sqrt(max(t2, 0.f));
-
-		// cos(theta) = t / dist
-		// sin(theta) = r / dist
-		// T = t * rotate(theta) * proj_center / dist,
-		// removing the dist divide in cos, sin
-		// ncos(theta) = t
-		// nsin(theta) = r
-		// rotate(theta) == rotate(ntheta) / dist
-		// therefore, T = t * rotate(ntheta) * proj_center / dist2
-		// saving us two divides and a sqrt!
-		let ncos = t;
-		let nsin = radius;
-		var wt_z = dot(f32x2(-nsin, ncos), proj_center) / dist2;
-		let t_z = t * wt_z;
-
-		// If intersecting the near plane, funky business is required.
-		if (t2 < 0.f || t_z < this.near) {
-			let off = this.near - center.y;
-			let k = sqrt(radius * radius - off * off);
-			let t = f32x2(a + k, this.near);
-			wt_z = t.y / length(t);
-		}
-
-		// Project the sphere to an equivalently sized sphere along the z axis,
-		// so error_scale can be used to monotonically compare.
-		return wt_z * max(center.y - radius, this.near);
-	}
-
-	public f32 error_scale() {
-		return sin(atan(this.h / this.screen.y));
-		// Don't divide by 2 because the error is already divided by 2 during build.
-		return this.screen.y * this.h;
-	}
-
-	bool should_visit_nv(f32x4 lod_bounds, f32 parent_error) {
+	// the metric I came up with was pretty bad, so steal nvidia's i guess:
+	// https://github.com/nvpro-samples/vk_lod_clusters/blob/main/shaders/traversal_run.comp.glsl
+	public f32 error_over_dist(f32x4 lod_bounds, f32 error) {
 		let sphere_dist = length(mul(this.curr_mv, f32x4(lod_bounds.xyz, 1.f)).xyz);
 		let err_dist = max(this.near, sphere_dist - lod_bounds.w * this.scale);
-		let err_over_dist = parent_error * this.scale / err_dist;
-		return err_over_dist >= this.error_scale();
+		return error * this.scale / err_dist;
+	}
+
+	public f32 threshold_for_pix(f32 pix) {
+		return sin(atan(this.h * pix / this.screen.y));
 	}
 
 	public bool should_visit_bvh(f32x4 lod_bounds, f32 parent_error) {
-		return this.should_visit_nv(lod_bounds, parent_error);
-
-		let min_dist = this.error_scale() * this.min_scale * parent_error;
-		return this.error_distance(lod_bounds) <= min_dist;
+		let err_over_dist = this.error_over_dist(lod_bounds, parent_error);
+		let thresh = this.threshold_for_pix(1.f);
+		return err_over_dist >= thresh;
 	}
 
-	public bool2 should_render(f32x4 lod_bounds, f32 error, f32 edge) {
-		return bool2(!this.should_visit_nv(lod_bounds, error), true);
+	public bool should_render(f32x4 lod_bounds, f32 error) {
+		let err_over_dist = this.error_over_dist(lod_bounds, error);
+		let thresh = this.threshold_for_pix(1.f);
+		return err_over_dist < thresh;
+	}
 
-		let dist = this.error_distance(lod_bounds);
-		let scale = this.error_scale();
-		let min_dist = scale * this.min_scale * error;
-		let edge_scale = (scale / 32.f) * this.scale * edge;
-		return bool2(dist > min_dist, /*dist < edge_scale*/ true);
+	public bool hw_or_sw(Aabb aabb, f32 edge) {
+		let sphere = f32x4(aabb.center, length(aabb.half_extent));
+		let err_over_dist = this.error_over_dist(sphere, edge);
+		let thresh = this.threshold_for_pix(16.f);
+		return err_over_dist >= thresh;
 	}
 
 	public bool unoccluded(Aabb aabb) {

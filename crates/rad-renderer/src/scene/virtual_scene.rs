@@ -26,7 +26,7 @@ use rad_world::{
 	TickStage,
 	World,
 };
-use tracing::warn;
+use tracing::error;
 
 use crate::{
 	assets::{
@@ -210,7 +210,7 @@ fn sync_virtual_scene(
 				.iter()
 				.filter_map(|&m| {
 					ARef::loaded(m)
-						.map_err(|e| warn!("failed to load mesh {:?}: {:?}", m, e))
+						.map_err(|e| error!("failed to load mesh {:?}: {:?}", m, e))
 						.ok()
 				})
 				.collect();

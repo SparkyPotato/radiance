@@ -165,7 +165,9 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		case DebugVis.Error: {
 			let res = Constants.read.size();
 			let cull = Cull(Constants.camera, tri.instance, 0, res, {}, {});
-			let error = cull.error_distance(tri.meshlet.lod_bounds);
+			let error_over_dist = cull.error_over_dist(tri.meshlet.lod_bounds, tri.meshlet.error);
+			let thresh = cull.threshold_for_pix(1.f);
+			let error = error_over_dist / thresh;
 
 			let count = f32x2(25.f, 40.f);
 			let start = floor(input.uv * count) / count;

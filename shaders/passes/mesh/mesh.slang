@@ -104,7 +104,7 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 		let in_front_of_z = a.z > 0.f && b.z > 0.f && c.z > 0.f;
 		culled = culled && in_front_of_z;
 
-		visbuffer[gtid].culled = false;
+		visbuffer[gtid].culled = culled;
 	}
 }
 
@@ -128,11 +128,12 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 		return;
 
 	let t = init.tri(gtid);
-	let v0 = Pos[t.x].xyz;
+	let v0 = Pos[t.z].xyz;
 	let v1 = Pos[t.y].xyz;
-	let v2 = Pos[t.z].xyz;
-	VisBufferData data = { init.mid, gtid };
-	let write = data.encode();
+	let v2 = Pos[t.x].xyz;
+	let par_area = edge_fn(v0.xy, v1.xy, v2.xy);
+	if (par_area <= 0.f)
+		return;
 
 	let mi = min3(v0, v1, v2);
 	let ma = max3(v0, v1, v2);
@@ -144,12 +145,11 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	if (any(minv > maxv))
 		return;
 
+	VisBufferData data = { init.mid, gtid };
+	let write = data.encode();
+
 	let w_x = f32x3(v1.y - v2.y, v2.y - v0.y, v0.y - v1.y);
 	let w_y = f32x3(v2.x - v1.x, v0.x - v2.x, v1.x - v0.x);
-	let par_area = -edge_fn(v0.xy, v1.xy, v2.xy);
-	if (par_area <= 0.f)
-		return;
-
 	let v_z = f32x3(v0.z, v1.z, v2.z) / par_area;
 	let z_x = dot(v_z, w_x);
 	let z_y = dot(v_z, w_y);
