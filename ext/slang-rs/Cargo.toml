@@ -1,0 +1,12 @@
+[package]
+name = "slang"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bitflags = "2.5.0"
+libc = "0.2.155"
+paste = "1.0.15"
+slang-sys = { path = "slang-sys" }
+static_assertions = "1.1.0"
+thiserror = "1.0.61"

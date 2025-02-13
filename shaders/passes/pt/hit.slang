@@ -72,7 +72,10 @@ struct Tbn {
 			let t = normalize(tc - dot(n, tc) * n);
 			let h = (dot(cross(n, tc), bc) < 0.f) ? -1.f : 1.f;
 			let b = h * cross(n, t);
-			return { t, b, n };
+
+			this.tangent = t;
+			this.bitangent = b;
+			this.normal = n;
 		} else {
 			f32x3 other;
 			if (n.x < 0.1f && n.y < 0.1f) {
@@ -82,7 +85,10 @@ struct Tbn {
 			}
 			other = normalize(other);
 			let last = cross(other, n);
-			return { other, last, n };
+
+			this.tangent = other;
+			this.bitangent = last;
+			this.normal = n;
 		}
 	}
 }

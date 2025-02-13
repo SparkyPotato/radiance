@@ -90,7 +90,7 @@ impl InstanceCull {
 				_pad: 0,
 			};
 			if self.early {
-				self.pass.dispatch(&mut pass, &push, (instance_count + 63) / 64, 1, 1);
+				self.pass.dispatch(&mut pass, &push, instance_count.div_ceil(64), 1, 1);
 			} else {
 				self.pass
 					.dispatch_indirect(&mut pass, &push, late_instances, std::mem::size_of::<u32>());

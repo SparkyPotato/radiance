@@ -1,0 +1,3 @@
+[submodule "ext/slang-rs/slang-sys/vendor/slang"]
+	path = ext/slang-rs/slang-sys/vendor/slang
+	url = https://github.com/shader-slang/slang/

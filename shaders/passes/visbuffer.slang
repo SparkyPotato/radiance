@@ -15,6 +15,13 @@ public struct VisBufferData {
 		return (this.meshlet_id << 7) | this.triangle_id;
 	}
 
+	public __init(u32 meshlet_id, u32 triangle_id) {
+		VisBufferData ret;
+		ret.meshlet_id = meshlet_id;
+		ret.triangle_id = triangle_id;
+		return ret;
+	}
+
 	public __init(u32 data) {
 		VisBufferData ret;
 		ret.meshlet_id = data >> 7;
@@ -31,6 +38,13 @@ public struct VisBuffer {
 		return (u64(asuint(this.depth)) << 32) | u64(this.data);
 	}
 
+	public __init(f32 depth, u32 data) {
+		VisBuffer ret;
+		ret.depth = depth;
+		ret.data = data;
+		return ret;
+	}
+
 	public __init(u64 data) {
 		VisBuffer ret;
 		ret.depth = asfloat(u32(data >> 32));
@@ -44,7 +58,7 @@ public struct VisBufferTex {
 	Debug dbg;
 
 	public void write(u32x2 pos, f32 depth, u32 data, u32 mode) {
-		VisBuffer d = { depth, data };
+		let d = VisBuffer(depth, data);
 		this.tex.atomic_max(pos, d.encode());
 		this.dbg.write(pos, depth, mode);
 	}

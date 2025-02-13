@@ -175,7 +175,7 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 			let h = hash(p.meshlet.instance) ^ hash(p.meshlet.node_offset);
 			col = f32x3(f32(h & 255), f32((h >> 8) & 255), f32((h >> 16) & 255)) / 255.f;
 			let digit = print(input.uv, start, size, error, 0.f, 8.f);
-			col = select(digit, 0.f, col);
+			col = select(digit > 0.5f, 0.f, col);
 			break;
 		}
 		case DebugVis.BaseColor: {

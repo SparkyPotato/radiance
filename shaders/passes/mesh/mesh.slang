@@ -88,7 +88,7 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 	if (gtid < tri_count) {
 		let tri = init.tri(gtid);
 		triangles[gtid] = tri;
-		VisBufferData data = { init.mid, gtid };
+		let data = VisBufferData(init.mid, gtid);
 		visbuffer[gtid].data = data.encode();
 
 		let a = Pos[tri.x].xyz;
@@ -145,7 +145,7 @@ void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	if (any(minv > maxv))
 		return;
 
-	VisBufferData data = { init.mid, gtid };
+	let data = VisBufferData(init.mid, gtid);
 	let write = data.encode();
 
 	let w_x = f32x3(v1.y - v2.y, v2.y - v0.y, v0.y - v1.y);

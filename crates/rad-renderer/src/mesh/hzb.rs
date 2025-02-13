@@ -136,8 +136,8 @@ impl HzbGen {
 			);
 		}
 
-		let x = (io.size.x + 63) >> 6;
-		let y = (io.size.y + 63) >> 6;
+		let x = io.size.x.div_ceil(64);
+		let y = io.size.y.div_ceil(64);
 		let push = PushConstants {
 			atomic: atomic.ptr(),
 			visbuffer: visbuffer.storage_id.unwrap(),

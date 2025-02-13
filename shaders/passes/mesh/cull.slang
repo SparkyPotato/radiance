@@ -205,6 +205,7 @@ public struct MeshletQueue {
 			return true;
 
 		this.data->pointers[id] = pointer;
+		return false;
 	}
 }
 

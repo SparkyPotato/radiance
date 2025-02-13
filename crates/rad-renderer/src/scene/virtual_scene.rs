@@ -121,7 +121,7 @@ impl GpuScene for VirtualScene {
 					count,
 					_pad: 0,
 				},
-				(count + 63) / 64,
+				count.div_ceil(64),
 				1,
 				1,
 			);

@@ -1,0 +1,8 @@
+edition = "2021"
+force_multiline_blocks = true
+format_code_in_doc_comments = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Crate"
+reorder_imports = true
+trailing_semicolon = false
+unstable_features = true

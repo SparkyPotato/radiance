@@ -15,7 +15,7 @@ struct PushConstants {
 	input: ImageId,
 	min_exp: f32,
 	inv_exp_range: f32,
-	lerp_coeff: f32,
+	_pad: u32,
 }
 
 pub struct ExposureCalc {
@@ -106,12 +106,12 @@ impl ExposureCalc {
 				&PushConstants {
 					histogram,
 					input,
-					lerp_coeff: 0.0,
 					min_exp: Self::MIN_EXPOSURE,
 					inv_exp_range: 1.0 / (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE),
+					_pad: 0,
 				},
-				(size.width + 15) >> 4,
-				(size.height + 15) >> 4,
+				size.width.div_ceil(16),
+				size.height.div_ceil(16),
 				1,
 			)
 		});

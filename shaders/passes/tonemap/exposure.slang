@@ -8,7 +8,6 @@ struct PushConstants {
 	Tex2D<f32x4> input;
 	f32 min_exp;
 	f32 inv_exp_range;
-	f32 lerp_coeff;
 };
 
 [vk::push_constant]
@@ -23,17 +22,21 @@ u8 bin_lum(f32 lum) {
 	return u8(log * 254.f + 1.f);
 }
 
+groupshared u32 shared_histogram[256];
+
 [shader("compute")]
 [numthreads(16, 16, 1)]
 void histogram(u32x2 id: SV_DispatchThreadID, u32 gid: SV_GroupIndex, u32x2 group: SV_GroupID) {
-	// TODO: the novideo compiler breaks on groupshared atomics for some reason.
-	// so just suck it and use global atomics for now.
-	// (i tried waterfall loops but they were ~20% slower than mem atomics).
+	shared_histogram[gid] = 0;
+	workgroup_sync_barrier();
 
 	let size = Constants.input.size();
 	if (id.x < size.x && id.y < size.y) {
 		let color = Constants.input.load(id).xyz;
 		let bin = u32(bin_lum(luminance(color)));
-		atomic_add(Constants.histogram[bin], 1);
+		atomic_add(shared_histogram[bin], 1, Scope.Workgroup, Loc.Workgroup);
 	}
+	workgroup_sync_barrier();
+
+	atomic_add(Constants.histogram[gid], shared_histogram[gid]);
 }

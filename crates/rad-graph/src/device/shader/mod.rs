@@ -24,16 +24,6 @@ use rspirv::{
 
 use crate::device::{shader::compile::ShaderBuilder, Device};
 
-#[macro_export]
-macro_rules! c_str {
-	($name:literal) => {
-		#[allow(unused_unsafe)]
-		unsafe {
-			std::ffi::CStr::from_bytes_with_nul_unchecked(concat!($name, "\0").as_bytes())
-		}
-	};
-}
-
 mod compile;
 
 #[derive(Copy, Clone, Default)]
@@ -382,7 +372,7 @@ impl RuntimeShared {
 				&vk::ComputePipelineCreateInfo::default().layout(layout).stage(
 					vk::PipelineShaderStageCreateInfo::default()
 						.stage(stage)
-						.name(c_str!("main"))
+						.name(c"main")
 						.push_next(&mut vk::ShaderModuleCreateInfo::default().code(&code)),
 				),
 				std::ptr::null(),
@@ -408,11 +398,7 @@ impl RuntimeShared {
 			for &s in desc.shaders.iter() {
 				let (code, stage) = Self::get_shader(b, s).map_err(|x| Err(x))?;
 				codes.push(code);
-				shaders.push(
-					vk::PipelineShaderStageCreateInfo::default()
-						.stage(stage)
-						.name(c_str!("main")),
-				);
+				shaders.push(vk::PipelineShaderStageCreateInfo::default().stage(stage).name(c"main"));
 			}
 			for code in codes.iter() {
 				infos.push(vk::ShaderModuleCreateInfo::default().code(&code));

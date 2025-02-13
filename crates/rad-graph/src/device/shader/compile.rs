@@ -6,15 +6,12 @@ use slang::{
 	CompilerOptionEntry,
 	CompilerOptionName,
 	FileSystem,
-	FloatingPointMode,
 	GlobalSession,
-	LineDirectiveMode,
 	MatrixLayoutMode,
 	Module,
 	Session,
 	SessionDescBuilder,
 	TargetDescBuilder,
-	TargetFlags,
 };
 
 #[derive(Clone)]
@@ -38,7 +35,7 @@ impl FileSystem for CacheFs {
 }
 
 pub struct ShaderBuilder {
-	_slang: GlobalSession,
+	slang: GlobalSession,
 	fs: CacheFs,
 	sesh: Session,
 }
@@ -51,20 +48,17 @@ impl ShaderBuilder {
 			SessionDescBuilder::default()
 				.targets(&[TargetDescBuilder::default()
 					.format(CompileTarget::SPIRV)
-					.profile(slang.find_profile("spirv_1_6"))
-					.flags(TargetFlags::GENERATE_SPIRV_DIRECTLY)
-					.floating_point_mode(FloatingPointMode::FAST)
-					.line_directive_mode(LineDirectiveMode::STANDARD)
-					.force_glsl_scalar_buffer_layout(true)])
+					.profile(slang.find_profile("sm_6_6"))
+					.force_glsl_scalar_buffer_layout(true)
+					.compiler_option_entries(&mut [
+						CompilerOptionEntry::new(CompilerOptionName::WARNINGS_AS_ERRORS, c"all".as_ptr()),
+						CompilerOptionEntry::new(CompilerOptionName::EMIT_SPIRV_DIRECTLY, 1),
+						CompilerOptionEntry::new(CompilerOptionName::DEBUG_INFORMATION, 2),
+						CompilerOptionEntry::new(CompilerOptionName::OPTIMIZATION, 2),
+					])])
 				.file_system(fs)
-				.search_paths(&[b".\0".as_ptr() as _])
-				.default_matrix_layout_mode(MatrixLayoutMode::COLUMN_MAJOR)
-				.compiler_option_entries(&mut [
-					CompilerOptionEntry::new(CompilerOptionName::LANGUAGE, c_str!("slang").as_ptr()),
-					CompilerOptionEntry::new(CompilerOptionName::DEBUG_INFORMATION, 2),
-					CompilerOptionEntry::new(CompilerOptionName::USE_UP_TO_DATE_BINARY_MODULE, 1),
-					CompilerOptionEntry::new(CompilerOptionName::GLSL_FORCE_SCALAR_LAYOUT, 1),
-				]),
+				.search_paths(&[c"./".as_ptr() as _])
+				.default_matrix_layout_mode(MatrixLayoutMode::COLUMN_MAJOR),
 		)
 	}
 
@@ -73,11 +67,7 @@ impl ShaderBuilder {
 		let slang = GlobalSession::new()?;
 		let sesh = Self::make_session(&slang, fs.clone())?;
 
-		Ok(Self {
-			_slang: slang,
-			fs,
-			sesh,
-		})
+		Ok(Self { slang, fs, sesh })
 	}
 
 	fn load_raw(&mut self, name: &str) -> Result<Module, String> {
@@ -85,12 +75,14 @@ impl ShaderBuilder {
 		let mut module = self.sesh.load_module(&path).map_err(fmt_error)?;
 		let path = self.fs.cache.join(path).with_extension("slang-module");
 		let _ = std::fs::create_dir_all(path.parent().unwrap());
-		let _ = module.write_to_file(path.as_os_str().to_str().unwrap());
+		module
+			.write_to_file(path.as_os_str().to_str().unwrap())
+			.map_err(|e| format!("error in `{name}`: {}", fmt_error(e)))?;
 		Ok(module)
 	}
 
 	pub fn reload(&mut self) -> Result<(), String> {
-		self.sesh = Self::make_session(&self._slang, self.fs.clone()).map_err(fmt_error)?;
+		self.sesh = Self::make_session(&self.slang, self.fs.clone()).map_err(fmt_error)?;
 		Ok(())
 	}
 

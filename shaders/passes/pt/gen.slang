@@ -19,7 +19,7 @@ Ray primary_ray(inout Rng rng, u32x2 pix) {
 }
 
 f32x3 li(inout Rng rng, Ray ray) {
-	HitPayload p = {};
+	HitPayload p;
 	p.rng = rng;
 	p.ray = ray;
 	p.L = f32x3(0.f);

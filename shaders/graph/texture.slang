@@ -3,10 +3,21 @@ implementing graph;
 [vk::binding(0, 0)]
 __DynamicResource Textures[];
 
-public struct Tex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
+/// When targeting Vulkan, a combined-texture-sampler type (`isCombined==1`) translates to a `OpTypeSampledImage` type
+/// in SPIR-V. For other targets, the combined-texture-sampler type is translated to a pair of a `Texture` and
+/// `SamplerState`. `isShadow` is only applicable to combined-texture-sampler types and must be `0` for non-combined
+/// texture types.
+/// @internal
+/// @category texture_types Texture types
+// __magic_type(TextureType)
+// __intrinsic_type($(kIROp_TextureType))
+// struct _Texture<T:ITexelElement, Shape: __ITextureShape, let isArray:int, let isMS:int, let sampleCount:int, let
+// access:int, let isShadow:int, let isCombined:int, let format:int>;
+
+public struct Tex<T : ITexelElement, S : __ITextureShape, U : Uniformity = Uniform> {
 	u32 index;
 
-	public static Tex<T, Shape, U> from_index(u32 index) {
+	public static Tex<T, S, U> from_index(u32 index) {
 		return { index };
 	}
 
@@ -14,31 +25,31 @@ public struct Tex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
 		return this.index;
 	}
 
-	__TextureImpl<T, Shape, 0, 0, 0, 0, 0, 0, 0> get() {
-		return Textures[U.wrap_index(this.index)].as<__TextureImpl<T, Shape, 0, 0, 0, 0, 0, 0, 0>>();
+	_Texture<T, S, 0, 0, 0, 0, 0, 0, 0> get() {
+		return Textures[U.wrap_index(this.index)].as<_Texture<T, S, 0, 0, 0, 0, 0, 0, 0>>();
 	}
 
-	public T sample<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv) {
+	public T sample<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv) {
 		return this.get().Sample(sampler.get(), uv);
 	}
 
-	public T sample_mip<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, f32 mip) {
+	public T sample_mip<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, f32 mip) {
 		return this.get().SampleLevel(sampler.get(), uv, mip);
 	}
 
-	public T sample_grad<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, f32 ddx, f32 ddy) {
+	public T sample_grad<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, f32 ddx, f32 ddy) {
 		return this.get().SampleGrad(sampler.get(), uv, ddx, ddy);
 	}
 }
 
-public struct OTex<T, Shape : __ITextureShape, U : Uniformity = Uniform> {
+public struct OTex<T : ITexelElement, S : __ITextureShape, U : Uniformity = Uniform> {
 	u32 index;
 
-	public Optional<Tex<T, Shape, U>> get() {
+	public Optional<Tex<T, S, U>> get() {
 		if (this.index == 0) {
 			return none;
 		} else {
-			return Tex<T, Shape, U>.from_index(this.index);
+			return Tex<T, S, U>.from_index(this.index);
 		}
 	}
 }
@@ -47,14 +58,14 @@ public typealias D1 = __Shape1D;
 public typealias D2 = __Shape2D;
 public typealias D3 = __Shape3D;
 
-__generic<T, U : Uniformity = Uniform> public typealias Tex1D = Tex<T, D1, U>;
-__generic<T, U : Uniformity = Uniform> public typealias Tex2D = Tex<T, D2, U>;
-__generic<T, U : Uniformity = Uniform> public typealias Tex3D = Tex<T, D3, U>;
-__generic<T, U : Uniformity = Uniform> public typealias OTex1D = OTex<T, D1, U>;
-__generic<T, U : Uniformity = Uniform> public typealias OTex2D = OTex<T, D2, U>;
-__generic<T, U : Uniformity = Uniform> public typealias OTex3D = OTex<T, D3, U>;
+__generic<T : ITexelElement, U : Uniformity = Uniform> public typealias Tex1D = Tex<T, D1, U>;
+__generic<T : ITexelElement, U : Uniformity = Uniform> public typealias Tex2D = Tex<T, D2, U>;
+__generic<T : ITexelElement, U : Uniformity = Uniform> public typealias Tex3D = Tex<T, D3, U>;
+__generic<T : ITexelElement, U : Uniformity = Uniform> public typealias OTex1D = OTex<T, D1, U>;
+__generic<T : ITexelElement, U : Uniformity = Uniform> public typealias OTex2D = OTex<T, D2, U>;
+__generic<T : ITexelElement, U : Uniformity = Uniform> public typealias OTex3D = OTex<T, D3, U>;
 
-__generic<T, U : Uniformity> public extension Tex<T, D1, U> {
+__generic<T : ITexelElement, U : Uniformity> public extension Tex1D<T, U> {
 	public T load(u32 pixel, u32 mip = 0) {
 		return this.get().Load(i32x2(pixel, mip));
 	}
@@ -65,7 +76,7 @@ __generic<T, U : Uniformity> public extension Tex<T, D1, U> {
 		return w;
 	}
 }
-__generic<T, U : Uniformity> public extension Tex<T, D2, U> {
+__generic<T : ITexelElement, U : Uniformity> public extension Tex2D<T, U> {
 	public T load(u32x2 pixel, u32 mip = 0) {
 		return this.get().Load(i32x3(pixel, mip));
 	}
@@ -82,7 +93,7 @@ __generic<T, U : Uniformity> public extension Tex<T, D2, U> {
 		return u32x2(xy);
 	}
 }
-__generic<T, U : Uniformity> public extension Tex<T, D3, U> {
+__generic<T : ITexelElement, U : Uniformity> public extension Tex3D<T, U> {
 	public T load(u32x3 pixel, u32 mip = 0) {
 		return this.get().Load(i32x4(pixel, mip));
 	}
@@ -94,8 +105,8 @@ __generic<T, U : Uniformity> public extension Tex<T, D3, U> {
 	}
 }
 
-__generic<T, Shape : __ITextureShape, U : Uniformity = Uniform> public extension Optional<Tex<T, Shape, U>> {
-	public T sample<S : Uniformity>(Sampler<S> sampler, vector<f32, Shape.dimensions> uv, T default = T()) {
+__generic<T : ITexelElement, S : __ITextureShape, U : Uniformity = Uniform> public extension Optional<Tex<T, S, U>> {
+	public T sample<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, T default = T(T.Element(0))) {
 		if (this.hasValue) {
 			return this.value.sample(sampler, uv);
 		} else {
@@ -104,8 +115,8 @@ __generic<T, Shape : __ITextureShape, U : Uniformity = Uniform> public extension
 	}
 }
 
-__generic<T, U : Uniformity> public extension Optional<Tex<T, D1, U>> {
-	public T load(u32 pixel, T default = T(), u32 mip = 0) {
+__generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex1D<T, U>> {
+	public T load(u32 pixel, T default = T(T.Element(0)), u32 mip = 0) {
 		if (this.hasValue) {
 			return this.value.load(pixel, mip);
 		} else {
@@ -121,8 +132,8 @@ __generic<T, U : Uniformity> public extension Optional<Tex<T, D1, U>> {
 		}
 	}
 }
-__generic<T, U : Uniformity> public extension Optional<Tex<T, D2, U>> {
-	public T load(u32x2 pixel, T default = T(), u32 mip = 0) {
+__generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex2D<T, U>> {
+	public T load(u32x2 pixel, T default = T(T.Element(0)), u32 mip = 0) {
 		if (this.hasValue) {
 			return this.value.load(pixel, mip);
 		} else {
@@ -146,8 +157,8 @@ __generic<T, U : Uniformity> public extension Optional<Tex<T, D2, U>> {
 		}
 	}
 }
-__generic<T, U : Uniformity> public extension Optional<Tex<T, D3, U>> {
-	public T load(u32x3 pixel, T default = T(), u32 mip = 0) {
+__generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex3D<T, U>> {
+	public T load(u32x3 pixel, T default = T(T.Element(0)), u32 mip = 0) {
 		if (this.hasValue) {
 			return this.value.load(pixel, mip);
 		} else {
@@ -166,21 +177,15 @@ __generic<T, U : Uniformity> public extension Optional<Tex<T, D3, U>> {
 
 [vk::binding(1, 0)]
 __DynamicResource STextures[];
-[vk::binding(1, 0)]
-coherent __DynamicResource CTextures[];
 
-public struct STex<T, Shape : __ITextureShape, C : Coherency = Incoherent, U : Uniformity = Uniform> {
+public struct STex<T : ITexelElement, S : __ITextureShape, C : Coherency = Incoherent, U : Uniformity = Uniform> {
 	u32 index;
 
-	__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0> get() {
-		if (C.is_coherent())
-			return CTextures[U.wrap_index(this.index)].as<__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0>>();
-
-		else
-			return STextures[U.wrap_index(this.index)].as<__TextureImpl<T, Shape, 0, 0, 0, 1, 0, 0, 0>>();
+	_Texture<T, S, 0, 0, 0, 1, 0, 0, 0> get() {
+		return STextures[U.wrap_index(this.index)].as<_Texture<T, S, 0, 0, 0, 1, 0, 0, 0>>();
 	}
 
-	public T load(vector<u32, Shape.dimensions> pixel) {
+	public T load(vector<u32, S.dimensions> pixel) {
 		if (C.is_coherent()) {
 			let img = this.get();
 			u32 sc = DEFAULT_SCOPE;
@@ -193,7 +198,7 @@ public struct STex<T, Shape : __ITextureShape, C : Coherency = Incoherent, U : U
 		}
 	}
 
-	public void store(vector<u32, Shape.dimensions> pixel, T value) {
+	public void store(vector<u32, S.dimensions> pixel, T value) {
 		if (C.is_coherent()) {
 			let img = this.get();
 			u32 sc = DEFAULT_SCOPE;
@@ -207,31 +212,31 @@ public struct STex<T, Shape : __ITextureShape, C : Coherency = Incoherent, U : U
 	}
 }
 
-__generic<T> public typealias STex1D = STex<T, D1>;
-__generic<T> public typealias STex2D = STex<T, D2>;
-__generic<T> public typealias STex3D = STex<T, D3>;
+__generic<T : ITexelElement> public typealias STex1D = STex<T, D1>;
+__generic<T : ITexelElement> public typealias STex2D = STex<T, D2>;
+__generic<T : ITexelElement> public typealias STex3D = STex<T, D3>;
 
-__generic<T : __BuiltinArithmeticType, Shape : __ITextureShape, C : Coherency, U : Uniformity> public extension
-	STex<T, Shape, C, U> {
-	public T atomic_add(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
+__generic<T : ITexelElement & __BuiltinArithmeticType, S : __ITextureShape, C : Coherency,
+		  U : Uniformity> public extension STex<T, S, C, U> {
+	public T atomic_add(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
 						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 		return ::atomic_add(this.get()[pixel], value, sc, loc, se);
 	}
 
-	public T atomic_max(vector<u32, Shape.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
+	public T atomic_max(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
 						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 		return ::atomic_max(this.get()[pixel], value, sc, loc, se);
 	}
 }
 
-__generic<T, C : Coherency, U : Uniformity> public extension STex<T, D1, C, U> {
+__generic<T : ITexelElement, C : Coherency, U : Uniformity> public extension STex<T, D1, C, U> {
 	public u32 size() {
 		u32 w;
 		this.get().GetDimensions(w);
 		return w;
 	}
 }
-__generic<T, C : Coherency, U : Uniformity> public extension STex<T, D2, C, U> {
+__generic<T : ITexelElement, C : Coherency, U : Uniformity> public extension STex<T, D2, C, U> {
 	public u32x2 size() {
 		u32 w, h;
 		this.get().GetDimensions(w, h);
@@ -244,7 +249,7 @@ __generic<T, C : Coherency, U : Uniformity> public extension STex<T, D2, C, U> {
 		return u32x2(xy);
 	}
 }
-__generic<T, C : Coherency, U : Uniformity> public extension STex<T, D3, C, U> {
+__generic<T : ITexelElement, C : Coherency, U : Uniformity> public extension STex<T, D3, C, U> {
 	public u32x3 size() {
 		u32 w, h, d;
 		this.get().GetDimensions(w, h, d);

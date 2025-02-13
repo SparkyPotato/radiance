@@ -2,7 +2,6 @@ use ash::vk;
 use bytemuck::NoUninit;
 use rad_core::Engine;
 use rad_graph::{
-	c_str,
 	device::{
 		descriptor::{SamplerId, StorageImageId},
 		Device,
@@ -91,19 +90,19 @@ impl PathTracer {
 						.stages(&[
 							vk::PipelineShaderStageCreateInfo::default()
 								.stage(rgen.1)
-								.name(c_str!("main"))
+								.name(c"main")
 								.push_next(&mut vk::ShaderModuleCreateInfo::default().code(&rgen.0)),
 							vk::PipelineShaderStageCreateInfo::default()
 								.stage(miss.1)
-								.name(c_str!("main"))
+								.name(c"main")
 								.push_next(&mut vk::ShaderModuleCreateInfo::default().code(&miss.0)),
 							vk::PipelineShaderStageCreateInfo::default()
 								.stage(shadow.1)
-								.name(c_str!("main"))
+								.name(c"main")
 								.push_next(&mut vk::ShaderModuleCreateInfo::default().code(&shadow.0)),
 							vk::PipelineShaderStageCreateInfo::default()
 								.stage(hit.1)
-								.name(c_str!("main"))
+								.name(c"main")
 								.push_next(&mut vk::ShaderModuleCreateInfo::default().code(&hit.0)),
 						])
 						.groups(&[

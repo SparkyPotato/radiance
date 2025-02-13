@@ -1,9 +1,11 @@
 [workspace]
 members = [
 	"crates/*",
-	"ext/vek",
 	"ext/nvtt/nvtt",
 	"ext/nvtt/nvtt-sys",
+	"ext/slang-rs/",
+	"ext/slang-rs/slang-sys",
+	"ext/vek",
 ]
 resolver = "2"
 
@@ -30,6 +32,7 @@ rad-world = { path = "crates/rad-world" }
 rad-world-derive = { path = "crates/rad-world-derive" }
 
 # nvtt_rs = { path = "ext/nvtt/nvtt", features = ["cuda"] }
+slang = { path = "ext/slang-rs" }
 vek = { path = "ext/vek", features = ["bytemuck", "serde"] }
 
 ash = "0.38.0"
@@ -58,7 +61,6 @@ rspirv = "0.12.0"
 rustc-hash = "2.1.0"
 serde = "1.0.215"
 serde_json = "1.0.133"
-slang = { git = "https://github.com/SparkyPotato/slang-rs" }
 static_assertions = "1.1.0"
 syn = "2.0.89"
 quote = "1.0.37"
