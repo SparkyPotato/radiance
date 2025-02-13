@@ -62,9 +62,9 @@ void main(u32 tid: SV_DispatchThreadID) {
 		return;
 
 	let id = instance_id(tid);
-	let instance = Constants.instances[id];
-	let c = Cull(Constants.camera, instance, Constants.frame, Constants.res, 
-			     Constants.hzb, Constants.hzb_sampler);
-	if (c.in_frustum(instance.aabb))
-		write(c.unoccluded(instance.aabb), id);
+	let instance = &Constants.instances[id];
+	let c = Cull(Constants.camera, instance, Constants.frame, Constants.res, Constants.hzb, Constants.hzb_sampler);
+	let aabb = instance->aabb;
+	if (c.in_frustum(aabb))
+		write(c.unoccluded(aabb), id);
 }

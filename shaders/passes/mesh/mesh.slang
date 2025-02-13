@@ -29,7 +29,7 @@ public PushConstants Constants;
 struct Init {
 	u32 mid;
 	u8* mesh;
-	Meshlet meshlet;
+	Meshlet* meshlet;
 	f32x4x4 mvp;
 
 	__init(u32 gid, u32 gtid, constexpr bool hw) {
@@ -46,18 +46,18 @@ struct Init {
 			if (report_stats)
 				get_stats(Constants.stats)->sw_meshlets = Constants.queue.sw_count();
 		}
-		let instance = Constants.instances[p.instance];
-		this.mesh = instance.mesh;
-		this.meshlet = instance.meshlet(p.node_offset);
-		this.mvp = mul(Constants.camera[0].view_proj(), instance.transform.mat());
+		let instance = &Constants.instances[p.instance];
+		this.mesh = instance->mesh;
+		this.meshlet = instance->meshlet(p.node_offset);
+		this.mvp = mul(Constants.camera[0].view_proj(), instance->transform.mat());
 	}
 
 	VertexTransform transform(u32 gtid) {
-		return VertexTransform(this.mvp, this.meshlet.vertex(this.mesh, gtid));
+		return VertexTransform(this.mvp, this.meshlet->vertex(this.mesh, gtid));
 	}
 
 	u32x3 tri(u32 gtid) {
-		return this.meshlet.tri(this.mesh, gtid);
+		return this.meshlet->tri(this.mesh, gtid);
 	}
 }
 
@@ -73,8 +73,8 @@ groupshared f32x4 Pos[128];
 void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput vertices[128],
 		out indices u32x3 triangles[124], out primitives PrimitiveOutput visbuffer[124]) {
 	let init = Init(gid, gtid, true);
-	let vert_count = init.meshlet.vertex_count;
-	let tri_count = init.meshlet.tri_count;
+	let vert_count = init.meshlet->vertex_count;
+	let tri_count = init.meshlet->tri_count;
 	SetMeshOutputCounts(vert_count, tri_count);
 
 	let dim = f32x2(Constants.output.size());
@@ -114,8 +114,8 @@ void hw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex, out vertices VertexOutput 
 [numthreads(128, 1, 1)]
 void sw(u32 gid: SV_GroupID, u32 gtid: SV_GroupIndex) {
 	let init = Init(gid, gtid, false);
-	let vert_count = init.meshlet.vertex_count;
-	let tri_count = init.meshlet.tri_count;
+	let vert_count = init.meshlet->vertex_count;
+	let tri_count = init.meshlet->tri_count;
 	let dim = f32x2(Constants.output.size());
 
 	if (gtid < vert_count) {

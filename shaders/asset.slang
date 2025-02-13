@@ -105,12 +105,12 @@ public struct Instance<U : Uniformity = Uniform> {
 	public u8* mesh;
 	public Material<U>* material;
 
-	public BvhNode node(u32 offset) {
-		return *(BvhNode*)(this.mesh + offset);
+	public BvhNode* node(u32 offset) {
+		return (BvhNode*)(this.mesh + offset);
 	}
 
-	public Meshlet meshlet(u32 offset) {
-		return *(Meshlet*)(this.mesh + offset);
+	public Meshlet* meshlet(u32 offset) {
+		return (Meshlet*)(this.mesh + offset);
 	}
 
 	public Transform prev_transform(u64 frame) {

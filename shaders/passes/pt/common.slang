@@ -61,7 +61,7 @@ public struct HitPayload {
 	public bool specular;
 	public f32x3 b;
 	public f32x3 prev_hit_pos;
-	// chit -> rgen
+	// chit/miss -> rgen
 	public bool hit;
 }
 

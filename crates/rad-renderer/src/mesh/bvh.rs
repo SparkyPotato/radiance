@@ -13,7 +13,7 @@ use rad_graph::{
 use vek::Vec2;
 
 use crate::{
-	mesh::setup::Resources,
+	mesh::{setup::Resources, CullStats},
 	scene::{camera::GpuCamera, virtual_scene::GpuInstance},
 };
 
@@ -32,6 +32,7 @@ struct PushConstants {
 	queue: GpuPtr<u8>,
 	late: GpuPtr<u8>,
 	meshlet: GpuPtr<u8>,
+	stats: GpuPtr<CullStats>,
 	frame: u64,
 	res: Vec2<u32>,
 	ping: u32,
@@ -72,6 +73,7 @@ impl BvhCull {
 			}
 			resources.input_output(&mut pass, queue);
 			let meshlet = resources.output(&mut pass, resources.meshlet_queue);
+			let stats = resources.stats(&mut pass);
 
 			let hzb_sampler = resources.hzb_sampler;
 			// TODO: fix
@@ -85,6 +87,7 @@ impl BvhCull {
 					hzb_sampler,
 					queue: pass.get(queue).ptr(),
 					meshlet: pass.get(meshlet).ptr(),
+					stats: pass.get(stats).ptr(),
 					late: pass.get(late).ptr(),
 					frame,
 					res,

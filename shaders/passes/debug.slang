@@ -152,7 +152,7 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		}
 		case DebugVis.Normals: {
 			let basis = tri.tbn_basis();
-			let norm = tri.instance.material->normal.get();
+			let norm = tri.instance->material->normal.get();
 			let z = f32x4(0.f, 0.f, 1.f, 0.f);
 			let n = norm.load(norm.pixel_of_uv(tri.uv()), z).xyz;
 			col = abs(mul(basis, n));
@@ -165,7 +165,7 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		case DebugVis.Error: {
 			let res = Constants.read.size();
 			let cull = Cull(Constants.camera, tri.instance, 0, res, {}, {});
-			let error_over_dist = cull.error_over_dist(tri.meshlet.lod_bounds, tri.meshlet.error);
+			let error_over_dist = cull.error_over_dist(tri.meshlet->lod_bounds, tri.meshlet->error);
 			let thresh = cull.threshold_for_pix(1.f);
 			let error = error_over_dist / thresh;
 

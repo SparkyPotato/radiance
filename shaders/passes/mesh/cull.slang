@@ -18,6 +18,7 @@ public struct PassStats {
 public struct CullStats {
 	public PassStats early;
 	public PassStats late;
+	public u32 overflow;
 }
 
 public PassStats* get_stats(CullStats* stats) {
@@ -55,20 +56,30 @@ public struct BvhQueue {
 		return this.data->pointers[this.data->len - id - 1];
 	}
 
-	public void push_front(NodePointer pointer) {
+	public bool push_front(NodePointer pointer) {
 		let pos = wave_atomic_inc(this.data->front.count);
+		let other = atomic_load(this.data->back.count);
+		if (pos + other >= this.data->len)
+			return true;
+
 		let req = (pos + 1 + 7) >> 3;
 		if ((pos & 7) == 0)
 			wave_atomic_max(this.data->front.dispatch.x, req);
 		this.data->pointers[pos] = pointer;
+		return false;
 	}
 
-	public void push_back(NodePointer pointer) {
+	public bool push_back(NodePointer pointer) {
 		let pos = wave_atomic_inc(this.data->back.count);
+		let other = atomic_load(this.data->front.count);
+		if (pos + other >= this.data->len)
+			return true;
+
 		let req = (pos + 1 + 7) >> 3;
 		if ((pos & 7) == 0)
 			wave_atomic_max(this.data->back.dispatch.x, req);
 		this.data->pointers[this.data->len - pos - 1] = pointer;
+		return false;
 	}
 
 	public void done_front() {
@@ -97,8 +108,12 @@ public struct CandidateMeshletQueue {
 		return EARLY ? this.data->pointers[id] : this.data->pointers[this.data->len - id - 1];
 	}
 
-	public void push_early(NodePointer pointer, u32 count) {
+	public bool push_early(NodePointer pointer, u32 count) {
 		let base = wave_atomic_add(this.data->front.count, count);
+		let other = atomic_load(this.data->back.count);
+		if (base + other + count >= this.data->len)
+			return true;
+
 		let req = (base + count + 63) >> 6;
 		wave_atomic_max(this.data->front.dispatch.x, req);
 		let end = base + count;
@@ -106,10 +121,15 @@ public struct CandidateMeshletQueue {
 			this.data->pointers[i] = pointer;
 			pointer.node_offset += sizeof(Meshlet);
 		}
+		return false;
 	}
 
-	public void push_late(NodePointer pointer, u32 count) {
+	public bool push_late(NodePointer pointer, u32 count) {
 		let base = wave_atomic_add(this.data->back.count, count);
+		let other = atomic_load(this.data->front.count);
+		if (base + other + count >= this.data->len)
+			return true;
+
 		let req = (base + count + 63) >> 6;
 		wave_atomic_max(this.data->back.dispatch.x, req);
 		let start = this.data->len - base - count;
@@ -118,6 +138,7 @@ public struct CandidateMeshletQueue {
 			this.data->pointers[i] = pointer;
 			pointer.node_offset += sizeof(Meshlet);
 		}
+		return false;
 	}
 }
 
@@ -161,18 +182,29 @@ public struct MeshletQueue {
 		return this.data->pointers[this.sw_id(id)];
 	}
 
-	public void push_hw(NodePointer pointer) {
+	public bool push_hw(NodePointer pointer) {
 		if (EARLY)
 			wave_atomic_inc(this.data->early_hw);
 		let pos = wave_atomic_inc(this.data->hw.x);
-		this.data->pointers[this.hw_id(pos)] = pointer;
+		let id = this.hw_id(pos);
+		let other = atomic_load(this.data->sw.x);
+		if (id + other >= this.data->len)
+			return true;
+
+		this.data->pointers[id] = pointer;
+		return false;
 	}
 
-	public void push_sw(NodePointer pointer) {
+	public bool push_sw(NodePointer pointer) {
 		if (EARLY)
 			wave_atomic_inc(this.data->early_sw);
 		let pos = wave_atomic_inc(this.data->sw.x);
-		this.data->pointers[this.sw_id(pos)] = pointer;
+		let id = this.sw_id(pos);
+		let other = atomic_load(this.data->hw.x);
+		if (id + other >= this.data->len)
+			return true;
+
+		this.data->pointers[id] = pointer;
 	}
 }
 
@@ -261,11 +293,11 @@ public Camera occ_camera(Camera* cam) {
 		return cam[0];
 }
 
-public Transform occ_transform(Instance instance, u64 frame) {
+public Transform occ_transform(Instance* instance, u64 frame) {
 	if (EARLY)
-		return instance.prev_transform(frame);
+		return instance->prev_transform(frame);
 	else
-		return instance.transform;
+		return instance->transform;
 }
 
 public struct Cull {
@@ -280,10 +312,10 @@ public struct Cull {
 	Tex2D<f32> hzb;
 	Sampler hzb_sampler;
 
-	public __init(Camera* camera, Instance instance, u64 frame, u32x2 res, Tex2D<f32> hzb, Sampler hzb_sampler) {
+	public __init(Camera* camera, Instance* instance, u64 frame, u32x2 res, Tex2D<f32> hzb, Sampler hzb_sampler) {
 		Cull ret;
 
-		let transform = instance.transform;
+		let transform = instance->transform;
 		let trans_mat = transform.mat();
 		ret.scale = max3(transform.scale.x, transform.scale.y, transform.scale.z);
 		ret.min_scale = min3(transform.scale.x, transform.scale.y, transform.scale.z);

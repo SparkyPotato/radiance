@@ -1,5 +1,5 @@
 use ash::vk;
-use bytemuck::{NoUninit, PodInOption, ZeroableInOption};
+use bytemuck::{offset_of, NoUninit, PodInOption, ZeroableInOption};
 use rad_graph::{
 	device::descriptor::{SamplerId, StorageImageId},
 	graph::{
@@ -18,6 +18,7 @@ use rad_graph::{
 	resource::{Buffer, BufferHandle, Image, ImageView, Subresource},
 	sync::Shader,
 };
+use tracing::error;
 use vek::Vec2;
 
 use crate::{
@@ -231,19 +232,21 @@ impl Setup {
 			},
 		);
 
-		let count = 1024 * 1024u32;
 		let usage = BufferUsage::transfer_write();
 		let late_instances = pass.resource(
 			BufferDesc::gpu(((scene.instance_count as usize + 4) * std::mem::size_of::<u32>()) as _),
 			usage,
 		);
-		let desc = BufferDesc::gpu((count as u64 * 2 + 9) * std::mem::size_of::<u32>() as u64);
-		let bvh_queues = [(); 2].map(|_| pass.resource(desc, usage));
-		let meshlet_queue = pass.resource(desc, usage);
-		let meshlet_render = pass.resource(desc, usage);
+		let bvh_count = 2 * 1024 * 1024u32;
+		let meshlet_count = 32 * 1024 * 1024u32;
+		let render_count = 16 * 1024 * 1024u32;
+		let desc = |count| BufferDesc::gpu((count as u64 * 2 + 9) * std::mem::size_of::<u32>() as u64);
+		let bvh_queues = [(); 2].map(|_| pass.resource(desc(bvh_count), usage));
+		let meshlet_queue = pass.resource(desc(meshlet_count), usage);
+		let meshlet_render = pass.resource(desc(render_count), usage);
 		let stats = pass.resource(
 			BufferDesc::readback(std::mem::size_of::<CullStats>() as u64, self.stats_readback),
-			BufferUsage::none(),
+			BufferUsage::transfer_write(),
 		);
 
 		let desc = ImageDesc {
@@ -293,12 +296,20 @@ impl Setup {
 				pass.zero(d.hwsw);
 			}
 
-			for b in bvh_queues.into_iter().chain([meshlet_queue, meshlet_render]) {
+			for (b, count) in bvh_queues
+				.into_iter()
+				.map(|x| (x, bvh_count))
+				.chain([(meshlet_queue, meshlet_count), (meshlet_render, render_count)])
+			{
 				pass.update_buffer(b, 0, &[count, 0, 0, 1, 1, 0, 0, 1, 1]);
 			}
 			pass.update_buffer(late_instances, 0, &[0u32, 0, 1, 1]);
 
 			self.stats = pass.readback(stats, 0);
+			if self.stats.overflow != 0 {
+				error!("Cull queues overflowed");
+			}
+			pass.fill_buffer(stats, 0, offset_of!(self.stats, CullStats, overflow) as _, 4);
 		});
 
 		Resources {

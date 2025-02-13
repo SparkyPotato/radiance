@@ -120,6 +120,7 @@ pub struct PassStats {
 pub struct CullStats {
 	pub early: PassStats,
 	pub late: PassStats,
+	pub overflow: u32,
 }
 
 #[repr(C)]

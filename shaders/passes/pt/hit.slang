@@ -26,15 +26,16 @@ struct WorldTriHit {
 	f32 area;
 
 	__init(u32 instance, u32 tri, f32x2 b) {
-		let instance = Constants.instances[instance];
-		let iptr = (u32*)(instance.raw_mesh + instance.raw_vertex_count);
+		let instance = &Constants.instances[instance];
 		let i0 = tri * 3;
-		let v0 = instance.raw_mesh[iptr[i0 + 0]];
-		let v1 = instance.raw_mesh[iptr[i0 + 1]];
-		let v2 = instance.raw_mesh[iptr[i0 + 2]];
 		let bary = f32x3(1.f - (b.x + b.y), b.x, b.y);
 
-		let tmat = instance.transform.mat();
+		let iptr = (u32*)(instance->raw_mesh + instance->raw_vertex_count);
+		let v0 = instance->raw_mesh[iptr[i0 + 0]];
+		let v1 = instance->raw_mesh[iptr[i0 + 1]];
+		let v2 = instance->raw_mesh[iptr[i0 + 2]];
+
+		let tmat = instance->transform.mat();
 		this.v0 = { mul(tmat, f32x4(v0.position, 1.f)).xyz, v0.uv };
 		this.v1 = { mul(tmat, f32x4(v1.position, 1.f)).xyz, v1.uv };
 		this.v2 = { mul(tmat, f32x4(v2.position, 1.f)).xyz, v2.uv };
@@ -275,6 +276,8 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	if (any(el.L <= 0.f))
 		el.shadow.t = 0.f;
 
+	// We use the same payload even though we only need a single bool
+	// because otherwise the payload would have to be stored as live-state.
 	p.hit = true;
 	el.shadow.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,
 					1, p);

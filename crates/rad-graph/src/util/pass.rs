@@ -103,6 +103,15 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		}
 	}
 
+	pub fn fill_buffer(&mut self, res: Res<BufferHandle>, data: u32, offset: usize, size: usize) {
+		unsafe {
+			let res = self.get(res);
+			self.device
+				.device()
+				.cmd_fill_buffer(self.buf, res.buffer, offset as _, size as _, data);
+		}
+	}
+
 	pub fn copy_buffer(
 		&mut self, src: Res<BufferHandle>, dst: Res<BufferHandle>, src_offset: usize, dst_offset: usize, size: usize,
 	) {

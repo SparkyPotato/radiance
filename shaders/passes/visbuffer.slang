@@ -136,8 +136,8 @@ public struct VisBufferReader {
 // http://filmicworlds.com/blog/visibility-buffer-rendering-with-material-graphs/
 // TODO: all in model space
 public struct DecodedTri {
-	public Instance instance;
-	public Meshlet meshlet;
+	public Instance* instance;
+	public Meshlet* meshlet;
 	public Vertex v0;
 	public Vertex v1;
 	public Vertex v2;
@@ -146,14 +146,14 @@ public struct DecodedTri {
 	public f32x3 ddy;
 
 	public __init(Instance* instances, Camera cam, f32x2 uv, u32x2 size, VisBufferPixel p) {
-		this.instance = instances[p.meshlet.instance];
-		this.meshlet = instance.meshlet(p.meshlet.node_offset);
-		let mvp = mul(cam.view_proj(), this.instance.transform.mat());
+		this.instance = &instances[p.meshlet.instance];
+		this.meshlet = this.instance->meshlet(p.meshlet.node_offset);
+		let mvp = mul(cam.view_proj(), this.instance->transform.mat());
 
-		let t = this.meshlet.tri(this.instance.mesh, p.raw.triangle_id);
-		this.v0 = this.meshlet.vertex(this.instance.mesh, t.x);
-		this.v1 = this.meshlet.vertex(this.instance.mesh, t.y);
-		this.v2 = this.meshlet.vertex(this.instance.mesh, t.z);
+		let t = this.meshlet->tri(this.instance.mesh, p.raw.triangle_id);
+		this.v0 = this.meshlet->vertex(this.instance.mesh, t.x);
+		this.v1 = this.meshlet->vertex(this.instance.mesh, t.y);
+		this.v2 = this.meshlet->vertex(this.instance.mesh, t.z);
 		let v0 = VertexTransform(mvp, this.v0).clip;
 		let v1 = VertexTransform(mvp, this.v1).clip;
 		let v2 = VertexTransform(mvp, this.v2).clip;

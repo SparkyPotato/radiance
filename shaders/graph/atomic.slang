@@ -28,6 +28,20 @@ public static const Scope DEFAULT_SCOPE = Scope.Queue;
 public static const Sem DEFAULT_SEM = Sem.Relaxed;
 public static const Loc DEFAULT_LOC = Loc.None;
 
+public T atomic_load<T : __BuiltinArithmeticType>(__ref T ptr, constexpr Scope sc = DEFAULT_SCOPE,
+												  constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	u32 sem = loc | se;
+	if (__isUnsignedInt<T>() || __isInt<T>() || __isFloat<T>()) {
+		return spirv_asm {
+			OpCapability Int64Atomics;
+			result:$$T = OpAtomicLoad &ptr $sc $sem;
+		};
+	} else {
+		spirv_asm { "<invalid atomic_load>" };
+	}
+	return {};
+}
+
 public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
 												 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 	u32 sem = loc | se;
@@ -124,6 +138,29 @@ public T wave_atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, con
 	T ret;
 	if (WaveIsFirstLane())
 		ret = atomic_max(dest, max, sc, loc, se);
+	return WaveReadLaneFirst(ret);
+}
+
+public T atomic_or<T : __BuiltinIntegerType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+											 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	u32 sem = loc | se;
+	if (__isUnsignedInt<T>() || __isInt<T>()) {
+		return spirv_asm {
+			OpCapability Int64Atomics;
+			result:$$T = OpAtomicOr &dest $sc $sem $value;
+		};
+	} else {
+		spirv_asm { "<invalid atomic_or>" };
+	}
+	return {};
+}
+
+public T wave_atomic_or<T : __BuiltinIntegerType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+												  constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	let or = WaveActiveBitOr(value);
+	T ret;
+	if (WaveIsFirstLane())
+		ret = atomic_or(dest, or, sc, loc, se);
 	return WaveReadLaneFirst(ret);
 }
 
