@@ -9,8 +9,8 @@ use rad_graph::{
 		SamplerDesc,
 		ShaderInfo,
 	},
-	graph::{Frame, ImageDesc, ImageUsage, Res},
-	resource::ImageView,
+	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Res},
+	resource::{BufferHandle, GpuPtr, ImageView},
 	sync::Shader,
 	util::render::FullscreenPass,
 	Result,
@@ -28,10 +28,11 @@ pub struct TonyMcMapfaceTonemap {
 #[repr(C)]
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
+	exp: GpuPtr<f32>,
 	input: ImageId,
+	_pad: u32,
 	lut: ImageId,
 	sampler: SamplerId,
-	exp: f32,
 }
 
 impl TonyMcMapfaceTonemap {
@@ -65,10 +66,13 @@ impl TonyMcMapfaceTonemap {
 		})
 	}
 
-	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, exp: f32) -> Res<ImageView> {
+	pub fn run<'pass>(
+		&'pass self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, exp: Res<BufferHandle>,
+	) -> Res<ImageView> {
 		let mut pass = frame.pass("tony mcmapface tonemap");
 
 		pass.reference(input, ImageUsage::sampled_2d(Shader::Fragment));
+		pass.reference(exp, BufferUsage::read(Shader::Fragment));
 		let desc = pass.desc(input);
 		let out = pass.resource(
 			ImageDesc {
@@ -80,13 +84,15 @@ impl TonyMcMapfaceTonemap {
 
 		pass.build(move |mut pass| {
 			let input = pass.get(input).id.unwrap();
+			let exp = pass.get(exp).ptr();
 			self.pass.run_one(
 				&mut pass,
 				&PushConstants {
+					exp,
 					input,
+					_pad: 0,
 					lut: self.lut.view().id.unwrap(),
 					sampler: self.sampler,
-					exp,
 				},
 				out,
 			)

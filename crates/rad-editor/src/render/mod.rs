@@ -104,20 +104,20 @@ impl Renderer {
 								size: Vec2::new(size.x as u32, size.y as u32),
 							},
 						);
-						let exp = self.exposure.run(
+						let (exp, stats) = self.exposure.run(
 							frame,
 							hdr,
 							self.debug_window.exposure_compensation(),
 							ui.input(|x| x.stable_dt),
 						);
 						let img = match self.debug_window.tonemap() {
-							Tonemap::Aces => self.aces.run(frame, hdr, exp.exposure),
-							Tonemap::AgX => self.agx.run(frame, hdr, exp.exposure, AgXLook::default()),
-							Tonemap::AgXPunchy => self.agx.run(frame, hdr, exp.exposure, AgXLook::punchy()),
-							Tonemap::AgXFilmic => self.agx.run(frame, hdr, exp.exposure, AgXLook::filmic()),
-							Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, hdr, exp.exposure),
+							Tonemap::Aces => self.aces.run(frame, hdr, exp),
+							Tonemap::AgX => self.agx.run(frame, hdr, exp, AgXLook::default()),
+							Tonemap::AgXPunchy => self.agx.run(frame, hdr, exp, AgXLook::punchy()),
+							Tonemap::AgXFilmic => self.agx.run(frame, hdr, exp, AgXLook::filmic()),
+							Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, hdr, exp),
 						};
-						(img, None, Some((exp, s)))
+						(img, None, Some((stats, s)))
 					},
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(

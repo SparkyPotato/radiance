@@ -2,7 +2,7 @@ module common;
 
 // References:
 // A Scalable and Production Ready Sky and Atmosphere Rendering Technique
-// Doesn't implement extinction froxels, and is modified for flat earth.
+// Doesn't implement extinction froxels.
 //
 // https://sebh.github.io/publications/egsr2020.pdf
 // https://www.shadertoy.com/view/slSXRW
@@ -19,7 +19,7 @@ public static const f32x3 RAYLEIGH_SCATTERING_BASE = f32x3(5.802f, 13.558f, 33.1
 public static const f32 RAYLEIGH_ABSORPTION_BASE = 0.0f;
 public static const f32 MIE_SCATTERING_BASE = 3.996f;
 public static const f32 MIE_ABSORPTION_BASE = 0.444f;
-public static const f32x3 OZONE_ABSORPTION_BASE = f32x3(0.65f, 1.881f, 0.85f);
+public static const f32x3 OZONE_ABSORPTION_BASE = f32x3(0.65f, 1.881f, 0.085f);
 
 public f32 mie_phase(f32 cos) {
 	let g = 0.8f;

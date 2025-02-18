@@ -104,11 +104,13 @@ void exposure(u32 gid: SV_GroupIndex) {
 	}
 
 	if (gid == 1) {
+		let hist_sum = sum_histogram[0];
+		let hist_count = count_histogram[0];
 		f32 exposure;
-		if (sum == 0.f) {
+		if (hist_count == 0.f) {
 			exposure = 0.f;
 		} else {
-			let exp_bin = f32(sum_histogram[0]) / count_histogram[0];
+			let exp_bin = hist_sum / hist_count;
 			let log = (exp_bin - 1.0) / 254.0;
 			exposure = log * EConstants.exp_range + EConstants.min_exp;
 		}

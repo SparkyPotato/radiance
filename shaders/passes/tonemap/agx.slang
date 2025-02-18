@@ -19,21 +19,11 @@ static const f32x3x3 LINEAR_REC2020_TO_LINEAR_SRGB = transpose(
 static const f32x3x3 LINEAR_SRGB_TO_LINEAR_REC2020 =
 	transpose(float3x3(float3(0.6274, 0.0691, 0.0164), float3(0.3293, 0.9195, 0.0880), float3(0.0433, 0.0113, 0.8956)));
 
-struct AgX : Tonemap {
-	Tex2D<f32x4> input;
-	f32 exp;
+struct AgX : IFunc<f32x3, f32x3> {
 	f32x3 offset;
 	f32x3 slope;
 	f32x3 power;
 	f32 sat;
-
-	Tex2D<f32x4> src() {
-		return input;
-	}
-
-	f32 exposure() {
-		return exp;
-	}
 
 	f32x3 agx_contrast_approx(f32x3 x) {
 		let x2 = x * x;
@@ -49,7 +39,7 @@ struct AgX : Tonemap {
 		val = mul(AGX_IN_MAT, val);
 		val = clamp(log2(val), min_ev, max_ev);
 		val = (val - min_ev) / (max_ev - min_ev);
-		return this.agx_contrast_approx(val);
+		return agx_contrast_approx(val);
 	}
 
 	f32x3 agx_look(f32x3 val) {
@@ -65,15 +55,16 @@ struct AgX : Tonemap {
 		return clamp(val, 0.0f, 1.0f);
 	}
 
-	f32x3 map(f32x3 color) {
-		color = this.agx(color);
-		color = this.agx_look(color);
-		return this.agx_eotf(color);
+	f32x3 operator()(f32x3 color) {
+		color = agx(color);
+		color = agx_look(color);
+		return agx_eotf(color);
 	}
 }
 
 struct PushConstants {
-	AgX map;
+	TonemapInput i;
+	AgX agx;
 }
 
 [vk::push_constant]
@@ -81,5 +72,5 @@ PushConstants Constants;
 
 [shader("pixel")]
 f32x4 main(ScreenOutput input) : SV_Target0 {
-	return tonemap(input, Constants.map);
+	return tonemap(input, Constants.i, Constants.agx);
 }

@@ -23,19 +23,8 @@ f32x3 RRTAndODTFit(f32x3 v) {
 	return a / b;
 }
 
-struct Aces : Tonemap {
-	Tex2D<f32x4> input;
-	f32 exp;
-
-	Tex2D<f32x4> src() {
-		return input;
-	}
-
-	f32 exposure() {
-		return exp;
-	}
-
-	f32x3 map(f32x3 color) {
+struct Aces : IFunc<f32x3, f32x3> {
+	f32x3 operator()(f32x3 color) {
 		color = mul(ACESInputMat, color);
 		// Apply RRT and ODT
 		color = RRTAndODTFit(color);
@@ -47,13 +36,13 @@ struct Aces : Tonemap {
 }
 
 struct PushConstants {
-	Aces map;
+	TonemapInput i;
 }
 
 [vk::push_constant]
 PushConstants Constants;
 
 [shader("pixel")]
-f32x4 main(ScreenOutput input) : SV_Target0 {
-	return tonemap(input, Constants.map);
+f32x4 main(ScreenOutput s) : SV_Target0 {
+	return tonemap(s, Constants.i, Aces());
 }

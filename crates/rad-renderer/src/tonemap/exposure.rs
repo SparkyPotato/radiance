@@ -2,7 +2,7 @@ use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
 	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, Persist, Res},
-	resource::{Buffer, GpuPtr, ImageView},
+	resource::{Buffer, BufferHandle, GpuPtr, ImageView},
 	sync::Shader,
 	util::compute::ComputePass,
 	Result,
@@ -101,7 +101,7 @@ impl ExposureCalc {
 
 	pub fn run<'pass>(
 		&'pass mut self, frame: &mut Frame<'pass, '_>, input: Res<ImageView>, ec: f32, dt: f32,
-	) -> ExposureStats {
+	) -> (Res<BufferHandle>, ExposureStats) {
 		frame.start_region("exposure");
 
 		let Self {
@@ -202,12 +202,15 @@ impl ExposureCalc {
 
 		frame.end_region();
 
-		ExposureStats {
-			exposure: ret_exp,
-			target_exposure: target_exp,
-			scene_exposure: scene_exp,
-			histogram: hist,
-		}
+		(
+			exposure,
+			ExposureStats {
+				exposure: ret_exp,
+				target_exposure: target_exp,
+				scene_exposure: scene_exp,
+				histogram: hist,
+			},
+		)
 	}
 
 	pub unsafe fn destroy(self) { self.histogram.destroy(); }
