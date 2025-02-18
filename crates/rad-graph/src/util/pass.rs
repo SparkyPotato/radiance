@@ -3,7 +3,7 @@ use bytemuck::{bytes_of, cast_slice, from_bytes, NoUninit, Pod};
 
 use crate::{
 	arena::IteratorAlloc,
-	device::{ComputePipeline, GraphicsPipeline},
+	device::{ComputePipeline, GraphicsPipeline, RtPipeline},
 	graph::{BufferLoc, PassContext, Res, VirtualResource},
 	resource::{BufferHandle, ImageView, Subresource},
 };
@@ -52,6 +52,8 @@ impl ZeroableResource for ImageView {
 
 impl<'frame, 'graph> PassContext<'frame, 'graph> {
 	pub fn bind_compute(&mut self, pipe: &ComputePipeline) { pipe.bind(self.buf); }
+
+	pub fn bind_rt(&mut self, pipe: &RtPipeline) { pipe.bind(self.buf); }
 
 	pub fn push(&mut self, offset: usize, value: &impl NoUninit) {
 		unsafe {

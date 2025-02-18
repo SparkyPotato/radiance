@@ -4,7 +4,6 @@ use rad_graph::{
 	device::{
 		descriptor::{SamplerId, StorageImageId},
 		Device,
-		RtPipeline,
 		RtPipelineDesc,
 		RtShaderGroup,
 		SamplerDesc,
@@ -13,6 +12,7 @@ use rad_graph::{
 	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Persist, Res},
 	resource::{GpuPtr, Image, ImageView},
 	sync::Shader,
+	util::compute::RtPass,
 	Result,
 };
 use rand::{thread_rng, RngCore};
@@ -30,7 +30,7 @@ use crate::{
 
 // TODO: reset on world change and edit.
 pub struct PathTracer {
-	pipeline: RtPipeline,
+	pass: RtPass<PushConstants>,
 	sampler: SamplerId,
 	accum: Persist<Image>,
 	cached: Option<Vec2<u32>>,
@@ -59,39 +59,40 @@ struct PushConstants {
 
 impl PathTracer {
 	pub fn new(device: &Device) -> Result<Self> {
-		let pipeline = device.rt_pipeline(RtPipelineDesc {
-			shaders: &[
-				ShaderInfo {
-					shader: "passes.pt.gen.main",
-					spec: &[],
-				},
-				ShaderInfo {
-					shader: "passes.pt.miss.main",
-					spec: &[],
-				},
-				ShaderInfo {
-					shader: "passes.pt.shadow.main",
-					spec: &[],
-				},
-				ShaderInfo {
-					shader: "passes.pt.hit.main",
-					spec: &[],
-				},
-			],
-			groups: &[
-				RtShaderGroup::General(0),
-				RtShaderGroup::General(1),
-				RtShaderGroup::General(2),
-				RtShaderGroup::Triangles {
-					closest_hit: Some(3),
-					any_hit: None,
-				},
-			],
-			recursion_depth: 1,
-		})?;
-
 		Ok(Self {
-			pipeline,
+			pass: RtPass::new(
+				device,
+				RtPipelineDesc {
+					shaders: &[
+						ShaderInfo {
+							shader: "passes.pt.gen.main",
+							spec: &[],
+						},
+						ShaderInfo {
+							shader: "passes.pt.miss.main",
+							spec: &[],
+						},
+						ShaderInfo {
+							shader: "passes.pt.shadow.main",
+							spec: &[],
+						},
+						ShaderInfo {
+							shader: "passes.pt.hit.main",
+							spec: &[],
+						},
+					],
+					groups: &[
+						RtShaderGroup::General(0),
+						RtShaderGroup::General(1),
+						RtShaderGroup::General(2),
+						RtShaderGroup::Triangles {
+							closest_hit: Some(3),
+							any_hit: None,
+						},
+					],
+					recursion_depth: 1,
+				},
+			)?,
 			sampler: device.sampler(SamplerDesc::default()),
 			accum: Persist::new(),
 			cached: None,
@@ -152,9 +153,8 @@ impl PathTracer {
 			let camera = pass.get(camera.buf).ptr();
 			let sky = info.sky.to_gpu(&mut pass);
 
-			self.pipeline.bind(pass.buf);
-			pass.push(
-				0,
+			self.pass.trace(
+				&mut pass,
 				&PushConstants {
 					instances,
 					lights,
@@ -167,8 +167,10 @@ impl PathTracer {
 					light_count,
 					sky,
 				},
+				out.size.width,
+				out.size.height,
+				1,
 			);
-			self.pipeline.trace_rays(pass.buf, out.size.width, out.size.height, 1);
 
 			self.samples += 1;
 		});
@@ -176,5 +178,5 @@ impl PathTracer {
 		(out, s)
 	}
 
-	pub unsafe fn destroy(self) { self.pipeline.destroy(); }
+	pub unsafe fn destroy(self) { self.pass.destroy(); }
 }

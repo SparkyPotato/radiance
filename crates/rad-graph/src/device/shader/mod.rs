@@ -283,6 +283,15 @@ impl RtPipeline {
 		}
 	}
 
+	pub fn trace_rays_indirect(&self, buf: vk::CommandBuffer, addr: vk::DeviceAddress) {
+		unsafe {
+			let m = self.0.lock().unwrap();
+			self.1
+				.rt_ext()
+				.cmd_trace_rays_indirect(buf, &m.rgen, &m.miss, &m.hit, &m.callable, addr);
+		}
+	}
+
 	pub unsafe fn destroy(self) {
 		let mut m = self.0.lock().unwrap();
 		self.1.device().destroy_pipeline(m.pipeline, None);
@@ -775,8 +784,9 @@ impl ShaderRuntime {
 		}
 	}
 
-	fn get_shader(&self, info: ShaderInfo) -> Result<(Vec<u32>, vk::ShaderStageFlags), String> {
-		self.shared.lock().unwrap().compiler.get_shader(info)
+	#[track_caller]
+	pub fn create_graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> crate::Result<GraphicsPipeline> {
+		self.shared.lock().unwrap().create_graphics_pipeline(desc)
 	}
 
 	#[track_caller]
