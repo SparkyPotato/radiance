@@ -51,7 +51,7 @@ impl ZeroableResource for ImageView {
 }
 
 impl<'frame, 'graph> PassContext<'frame, 'graph> {
-	pub fn bind_compute(&mut self, pipe: &ComputePipeline) { pipe.bind(self.device, self.buf); }
+	pub fn bind_compute(&mut self, pipe: &ComputePipeline) { pipe.bind(self.buf); }
 
 	pub fn push(&mut self, offset: usize, value: &impl NoUninit) {
 		unsafe {
@@ -348,7 +348,7 @@ impl Drop for RenderPass<'_, '_, '_> {
 }
 
 impl RenderPass<'_, '_, '_> {
-	pub fn bind_graphics(&mut self, pipe: &GraphicsPipeline) { pipe.bind(self.pass.device, self.pass.buf); }
+	pub fn bind_graphics(&mut self, pipe: &GraphicsPipeline) { pipe.bind(self.pass.buf); }
 
 	pub fn push(&mut self, offset: usize, value: &impl NoUninit) { self.pass.push(offset, value); }
 

@@ -1,4 +1,5 @@
 use std::{
+	cell::UnsafeCell,
 	ffi::CStr,
 	mem::ManuallyDrop,
 	sync::{Arc, Mutex},
@@ -121,27 +122,27 @@ impl<'a> DeviceBuilder<'a> {
 		let rt_ext = khr::ray_tracing_pipeline::Device::new(&instance, &device);
 
 		let descriptors = Descriptors::new(&device)?;
+		let dev = Device {
+			inner: Arc::new(DeviceInner {
+				entry,
+				instance,
+				as_ext,
+				debug_utils_ext,
+				surface_ext,
+				physical_device,
+				queues,
+				allocator: ManuallyDrop::new(Mutex::new(allocator)),
+				shaders: UnsafeCell::new(None),
+				rt_ext,
+				descriptors,
+				samplers: Mutex::new(Samplers::new()),
+				device,
+			}),
+		};
+		let shaders = ShaderRuntime::new(dev.clone());
+		unsafe { *dev.inner.shaders.get() = Some(shaders) };
 
-		Ok((
-			Device {
-				inner: Arc::new(DeviceInner {
-					entry,
-					instance,
-					as_ext,
-					rt_ext,
-					debug_utils_ext,
-					surface_ext,
-					physical_device,
-					queues,
-					allocator: ManuallyDrop::new(Mutex::new(allocator)),
-					shaders: ManuallyDrop::new(ShaderRuntime::new(&device, descriptors.layout())),
-					descriptors,
-					samplers: Mutex::new(Samplers::new()),
-					device,
-				}),
-			},
-			s,
-		))
+		Ok((dev, s))
 	}
 
 	fn load_entry() -> Result<ash::Entry> {

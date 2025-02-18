@@ -1,5 +1,3 @@
-#![feature(trait_upcasting)]
-
 use std::{
 	any::TypeId,
 	io,

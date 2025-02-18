@@ -1,6 +1,7 @@
 //! An abstraction over a raw Vulkan device.
 
 use std::{
+	cell::UnsafeCell,
 	mem::ManuallyDrop,
 	sync::{Arc, Mutex, MutexGuard},
 };
@@ -23,7 +24,16 @@ pub use crate::device::{
 		Transfer,
 	},
 	sampler::SamplerDesc,
-	shader::{ComputePipeline, GraphicsPipeline, GraphicsPipelineDesc, HotreloadStatus, ShaderInfo},
+	shader::{
+		ComputePipeline,
+		GraphicsPipeline,
+		GraphicsPipelineDesc,
+		HotreloadStatus,
+		RtPipeline,
+		RtPipelineDesc,
+		RtShaderGroup,
+		ShaderInfo,
+	},
 };
 use crate::{
 	device::{
@@ -50,12 +60,14 @@ struct DeviceInner {
 	debug_utils_ext: Option<ext::debug_utils::Device>,
 	queues: Queues<QueueData>,
 	allocator: ManuallyDrop<Mutex<Allocator>>,
-	shaders: ManuallyDrop<ShaderRuntime>,
+	shaders: UnsafeCell<Option<ShaderRuntime>>,
 	descriptors: Descriptors,
 	samplers: Mutex<Samplers>,
 	instance: ash::Instance,
 	entry: ash::Entry,
 }
+unsafe impl Send for DeviceInner {}
+unsafe impl Sync for DeviceInner {}
 
 /// Has everything you need to do Vulkan stuff.
 #[derive(Clone)]
@@ -66,21 +78,34 @@ pub struct Device {
 impl Device {
 	#[track_caller]
 	pub fn graphics_pipeline(&self, desc: GraphicsPipelineDesc) -> Result<GraphicsPipeline> {
-		self.inner.shaders.create_graphics_pipeline(desc).map_err(Into::into)
+		unsafe {
+			(*self.inner.shaders.get())
+				.as_ref()
+				.unwrap()
+				.create_graphics_pipeline(desc)
+		}
 	}
 
 	#[track_caller]
 	pub fn compute_pipeline(&self, shader: ShaderInfo) -> Result<ComputePipeline> {
-		self.inner.shaders.create_compute_pipeline(shader).map_err(Into::into)
+		unsafe {
+			(*self.inner.shaders.get())
+				.as_ref()
+				.unwrap()
+				.create_compute_pipeline(shader)
+		}
 	}
 
-	pub fn get_shader(&self, info: ShaderInfo) -> std::result::Result<(Vec<u32>, vk::ShaderStageFlags), String> {
-		self.inner.shaders.get_shader(info)
+	#[track_caller]
+	pub fn rt_pipeline(&self, desc: RtPipelineDesc) -> Result<RtPipeline> {
+		unsafe { (*self.inner.shaders.get()).as_ref().unwrap().create_rt_pipeline(desc) }
 	}
 
 	pub fn layout(&self) -> vk::PipelineLayout { self.inner.descriptors.layout() }
 
-	pub fn hotreload_status(&self) -> HotreloadStatus { self.inner.shaders.status() }
+	pub fn hotreload_status(&self) -> HotreloadStatus {
+		unsafe { (*self.inner.shaders.get()).as_ref().unwrap().status() }
+	}
 
 	pub fn entry(&self) -> &ash::Entry { &self.inner.entry }
 
@@ -145,13 +170,12 @@ impl Drop for DeviceInner {
 		unsafe {
 			// Drop the allocator before the device.
 			ManuallyDrop::drop(&mut self.allocator);
-			ManuallyDrop::drop(&mut self.shaders);
+			self.shaders.get().drop_in_place();
 			self.samplers.get_mut().unwrap().cleanup(&self.device);
 			self.descriptors.cleanup(&self.device);
 			self.queues.map_ref(|x| x.destroy(&self.device));
 
 			self.device.destroy_device(None);
-
 			self.instance.destroy_instance(None);
 		}
 	}
