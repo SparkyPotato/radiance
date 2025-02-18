@@ -91,7 +91,7 @@ impl<T: AssetSource> AssetSource for Arc<T> {
 
 struct Kitchen {
 	base: Uuid,
-	layout: Layout,
+	base_layout: Layout,
 	cook: fn(base: *const (), out: *mut ()),
 }
 type ErasedAssetLoad = fn(from: Box<dyn AssetRead>, out: *mut ()) -> Result<(), io::Error>;
@@ -139,7 +139,7 @@ impl AssetRegistry {
 			T::UUID,
 			Kitchen {
 				base: T::Base::UUID,
-				layout: Layout::new::<T>(),
+				base_layout: Layout::new::<T::Base>(),
 				cook: |base, out| {
 					let base = unsafe { &*(base as *const T::Base) };
 					let out = out as *mut T;
@@ -201,19 +201,16 @@ impl AssetRegistry {
 
 		if let Some(kitchen) = self.kitchens.get(&ty) {
 			if !self.cook_at_runtime {
-				warn!(
-					"runtime cooking is disabled, but asset (id={}, ty={}) not found, cooking at runtime instead",
-					id, ty
-				);
+				warn!("asset (id={id}, ty={ty}) not found, so must be cooked at runtime");
 			}
 
-			let base = unsafe { std::alloc::alloc(kitchen.layout) as _ };
+			let base = unsafe { std::alloc::alloc(kitchen.base_layout) as _ };
 			if let Err(e) = self.load_dynamic(id, kitchen.base, base) {
-				unsafe { std::alloc::dealloc(base as _, kitchen.layout) };
+				unsafe { std::alloc::dealloc(base as _, kitchen.base_layout) };
 				return Err(e);
 			}
 			self.cook_dynamic(id, ty, base, into);
-			unsafe { std::alloc::dealloc(base as _, kitchen.layout) };
+			unsafe { std::alloc::dealloc(base as _, kitchen.base_layout) };
 			return Ok(());
 		}
 
