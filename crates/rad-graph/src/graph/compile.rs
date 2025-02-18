@@ -25,7 +25,7 @@ use crate::{
 		ImageDesc,
 		RenderGraph,
 	},
-	resource::{BufferHandle, Subresource},
+	resource::{BufferHandle, BufferType, Subresource},
 	sync::{
 		as_next_access,
 		as_previous_access,
@@ -246,7 +246,7 @@ impl<'graph> ResourceAliaser<'graph> {
 
 	fn is_buffer_merge_candidate(data: &BufferData) -> bool {
 		data.handle.buffer == vk::Buffer::null()
-			&& matches!(data.desc.loc, BufferLoc::GpuOnly)
+			&& matches!(data.desc.loc, BufferLoc::Gpu)
 			&& data.desc.persist.is_none()
 	}
 
@@ -325,10 +325,27 @@ impl<'graph> ResourceAliaser<'graph> {
 					if data.handle.buffer == vk::Buffer::null() {
 						let desc = crate::resource::BufferDescUnnamed {
 							size: data.desc.size,
-							readback: matches!(data.desc.loc, BufferLoc::Readback),
+							ty: match data.desc.loc {
+								BufferLoc::Upload => BufferType::Gpu,
+								BufferLoc::Staging => BufferType::Staging,
+								BufferLoc::Gpu => BufferType::Gpu,
+								BufferLoc::Readback => BufferType::Readback,
+							},
 						};
 						(data.handle, data.uninit) = match (data.desc.loc, data.desc.persist) {
-							(BufferLoc::GpuOnly, Some(persist)) => {
+							(BufferLoc::Upload, x) => {
+								assert!(x.is_none(), "cannot persist upload buffers");
+								graph.caches.upload_buffers[graph.curr_frame]
+									.get(device, desc)
+									.expect("failed to allocated graph buffer")
+							},
+							(BufferLoc::Staging, x) => {
+								assert!(x.is_none(), "cannot persist staging buffers");
+								graph.caches.upload_buffers[graph.curr_frame]
+									.get(device, desc)
+									.expect("failed to allocated graph buffer")
+							},
+							(BufferLoc::Gpu, Some(persist)) => {
 								let x = graph
 									.caches
 									.persistent_buffers
@@ -336,17 +353,12 @@ impl<'graph> ResourceAliaser<'graph> {
 									.expect("failed to allocated graph buffer");
 								(x.0, x.1)
 							},
-							(BufferLoc::GpuOnly, None) => graph
+							(BufferLoc::Gpu, None) => graph
 								.caches
 								.buffers
 								.get(device, desc)
 								.expect("failed to allocated graph buffer"),
-							(BufferLoc::Upload, x) => {
-								assert!(x.is_none(), "cannot persist upload buffers");
-								graph.caches.upload_buffers[graph.curr_frame]
-									.get(device, desc)
-									.expect("failed to allocated graph buffer")
-							},
+
 							(BufferLoc::Readback, x) => {
 								let persist = x.expect("readback buffers must be persistent");
 								let x = graph.caches.readback_buffers[graph.curr_frame]

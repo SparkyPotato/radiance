@@ -13,7 +13,7 @@ use rad_core::{
 };
 use rad_graph::{
 	device::descriptor::ImageId,
-	resource::{Buffer, BufferDesc, GpuPtr, Resource},
+	resource::{Buffer, BufferDesc, BufferType, GpuPtr, Resource},
 };
 use rad_world::Uuid;
 use tracing::trace_span;
@@ -138,7 +138,7 @@ impl MaterialBuffers {
 					BufferDesc {
 						name: "materials",
 						size: Self::BUFFER_SIZE * Self::MATERIAL_SIZE,
-						readback: false,
+						ty: BufferType::Gpu,
 					},
 				)
 				.unwrap(),

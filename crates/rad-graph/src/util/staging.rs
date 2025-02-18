@@ -17,11 +17,11 @@ impl<T: NoUninit, A: Allocator> AsRef<[u8]> for ByteReader<T, A> {
 impl<'pass, 'graph> Frame<'pass, 'graph> {
 	/// Stage some data into a GPU resource
 	///
-	/// TODO: Allow using the transfer queue and use a staging buffer instead of an upload buffer.
+	/// TODO: Allow using the transfer queue.
 	pub fn stage_buffer(&mut self, name: &str, dst: Res<BufferHandle>, offset: u64, data: impl AsRef<[u8]> + 'pass) {
 		let mut pass = self.pass(name);
 		let staging = pass.resource(
-			BufferDesc::upload(data.as_ref().len() as _),
+			BufferDesc::staging(data.as_ref().len() as _),
 			BufferUsage::transfer_read(),
 		);
 		pass.reference(dst, BufferUsage::transfer_write());
@@ -33,7 +33,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	) -> Res<BufferHandle> {
 		let mut pass = self.pass(name);
 		let staging = pass.resource(
-			BufferDesc::upload(data.as_ref().len() as _),
+			BufferDesc::staging(data.as_ref().len() as _),
 			BufferUsage::transfer_read(),
 		);
 		let dst = pass.resource(dst, BufferUsage::transfer_write());
@@ -47,7 +47,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	pub fn stage_image(&mut self, name: &str, dst: Res<ImageView>, stage: ImageCopy, data: impl AsRef<[u8]> + 'pass) {
 		let mut pass = self.pass(name);
 		let staging = pass.resource(
-			BufferDesc::upload(data.as_ref().len() as _),
+			BufferDesc::staging(data.as_ref().len() as _),
 			BufferUsage::transfer_read(),
 		);
 		pass.reference(dst, ImageUsage::transfer_write());
@@ -59,7 +59,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 	) -> Res<ImageView> {
 		let mut pass = self.pass(name);
 		let staging = pass.resource(
-			BufferDesc::upload(data.as_ref().len() as _),
+			BufferDesc::staging(data.as_ref().len() as _),
 			BufferUsage::transfer_read(),
 		);
 		let dst = pass.resource(desc, ImageUsage::transfer_write());

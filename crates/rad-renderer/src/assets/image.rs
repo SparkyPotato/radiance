@@ -12,7 +12,18 @@ use rad_core::{
 use rad_graph::{
 	cmd::CommandPool,
 	device::{descriptor::ImageId, Device, QueueWait, Transfer},
-	resource::{Buffer, BufferDesc, Image, ImageDesc, ImageView, ImageViewDesc, ImageViewUsage, Resource, Subresource},
+	resource::{
+		Buffer,
+		BufferDesc,
+		BufferType,
+		Image,
+		ImageDesc,
+		ImageView,
+		ImageViewDesc,
+		ImageViewUsage,
+		Resource,
+		Subresource,
+	},
 	sync::{get_image_barrier, ImageBarrier, UsageType},
 };
 use tracing::trace_span;
@@ -143,13 +154,12 @@ impl ImageAssetView {
 				usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
 			},
 		)?;
-		// TODO: not device local
 		let staging = Buffer::create(
 			device,
 			BufferDesc {
 				name: &format!("{name} staging buffer"),
 				size: data.data.len() as _,
-				readback: false,
+				ty: BufferType::Staging,
 			},
 		)?;
 		unsafe {

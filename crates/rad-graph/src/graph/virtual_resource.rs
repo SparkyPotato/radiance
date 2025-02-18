@@ -23,7 +23,8 @@ use crate::{
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
 pub enum BufferLoc {
 	Upload,
-	GpuOnly,
+	Staging,
+	Gpu,
 	Readback,
 }
 
@@ -46,10 +47,18 @@ impl BufferDesc {
 		}
 	}
 
+	pub fn staging(size: u64) -> Self {
+		Self {
+			size,
+			loc: BufferLoc::Staging,
+			persist: None,
+		}
+	}
+
 	pub fn gpu(size: u64) -> Self {
 		Self {
 			size,
-			loc: BufferLoc::GpuOnly,
+			loc: BufferLoc::Gpu,
 			persist: None,
 		}
 	}
@@ -566,7 +575,7 @@ impl VirtualResourceDesc for ExternalBuffer {
 		VirtualResourceType::Buffer(BufferData {
 			desc: BufferDesc {
 				size: self.handle.data.len() as _,
-				loc: BufferLoc::GpuOnly,
+				loc: BufferLoc::Gpu,
 				persist: None,
 			},
 			handle: self.handle,

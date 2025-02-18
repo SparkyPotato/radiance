@@ -1,6 +1,7 @@
 [workspace]
 members = [
 	"crates/*",
+	"ext/gpu-allocator",
 	"ext/nvtt/nvtt",
 	"ext/nvtt/nvtt-sys",
 	"ext/slang-rs/",
@@ -31,6 +32,7 @@ rad-window = { path = "crates/rad-window" }
 rad-world = { path = "crates/rad-world" }
 rad-world-derive = { path = "crates/rad-world-derive" }
 
+gpu-allocator = { path = "ext/gpu-allocator" }
 # nvtt_rs = { path = "ext/nvtt/nvtt", features = ["cuda"] }
 slang = { path = "ext/slang-rs" }
 vek = { path = "ext/vek", features = ["bytemuck", "serde"] }
@@ -45,7 +47,6 @@ egui = { version = "0.30.0" }
 egui_plot = { version = "0.30.0" }
 egui-winit = { version = "0.30.0" }
 gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength", "KHR_lights_punctual"] }
-gpu-allocator = { git = "https://github.com/Traverse-Research/gpu-allocator", features = ["vulkan", "visualizer"] }
 hashbrown = { version = "0.14.5", features = ["nightly"] }
 metis = "0.2.1"
 meshopt = { git = "https://github.com/SparkyPotato/meshopt-rs" }

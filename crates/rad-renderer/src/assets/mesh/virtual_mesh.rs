@@ -16,7 +16,7 @@ use rad_core::{
 };
 use rad_graph::{
 	device::Device,
-	resource::{Buffer, BufferDesc, GpuPtr, Resource},
+	resource::{Buffer, BufferDesc, BufferType, GpuPtr, Resource},
 };
 use rad_world::Uuid;
 use rayon::iter::{IntoParallelIterator, ParallelIterator};
@@ -904,7 +904,7 @@ impl AssetView for VirtualMeshView {
 			BufferDesc {
 				name: &format!("{name} buffer"),
 				size,
-				readback: false,
+				ty: BufferType::Gpu,
 			},
 		)
 		.map_err(|x| io::Error::new(io::ErrorKind::Other, format!("failed to create mesh buffer: {:?}", x)))?;

@@ -311,7 +311,7 @@ impl Renderer {
 
 			let mut pass = frame.pass("upload egui image");
 			let staging = pass.resource(
-				BufferDesc::upload(vec.as_ref().len() as _),
+				BufferDesc::staging(vec.as_ref().len() as _),
 				BufferUsage::transfer_read(),
 			);
 			let img = pass.resource(
@@ -323,6 +323,7 @@ impl Renderer {
 				},
 				ImageUsage::transfer_write(),
 			);
+			// TODO: transfer queue
 			pass.build(move |mut pass| {
 				pass.write(staging, 0, vec.as_ref());
 				pass.copy_buffer_to_image(

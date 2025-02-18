@@ -10,7 +10,7 @@ use rad_graph::{
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
-struct PushConstants {
+struct HPushConstants {
 	histogram: GpuPtr<u32>,
 	input: ImageId,
 	min_exp: f32,
@@ -18,10 +18,26 @@ struct PushConstants {
 	_pad: u32,
 }
 
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+struct EPushConstants {
+	histogram: GpuPtr<u32>,
+	exposure: GpuPtr<f32>,
+	histogram_min: f32,
+	histogram_max: f32,
+	compensation: f32,
+	min_exp: f32,
+	exp_range: f32,
+	lerp_coeff: f32,
+}
+
 pub struct ExposureCalc {
-	histogram: ComputePass<PushConstants>,
+	histogram: ComputePass<HPushConstants>,
+	exposure: ComputePass<EPushConstants>,
+	exposure_value: Persist<Buffer>,
 	histogram_readback: Persist<Buffer>,
-	exposure: f32,
+	exposure_readback: Persist<Buffer>,
+	curr_exposure: f32,
 	target_exposure: f32,
 	scene_exposure: f32,
 	read_histogram: [u32; 256],
@@ -38,7 +54,7 @@ impl ExposureCalc {
 	pub const MAX_EXPOSURE: f32 = 18.0;
 	pub const MAX_HISTOGRAM_RANGE: f32 = 0.95;
 	pub const MIN_EXPOSURE: f32 = -6.0;
-	pub const MIN_HISTOGRAM_RANGE: f32 = 0.8;
+	pub const MIN_HISTOGRAM_RANGE: f32 = 0.6;
 
 	pub fn bin_to_exposure(bin: f32) -> f32 {
 		let log = (bin - 1.0) / 254.0;
@@ -66,8 +82,17 @@ impl ExposureCalc {
 					spec: &[],
 				},
 			)?,
+			exposure: ComputePass::new(
+				device,
+				ShaderInfo {
+					shader: "passes.tonemap.exposure.exposure",
+					spec: &[],
+				},
+			)?,
+			exposure_value: Persist::new(),
 			histogram_readback: Persist::new(),
-			exposure: 0.0,
+			exposure_readback: Persist::new(),
+			curr_exposure: 0.0,
 			target_exposure: 0.0,
 			scene_exposure: 0.0,
 			read_histogram: [0; 256],
@@ -81,8 +106,11 @@ impl ExposureCalc {
 
 		let Self {
 			histogram: hist,
+			exposure: exp,
+			exposure_value,
 			histogram_readback,
-			exposure,
+			exposure_readback,
+			curr_exposure,
 			target_exposure,
 			scene_exposure,
 			read_histogram,
@@ -90,9 +118,18 @@ impl ExposureCalc {
 
 		let histogram_size = std::mem::size_of::<u32>() as u64 * 256;
 
-		let mut pass = frame.pass("zero histogram");
+		let mut pass = frame.pass("zero data");
 		let histogram = pass.resource(BufferDesc::gpu(histogram_size), BufferUsage::transfer_write());
-		pass.build(move |mut pass| pass.zero(histogram));
+		let exposure = pass.resource(
+			BufferDesc::gpu(std::mem::size_of::<f32>() as u64 * 3).persist(*exposure_value),
+			BufferUsage::transfer_write(),
+		);
+		pass.build(move |mut pass| {
+			pass.zero(histogram);
+			if pass.is_uninit(exposure) {
+				pass.zero(exposure);
+			}
+		});
 
 		let mut pass = frame.pass("generate histogram");
 		pass.reference(input, ImageUsage::sampled_2d(Shader::Compute));
@@ -103,7 +140,7 @@ impl ExposureCalc {
 			let histogram = pass.get(histogram).ptr();
 			hist.dispatch(
 				&mut pass,
-				&PushConstants {
+				&HPushConstants {
 					histogram,
 					input,
 					min_exp: Self::MIN_EXPOSURE,
@@ -116,57 +153,51 @@ impl ExposureCalc {
 			)
 		});
 
-		let mut pass = frame.pass("readback histogram");
+		let mut pass = frame.pass("calc exposure");
+		pass.reference(histogram, BufferUsage::read(Shader::Compute));
+		pass.reference(exposure, BufferUsage::read_write(Shader::Compute));
+		pass.build(move |mut pass| {
+			let histogram = pass.get(histogram).ptr();
+			let exposure = pass.get(exposure).ptr();
+			exp.dispatch(
+				&mut pass,
+				&EPushConstants {
+					histogram,
+					exposure,
+					histogram_min: Self::MIN_HISTOGRAM_RANGE,
+					histogram_max: Self::MAX_HISTOGRAM_RANGE,
+					compensation: ec,
+					min_exp: Self::MIN_EXPOSURE,
+					exp_range: Self::MAX_EXPOSURE - Self::MIN_EXPOSURE,
+					lerp_coeff: (1.0 - (-1.2 * dt).exp()).clamp(0.0, 1.0),
+				},
+				1,
+				1,
+				1,
+			);
+		});
+
+		let mut pass = frame.pass("readback exposure");
+		pass.reference(histogram, BufferUsage::transfer_read());
+		pass.reference(exposure, BufferUsage::transfer_read());
 		let histogram_read = pass.resource(
 			BufferDesc::readback(histogram_size, *histogram_readback),
 			BufferUsage::transfer_write(),
 		);
-		pass.reference(histogram, BufferUsage::transfer_read());
+		let exposure_read = pass.resource(
+			BufferDesc::readback(std::mem::size_of::<f32>() as u64 * 3, *exposure_readback),
+			BufferUsage::transfer_write(),
+		);
 
-		let ret_exp = *exposure;
+		let ret_exp = *curr_exposure;
 		let target_exp = *target_exposure;
 		let scene_exp = *scene_exposure;
 		let hist = *read_histogram;
 		pass.build(move |mut pass| {
 			pass.copy_full_buffer(histogram, histogram_read, 0);
 			*read_histogram = pass.readback(histogram_read, 0);
-
-			let total: u32 = read_histogram.iter().skip(1).sum();
-			let range_start = total as f32 * Self::MIN_HISTOGRAM_RANGE;
-			let range_end = total as f32 * Self::MAX_HISTOGRAM_RANGE;
-			let mut seen = 0.0;
-			let mut sum = 0.0;
-			let mut weight = 0.0;
-			for (i, &count) in read_histogram.iter().enumerate().skip(1) {
-				let count = count as f32;
-				let with_count = seen + count;
-				if with_count >= range_end {
-					let s = range_end - seen;
-					weight += i as f32 * s;
-					sum += s;
-					break;
-				}
-				if with_count >= range_start {
-					let s = (with_count - range_start).min(count);
-					weight += i as f32 * s;
-					sum += s;
-				}
-				seen = with_count;
-			}
-
-			if sum == 0.0 {
-				*target_exposure = *exposure;
-				return;
-			}
-
-			let exp_bin = weight / sum;
-			let log = (exp_bin - 1.0) / 254.0;
-			*scene_exposure = log * (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE) + Self::MIN_EXPOSURE;
-			let comp = Self::exposure_compensation(*scene_exposure);
-			*target_exposure = *scene_exposure - (comp + ec);
-
-			let lerp = (1.0 - (-1.2 * dt).exp()).clamp(0.0, 1.0);
-			*exposure = (1.0 - lerp) * *exposure + lerp * *target_exposure;
+			pass.copy_full_buffer(exposure, exposure_read, 0);
+			[*curr_exposure, *target_exposure, *scene_exposure] = pass.readback(exposure_read, 0);
 		});
 
 		frame.end_region();

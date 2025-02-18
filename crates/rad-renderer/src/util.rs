@@ -4,7 +4,7 @@ use bytemuck::{bytes_of, NoUninit};
 use rad_graph::{
 	device::Device,
 	graph::{BufferUsage, ExternalBuffer, Frame, Res},
-	resource::{Buffer, BufferDesc, BufferHandle, Resource},
+	resource::{Buffer, BufferDesc, BufferHandle, BufferType, Resource},
 	Result,
 };
 
@@ -36,7 +36,7 @@ impl ResizableBuffer {
 				BufferDesc {
 					name,
 					size,
-					readback: false,
+					ty: BufferType::Gpu,
 				},
 			)?,
 			name: name.to_string(),
@@ -57,7 +57,7 @@ impl ResizableBuffer {
 					BufferDesc {
 						name: &self.name,
 						size: s,
-						readback: false,
+						ty: BufferType::Gpu,
 					},
 				)?,
 			);

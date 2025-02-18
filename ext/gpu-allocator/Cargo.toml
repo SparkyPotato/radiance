@@ -1,0 +1,46 @@
+[package]
+name = "gpu-allocator"
+version = "0.27.0"
+authors = ["Traverse Research <opensource@traverseresearch.nl>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Memory allocator for GPU memory in Vulkan and DirectX 12"
+categories = ["rendering", "rendering::graphics-api"]
+homepage = "https://github.com/Traverse-Research/gpu-allocator"
+repository = "https://github.com/Traverse-Research/gpu-allocator"
+keywords = ["vulkan", "memory", "allocator"]
+documentation = "https://docs.rs/gpu-allocator/"
+rust-version = "1.71"
+
+include = [
+    "/README.md",
+    "/LICENSE-*",
+    "/src",
+    "/examples",
+]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[dependencies]
+log = "0.4"
+thiserror = "1.0"
+presser = { version = "0.3" }
+# Only needed for Vulkan.  Disable all default features as good practice,
+# such as the ability to link/load a Vulkan library.
+ash = { version = "0.38", default-features = false, features = ["debug"] }
+# Only needed for visualizer.
+egui = { version = ">=0.24, <=0.27", optional = true, default-features = false }
+egui_extras = { version = ">=0.24, <=0.27", optional = true, default-features = false }
+
+[dev-dependencies]
+# Enable the "loaded" feature to be able to access the Vulkan entrypoint.
+ash = { version = "0.38", default-features = false, features = ["debug", "loaded"] }
+env_logger = "0.10"
+
+[[example]]
+name = "vulkan-buffer"
+required-features = ["vulkan", "ash/loaded"]
+
+[features]
+visualizer = ["dep:egui", "dep:egui_extras"]

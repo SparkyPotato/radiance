@@ -38,18 +38,28 @@ pub trait Resource: Default + Sized {
 	unsafe fn destroy(self, device: &Device);
 }
 
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+pub enum BufferType {
+	/// A buffer in VRAM, but still accessible by the CPU. Most buffers should be of this type.
+	Gpu,
+	/// A buffer in RAM, should only be used for staging uploads with the async transfer queue.
+	Staging,
+	/// A buffer in RAM, used to readback data from the GPU.
+	Readback,
+}
+
 /// A description for a buffer.
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct BufferDesc<'a> {
 	pub name: &'a str,
 	pub size: u64,
-	pub readback: bool,
+	pub ty: BufferType,
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq, Debug)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 pub struct BufferDescUnnamed {
 	pub size: u64,
-	pub readback: bool,
+	pub ty: BufferType,
 }
 
 impl ToNamed for BufferDescUnnamed {
@@ -59,7 +69,7 @@ impl ToNamed for BufferDescUnnamed {
 		Self::Named {
 			name,
 			size: self.size,
-			readback: self.readback,
+			ty: self.ty,
 		}
 	}
 }
@@ -129,16 +139,15 @@ impl Buffer {
 	pub fn ptr<T: NoUninit>(&self) -> GpuPtr<T> { GpuPtr(self.addr, PhantomData) }
 
 	pub fn desc(&self) -> graph::BufferDesc {
+		let props = self.alloc.memory_properties();
 		graph::BufferDesc {
 			size: self.data().len() as _,
-			loc: if self
-				.alloc
-				.memory_properties()
-				.contains(vk::MemoryPropertyFlags::HOST_COHERENT)
-			{
+			loc: if props.contains(vk::MemoryPropertyFlags::DEVICE_LOCAL) {
+				graph::BufferLoc::Gpu
+			} else if props.contains(vk::MemoryPropertyFlags::HOST_CACHED) {
 				graph::BufferLoc::Readback
 			} else {
-				graph::BufferLoc::GpuOnly
+				graph::BufferLoc::Staging
 			},
 			persist: None,
 		}
@@ -167,30 +176,30 @@ impl Resource for Buffer {
 				return Ok(Self::default());
 			}
 
-			let info = vk::BufferCreateInfo::default()
-				.size(desc.size)
-				.usage(
-					vk::BufferUsageFlags::TRANSFER_SRC
-						| vk::BufferUsageFlags::TRANSFER_DST
-						| vk::BufferUsageFlags::STORAGE_BUFFER
-						| vk::BufferUsageFlags::INDEX_BUFFER
-						| vk::BufferUsageFlags::VERTEX_BUFFER
-						| vk::BufferUsageFlags::INDIRECT_BUFFER
-						| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
-						| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
-						| vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
-				)
-				.sharing_mode(vk::SharingMode::CONCURRENT);
-
 			let Queues {
 				graphics,
 				compute,
 				transfer,
 			} = device.queue_families();
-			let buffer = device
-				.device()
-				.create_buffer(&info.queue_family_indices(&[graphics, compute, transfer]), None)?;
+			let buffer = device.device().create_buffer(
+				&vk::BufferCreateInfo::default()
+					.size(desc.size)
+					.usage(
+						vk::BufferUsageFlags::TRANSFER_SRC
+							| vk::BufferUsageFlags::TRANSFER_DST
+							| vk::BufferUsageFlags::STORAGE_BUFFER
+							| vk::BufferUsageFlags::INDEX_BUFFER
+							| vk::BufferUsageFlags::VERTEX_BUFFER
+							| vk::BufferUsageFlags::INDIRECT_BUFFER
+							| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+							| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+							| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+							| vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
+					)
+					.sharing_mode(vk::SharingMode::CONCURRENT)
+					.queue_family_indices(&[graphics, compute, transfer]),
+				None,
+			)?;
 
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
@@ -206,10 +215,10 @@ impl Resource for Buffer {
 				.allocate(&AllocationCreateDesc {
 					name: desc.name,
 					requirements: device.device().get_buffer_memory_requirements(buffer),
-					location: if desc.readback {
-						MemoryLocation::GpuToCpu
-					} else {
-						MemoryLocation::CpuToGpu
+					location: match desc.ty {
+						BufferType::Gpu => MemoryLocation::RebarGpu,
+						BufferType::Staging => MemoryLocation::Upload,
+						BufferType::Readback => MemoryLocation::Readback,
 					},
 					linear: true,
 					allocation_scheme: AllocationScheme::GpuAllocatorManaged,
@@ -605,7 +614,7 @@ impl Resource for AS {
 				BufferDesc {
 					name: desc.name,
 					size: desc.size,
-					readback: false,
+					ty: BufferType::Gpu,
 				},
 			)?;
 			let inner = device.as_ext().create_acceleration_structure(

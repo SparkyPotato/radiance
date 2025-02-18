@@ -170,7 +170,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 
 	pub fn write(&mut self, res: Res<BufferHandle>, offset: usize, data: &[impl NoUninit]) {
 		debug_assert!(
-			self.desc(res).loc == BufferLoc::Upload,
+			matches!(self.desc(res).loc, BufferLoc::Upload | BufferLoc::Staging),
 			"can only `write` to upload buffers. use `update_buffer` otherwise"
 		);
 		let res = self.get(res);
@@ -182,7 +182,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 
 	pub fn write_iter(&mut self, res: Res<BufferHandle>, offset: usize, data: impl IntoIterator<Item = impl NoUninit>) {
 		debug_assert!(
-			self.desc(res).loc == BufferLoc::Upload,
+			matches!(self.desc(res).loc, BufferLoc::Upload | BufferLoc::Staging),
 			"can only `write` to upload buffers. use `update_buffer` otherwise"
 		);
 		let res = self.get(res);

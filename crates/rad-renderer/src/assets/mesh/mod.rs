@@ -16,7 +16,7 @@ use rad_core::{
 use rad_graph::{
 	cmd::CommandPool,
 	device::{Compute, Device, QueueWait},
-	resource::{ASDesc, Buffer, BufferDesc, Resource, AS},
+	resource::{ASDesc, Buffer, BufferDesc, BufferType, Resource, AS},
 	sync::{get_global_barrier, GlobalBarrier, UsageType},
 };
 use static_assertions::const_assert_eq;
@@ -83,7 +83,7 @@ impl AssetView for RaytracingMeshView {
 				BufferDesc {
 					name: &format!("{name} raw buffer"),
 					size: (cast_slice::<_, u8>(&m.vertices).len() + cast_slice::<_, u8>(&m.indices).len()) as u64,
-					readback: false,
+					ty: BufferType::Gpu,
 				},
 			)?;
 			let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
@@ -155,7 +155,7 @@ impl AssetView for RaytracingMeshView {
 					BufferDesc {
 						name: &format!("{name} AS build scratch"),
 						size: sinfo.build_scratch_size,
-						readback: false,
+						ty: BufferType::Gpu,
 					},
 				)?;
 				info.dst_acceleration_structure = old.handle();

@@ -9,7 +9,7 @@ use rad_graph::{
 		ShaderInfo,
 	},
 	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Persist, Res},
-	resource::{self, Buffer, GpuPtr, Image, ImageView, Resource},
+	resource::{self, Buffer, BufferType, GpuPtr, Image, ImageView, Resource},
 	sync::Shader,
 	Result,
 };
@@ -164,7 +164,7 @@ impl PathTracer {
 				resource::BufferDesc {
 					name: "pt sbt",
 					size: rgen.size + miss.size + hit.size,
-					readback: false,
+					ty: BufferType::Gpu,
 				},
 			)?;
 			rgen.device_address = sbt.ptr::<()>().addr();
