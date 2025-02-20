@@ -51,7 +51,6 @@ impl ShaderBuilder {
 					.profile(slang.find_profile("sm_6_6"))
 					.force_glsl_scalar_buffer_layout(true)
 					.compiler_option_entries(&mut [
-						CompilerOptionEntry::new(CompilerOptionName::WARNINGS_AS_ERRORS, c"all".as_ptr()),
 						CompilerOptionEntry::new(CompilerOptionName::EMIT_SPIRV_DIRECTLY, 1),
 						CompilerOptionEntry::new(CompilerOptionName::DEBUG_INFORMATION, 2),
 						CompilerOptionEntry::new(CompilerOptionName::OPTIMIZATION, 2),
