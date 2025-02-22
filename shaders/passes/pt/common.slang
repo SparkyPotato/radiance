@@ -13,6 +13,7 @@ public struct PushConstants {
 	public AS as;
 	public Sampler sampler;
 	public STex2D<f32x3> output;
+	public Tex2D<f32> ggx_energy_compensation_lut;
 	public Rng rng;
 	public u32 samples;
 	public u32 light_count;
@@ -60,11 +61,11 @@ public struct HitPayload {
 	public f32 p_bounce;
 	public bool specular;
 	public f32x3 b;
-	public f32x3 prev_hit_pos;
+	public f32x3 prev_hit_norm;
 	// chit/miss -> rgen
 	public bool hit;
 }
 
 public f32 light_sample_pdf() {
-	return 1.f / f32(Constants.light_count);
+	return 1.f / f32(Constants.light_count + 1);
 }

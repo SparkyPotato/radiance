@@ -2,7 +2,7 @@ use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
 	device::{
-		descriptor::{SamplerId, StorageImageId},
+		descriptor::{ImageId, SamplerId, StorageImageId},
 		Device,
 		RtPipelineDesc,
 		RtShaderGroup,
@@ -16,9 +16,10 @@ use rad_graph::{
 	Result,
 };
 use rand::{thread_rng, RngCore};
-use vek::Vec2;
+use vek::{Vec2, Vec3};
 
 use crate::{
+	assets::image::{ImageAsset, ImageAssetView},
 	scene::{
 		camera::{CameraScene, GpuCamera},
 		light::{GpuLight, LightScene},
@@ -35,6 +36,7 @@ pub struct PathTracer {
 	accum: Persist<Image>,
 	cached: Option<Vec2<u32>>,
 	samples: u32,
+	ggx_e_lut: ImageAssetView,
 }
 
 pub struct RenderInfo {
@@ -51,13 +53,17 @@ struct PushConstants {
 	as_: GpuPtr<u8>,
 	sampler: SamplerId,
 	out: StorageImageId,
+	ggx_e_lut: ImageId,
 	seed: u32,
 	samples: u32,
 	light_count: u32,
 	sky: GpuSkySampler,
+	_pad: u32,
 }
 
 impl PathTracer {
+	const GGX_E_LUT: &[u8] = include_bytes!("ggx_e.lut");
+
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
 			pass: RtPass::new(
@@ -97,6 +103,15 @@ impl PathTracer {
 			accum: Persist::new(),
 			cached: None,
 			samples: 0,
+			ggx_e_lut: ImageAssetView::new(
+				"ggx e lut",
+				ImageAsset {
+					size: Vec3::new(32, 32, 1),
+					format: vk::Format::R16_SFLOAT.as_raw(),
+					data: Self::GGX_E_LUT.to_vec(),
+				},
+			)
+			.unwrap(),
 		})
 	}
 
@@ -162,10 +177,12 @@ impl PathTracer {
 					as_,
 					sampler: self.sampler,
 					out: out.storage_id.unwrap(),
+					ggx_e_lut: self.ggx_e_lut.image_id(),
 					seed: thread_rng().next_u32(),
 					samples: self.samples,
 					light_count,
 					sky,
+					_pad: 0,
 				},
 				out.size.width,
 				out.size.height,

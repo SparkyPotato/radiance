@@ -36,7 +36,7 @@ impl DebugWindow {
 		Self {
 			enabled: false,
 			render_mode: RenderMode::Path,
-			tonemap: Tonemap::AgXPunchy,
+			tonemap: Tonemap::TonyMcMapface,
 			debug_vis: DebugVis::Meshlets,
 			scale: 0.15,
 			exposure_compensation: 0.0,

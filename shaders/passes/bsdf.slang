@@ -4,8 +4,7 @@ import graph;
 import graph.util.rng;
 
 public struct BsdfSample {
-	// note: is premultiplied by cos(theta) / pdf.
-	public f32x3 L;
+	public f32x3 f;
 	public f32x3 wi;
 	public f32 pdf;
 	public bool is_specular;
@@ -15,6 +14,8 @@ public struct ShadingParams {
 	public f32x3 base_color;
 	public f32 metallic;
 	public f32 roughness;
+	public Tex2D<f32> ggx_energy_compensation_lut;
+	public Sampler lut_sampler;
 }
 
 // clang-format off
@@ -85,48 +86,71 @@ f32x3 eval_lambert(ShadingParams params, f32x3 wo, f32x3 wi) {
 	return diffuse_color / PI;
 }
 
-BsdfSample sample_lambert(inout Rng rng, ShadingParams params, f32x3 wo) {
-	// L = (col * n dot l / PI) / pdf
-	// pdf = cos / PI
-	// n dot l = cos
-	// thus, L = col
-	let diffuse_color = (1.f - params.metallic) * params.base_color;
-	let wi = rng.sample_cos_hemi();
-	return { diffuse_color, wi, lambert_pdf(wi), false };
+f32x3 sample_lambert(inout Rng rng) {
+	return rng.sample_cos_hemi();
 }
 
-f32 lambert_pdf(f32x3 wi) {
+f32 pdf_lambert(f32x3 wi) {
 	return brdf_cos(wi) / PI;
 }
 
-f32 v_ggx(f32x3 w, f32 roughness) {
-	let a2 = roughness * roughness;
-	let v = a2 * brdf_tan2(w);
-	return 0.5f / max(sqrt(1.f + v) - 1.f, 1e-5f);
+f32x3 shlick(f32 cos_t, f32x3 f0) {
+	let k = 1.f - cos_t;
+	let k2 = k * k;
+	return f0 + (f32x3(1.f) - f0) * k2 * k2 * k;
 }
 
-f32 g1_ggx(f32x3 wm, f32x3 wo, f32 roughness) {
-	if (dot(wo, wm) * wm.z <= 0.f)
-		return 0.f;
-	return 1.f / (1.f + v_ggx(wo, roughness));
+f32 fresnel(f32 cos_t, f32 ior) {
+	cos_t = saturate(cos_t);
+	let sin2_tt = (1.f - cos_t * cos_t) / (ior * ior);
+	if (sin2_tt > 1.f)
+		return 1.f;
+
+	let cos_tt = sqrt(1.f - sin2_tt);
+	let par = (ior * cos_t - cos_tt) / (ior * cos_t + cos_tt);
+	let perp = (cos_t - ior * cos_tt) / (cos_t + ior * cos_tt);
+	return 0.5f * (par * par + perp * perp);
 }
 
-f32 g2_ggx(f32x3 wi, f32x3 wm, f32x3 wo, f32 roughness) {
-	if (dot(wi, wm) * wi.z <= 0.f || dot(wo, wm) * wo.z <= 0.f)
-		return 0.f;
-	return 1.f / (1.f + v_ggx(wi, roughness) + v_ggx(wo, roughness));
+f32 d_ggx(f32x3 w, f32 rough) {
+	let cos2 = brdf_cos2(w);
+	let sin2 = max(0.f, 1.f - cos2);
+	let tan2 = sin2 / cos2;
+	let cos4 = cos2 * cos2;
+
+	let k = 1.f + tan2 / (rough * rough);
+	return 1.f / (PI * rough * rough * cos4 * k * k);
 }
 
-f32x3 shlick(f32 u, f32x3 f0) {
-	let f = pow(saturate(1.f - u), 5.f);
-	return f + f0 * (1.f - f);
+f32 lambda_ggx(f32x3 w, f32 rough) {
+	let cos2 = brdf_cos2(w);
+	let sin2 = max(0.f, 1.f - cos2);
+	let tan2 = sin2 / cos2;
+	let rough2 = rough * rough;
+	return (sqrt(1.f + rough2 * tan2) - 1.f) / 2.f;
+}
+
+f32 g1_ggx(f32x3 w, f32 rough) {
+	return 1.f / (1.f + lambda_ggx(w, rough));
+}
+
+f32 g2_ggx(f32x3 wi, f32x3 wo, f32 rough) {
+	return 1.f / (1.f + lambda_ggx(wi, rough) + lambda_ggx(wo, rough));
+}
+
+f32 dv_ggx(f32x3 w, f32x3 wm, f32 rough) {
+	let g1 = g1_ggx(w, rough);
+	let c = abs(brdf_cos(w));
+	let d = d_ggx(wm, rough);
+	let v_h = abs(dot(w, wm));
+	return g1 / c * d * v_h;
 }
 
 // Sampling with spherical caps:
 // https://arxiv.org/abs/2306.05044
-f32x3 sample_ggx_vndf(inout Rng rng, f32x3 wo, f32 roughness) {
+f32x3 sample_dv_ggx(inout Rng rng, f32x3 wo, f32 rough) {
 	let u = rng.sample2();
-	let vh = normalize(f32x3(roughness * wo.xy, wo.z));
+	let vh = normalize(f32x3(rough * wo.xy, wo.z));
 
 	let phi = 2.f * PI * u.x;
 	let z = fma(1.f - u.y, 1.f + vh.z, -vh.z);
@@ -135,48 +159,45 @@ f32x3 sample_ggx_vndf(inout Rng rng, f32x3 wo, f32 roughness) {
 	let y = sin_theta * sin(phi);
 	let nh = f32x3(x, y, z) + vh;
 
-	return normalize(f32x3(roughness * nh.xy, max(0.f, nh.z)));
+	return normalize(f32x3(rough * nh.xy, max(0.f, nh.z)));
 }
 
-f32 d_ggx(f32x3 wm, f32 roughness) {
-	let a2 = roughness * roughness;
-	let k = wm.z * wm.z * (a2 - 1.f) + 1.f;
-	return a2 / (PI * k * k);
+f32 eval_ggx_ss(f32x3 wo, f32x3 wm, f32x3 wi, f32 rough) {
+	let d = d_ggx(wm, rough);
+	let g = g2_ggx(wi, wo, rough);
+	let cos_wo = abs(brdf_cos(wo));
+	let cos_wi = abs(brdf_cos(wi));
+	return d * g / (4.f * cos_wo * cos_wi);
 }
 
-f32 dv_ggx(f32x3 wm, f32x3 wo, f32 roughness) {
-	let l_h = dot(wm, wo);
-	let g1 = g1_ggx(wm, wo, roughness);
-	let d = d_ggx(wm, roughness);
-	return (g1 * l_h * d) / wo.z;
+f32 pdf_ggx(f32x3 wm, f32x3 wo, f32 rough) {
+	if (rough < 0.001f)
+		return 0.f;
+
+	return dv_ggx(wo, wm, rough) / (4.f * abs(dot(wm, wo)));
 }
 
-f32x3 eval_ggx(ShadingParams params, f32x3 wo, f32x3 wi) {
-	let wm = normalize(wo + wi);
-	let f0 = lerp(f32x3(0.04f), params.base_color, params.metallic);
-	let l_h = dot(wm, wo);
-
-	let g1 = g1_ggx(wm, wo, params.roughness);
-	let g2 = g2_ggx(wi, wm, wo, params.roughness);
-	let f = shlick(l_h, f0);
-
-	if (g1 == 0.f)
+f32x3 eval_ggx(ShadingParams params, f32x3 wo, f32x3 wm, f32x3 wi) {
+	if (params.roughness < 0.001f)
 		return f32x3(0.f);
-	return f * g2 / g1;
+
+	let f0 = lerp(f32x3(0.04f), params.base_color, params.metallic);
+	let sh = shlick(abs(dot(wo, wm)), f0);
+	let rho_ss = sh * eval_ggx_ss(wo, wm, wi, params.roughness);
+
+	let n_v = brdf_cos(wo);
+	let e_ss = params.ggx_energy_compensation_lut.sample_mip(params.lut_sampler, f32x2(n_v, params.roughness), 0.f);
+	let m_ss = f0 * (1.f - e_ss) / e_ss;
+
+	return rho_ss * (1.f + m_ss);
 }
 
-BsdfSample sample_ggx(inout Rng rng, ShadingParams params, f32x3 wo) {
-	let wm = sample_ggx_vndf(rng, wo, params.roughness);
-	let wi = reflect(-wo, wm);
-	let l_h = dot(wm, wo);
-	let L = eval_ggx(params, wo, wi);
-	let pdf = ggx_pdf(wo, wm, params.roughness);
-	return { L, wi, pdf, true };
-}
+f32x3 sample_ggx(inout Rng rng, ShadingParams params, f32x3 wo) {
+	if (params.roughness < 0.001f)
+		return f32x3(-wo.xy, wo.z);
 
-f32 ggx_pdf(f32x3 wo, f32x3 wm, f32 roughness) {
-	let l_h = dot(wm, wo);
-	return dv_ggx(wo, wm, roughness) / (4.f * l_h);
+	let wm = sample_dv_ggx(rng, wo, params.roughness);
+	return reflect(-wo, wm);
 }
 
 public f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {
@@ -186,32 +207,40 @@ public f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {
 }
 
 public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
-	let n_l = brdf_cos(wi);
 	let fd = eval_lambert(params, wo, wi);
-	let fr = eval_ggx(params, wo, wi);
-	return (fd + fr) * abs(n_l);
+	let wm = normalize(wo + wi);
+	let fr = eval_ggx(params, wo, wm, wi);
+	return fd + fr;
 }
 
 public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
-	let lambert_chance = lerp(0.5f, 0.f, params.metallic);
+	let spec = params.roughness < 0.001f;
+	let lambert_chance = lerp(lerp(0.4f, 0.9f, params.roughness), 0.f, params.metallic);
 	let spec_chance = 1.f - lambert_chance;
-	BsdfSample ret;
+
+	f32x3 wi;
 	if (rng.sample() < lambert_chance) {
-		ret = sample_lambert(rng, params, wo);
-		ret.L /= lambert_chance;
-		ret.pdf *= lambert_chance;
+		wi = sample_lambert(rng);
 	} else {
-		ret = sample_ggx(rng, params, wo);
-		ret.L /= spec_chance;
-		ret.pdf *= spec_chance;
+		wi = sample_ggx(rng, params, wo);
 	}
-	return ret;
+
+	let wm = normalize(wi + wo);
+	let fd = eval_lambert(params, wo, wi);
+	let f0 = lerp(f32x3(0.04f), params.base_color, params.metallic);
+	let fr = spec ? f0 : eval_ggx(params, wo, wm, wi);
+
+	let pdf_d = lambert_chance * pdf_lambert(wi);
+	let pdf_r = spec_chance * (spec ? 1.f : pdf_ggx(wm, wo, params.roughness));
+
+	return { fd + fr, wi, pdf_d + pdf_r, spec && lambert_chance == 0.f };
 }
 
 public f32 bsdf_pdf(ShadingParams params, f32x3 wo, f32x3 wi) {
 	let lambert_chance = lerp(0.5f, 0.f, params.metallic);
-	let lambert_pdf = lambert_chance * lambert_pdf(wi);
+	let spec_chance = 1.f - lambert_chance;
+	let lambert_pdf = lambert_chance * pdf_lambert(wi);
 	let wm = normalize(wi + wo);
-	let ggx_pdf = (1.f - lambert_chance) * ggx_pdf(wo, wm, params.roughness);
+	let ggx_pdf = spec_chance * pdf_ggx(wm, wo, params.roughness);
 	return lambert_pdf + ggx_pdf;
 }

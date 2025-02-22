@@ -24,6 +24,7 @@ struct WorldTriHit {
 	f32x3 normal;
 	f32x3 g_normal;
 	f32 area;
+	u32 tri_count;
 
 	[ForceInline]
 	__init(u32 instance, u32 tri, f32x2 b) {
@@ -52,6 +53,7 @@ struct WorldTriHit {
 		this.g_normal = cross(v1p - v0p, v2p - v0p);
 		this.area = length(this.g_normal) * 0.5f;
 		this.g_normal = normalize(this.g_normal);
+		this.tri_count = instance->raw_tri_count;
 	}
 }
 
@@ -103,12 +105,14 @@ struct Hit {
 	f32x3x3 from_shading_basis;
 	ShadingParams params;
 	f32 area;
+	u32 tri_count;
 
 	__init(BuiltInTriangleIntersectionAttributes attrs) {
 		let thit = WorldTriHit(InstanceIndex(), PrimitiveIndex(), attrs.barycentrics);
 		this.position = thit.position;
 		this.g_normal = thit.g_normal;
 		this.area = thit.area;
+		this.tri_count = thit.tri_count;
 
 		let tbn = Tbn(thit.v0, thit.v1, thit.v2, thit.normal);
 		this.to_shading_basis = f32x3x3(tbn.tangent, tbn.bitangent, tbn.normal);
@@ -127,8 +131,11 @@ struct Hit {
 		let met_rough = mr.sample(s, thit.uv, white);
 		let rough = met_rough.y * mat->roughness_factor;
 		this.params.metallic = met_rough.z * mat->metallic_factor;
-		this.params.roughness = max(rough * rough, 0.0001f);
+		this.params.roughness = rough * rough;
 		this.emissive = em.sample(s, thit.uv, white).xyz * mat->emissive_factor;
+
+		this.params.ggx_energy_compensation_lut = Constants.ggx_energy_compensation_lut;
+		this.params.lut_sampler = Constants.sampler;
 
 		// let norm_world = this.from_shading(nm.sample(s, thit.uv, blue).xyz);
 		// this.from_shading_basis._m02_m12_m22 = norm_world;
@@ -222,12 +229,24 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 	return { f32x3(0.f), f32x3(0.f), 0.f, 0.f, false };
 }
 
-LightSample sample_one_light(inout Rng rng, Hit hit) {
-	let n = f32(Constants.light_count);
+LightSample sample_sky(inout Rng rng, Hit hit) {
+	let wi = rng.sample_cos_hemi();
+	let dir = hit.from_shading(wi);
+	let L = Constants.sky.sample(hit.position, dir);
+	return { L, dir, 1e10f, wi.z / PI, false };
+}
 
+LightSample sample_one_light(inout Rng rng, Hit hit) {
+	let n = f32(Constants.light_count + 1);
 	let l = min(u32(rng.sample() * n), u32(n - 1.f));
-	let light = Constants.lights[l];
-	var ls = sample_light(rng, hit, light);
+
+	LightSample ls;
+	if (l == Constants.light_count) {
+		ls = sample_sky(rng, hit);
+	} else {
+		ls = sample_light(rng, hit, Constants.lights[l]);
+	}
+
 	ls.pdf *= light_sample_pdf();
 	return ls;
 }
@@ -250,10 +269,10 @@ LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let f = eval_bsdf(hit.params, wo, wi);
 	if (all(f <= 0.f))
 		return { f32x3(0.f), ray };
-	var L = f * ls.L / ls.pdf;
+	var L = f * abs(wi.z) * ls.L / ls.pdf;
 	if (!ls.punctual) {
 		let p_bounce = bsdf_pdf(hit.params, wo, wi);
-		L *= pow_heuristic(1, p_bounce, 1, ls.pdf);
+		L *= pow_heuristic(1, p_bounce, 1, ls.pdf);	 // Should this be the other way around?
 	}
 	return { L, ray };
 }
@@ -261,35 +280,29 @@ LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 [shader("closesthit")]
 void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	let hit = Hit(attrs);
+	p.prev_hit_norm = hit.from_shading(f32x3(0.f, 0.f, 1.f));
 
 	let le = hit.emissive;
-	if (p.specular) {
-		p.L += p.b * le;
-	} else {
+	f32 w = 1.f;
+	if (!p.specular) {
 		// MIS for area light.
-		// TODO: this should take the solid angle of the triangle into account.
-		let d = hit.position - p.prev_hit_pos;
-		let u = abs(dot(hit.g_normal, -p.ray.dir)) * hit.area;
-		let p_light = (u != 0.f) ? (dot(d, d) / u) : 0.f;
-		let w = pow_heuristic(1, p.p_bounce, 1, p_light);
-		p.L += p.b * w * le;
+		let p_light = light_sample_pdf() / (hit.area * f32(hit.tri_count));
+		w = pow_heuristic(1, p.p_bounce, 1, p_light);
 	}
+	p.L += p.b * w * le;
 	// TODO: disable MIS if the ray hits a light without a bsdf?
 
 	let wo = hit.to_shading(-p.ray.dir);
 
 	let bs = sample_bsdf(p.rng, hit.params, wo);
-	let throughput = bs.L;
+	let throughput = bs.f * abs(bs.wi.z) / bs.pdf;
 	p.p_bounce = bs.pdf;
 	p.ray = Ray(hit.ray_origin(), hit.from_shading(bs.wi));
 	p.specular = bs.is_specular;
-	p.prev_hit_pos = hit.position;
 
-	// Normally, you'd do light shrampling above BSDF sampling,
-	// but by doing it at the very end we can minimize the live state
-	// kept between the shadow ray trace.
+	// Keep this as low as possible to minimize the live state kept between the shadow ray trace.
 	var el = estimate_with_light_sample(p.rng, hit, wo);
-	if (any(el.L <= 0.f))
+	if (all(el.L <= 0.f))
 		el.shadow.t = 0.f;
 
 	// We use the same payload even though we only need a single bool
