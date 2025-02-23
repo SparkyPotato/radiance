@@ -705,15 +705,23 @@ impl BvhBuilder {
 			});
 			i as _
 		} else {
-			// Largest power of 8 <= `count` (where the incomplete nodes start).
-			let largest_child = 1 << (count.ilog2() / 3) * 3;
-			let smallest_child = largest_child >> 3;
-			let extra = largest_child - smallest_child;
-			let mut left = count - largest_child;
+			// We need to split the nodes into 8 groups, with the smallest possible tree depth.
+			// Additionally, no child should be more than one level deeper than the others.
+			// At `l` levels, we can fit upto 8^l nodes.
+			// The `max_child_size` is the largest power of 8 <= `count` (any larger and we'd have
+			// unfilled nodes).
+			// The `min_child_size` is thus 1 level (8 times) smaller.
+			// After distributing `min_child_size` to all children, we have distributed
+			// `min_child_size * 8` nodes (== `max_child_size`).
+			// The remaining nodes are then distributed left to right.
+			let max_child_size = 1 << (count.ilog2() / 3) * 3;
+			let min_child_size = max_child_size >> 3;
+			let max_extra_per_node = max_child_size - min_child_size;
+			let mut extra = count - max_child_size; // 8 * min_child_size
 			let splits = std::array::from_fn(|_| {
-				let size = left.min(extra);
-				left -= size;
-				smallest_child + size
+				let size = extra.min(max_extra_per_node);
+				extra -= size;
+				min_child_size + size
 			});
 
 			if is_lod {
