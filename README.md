@@ -21,6 +21,5 @@ Histogram-based auto-exposure with several tonemapping operators:
 - [Tony McMapface](https://github.com/h3r2tic/tony-mc-mapface)
 
 ## Requirements
-Currently requires the NVTT 3 SDK installed, with `nvtt.dll` in the PATH. 
-Once that is done, shrimply `cargo run`.
+Shrimply `git clone https://github.com/SparkyPotato/radiance/ --recursive` then `cargo run`.
 
