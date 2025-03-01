@@ -34,13 +34,13 @@ use rad_graph::{
 		Persist,
 		Res,
 		Shader,
-		VirtualResourceDesc,
+		SwapchainImage,
 	},
 	resource::{BufferHandle, GpuPtr, Image, ImageView, Subresource},
 	util::{
 		pass::{Attachment, ImageCopy, Load},
 		pipeline::{default_blend, no_cull, simple_blend},
-		render::RenderPass,
+		render::{FullscreenPass, RenderPass},
 		staging::ByteReader,
 	},
 	Result,
@@ -59,7 +59,9 @@ pub struct ScreenDescriptor {
 
 pub struct Renderer {
 	images: FxHashMap<u64, (Persist<Image>, Vec2<u32>, SamplerId)>,
-	pass: RenderPass<PushConstantsStatic>,
+	sdr: RenderPass<PushConstantsStatic>,
+	hdr: RenderPass<PushConstantsStatic>,
+	blit: FullscreenPass<ImageId>,
 	vertex_size: u64,
 	index_size: u64,
 	default_sampler: SamplerId,
@@ -70,6 +72,7 @@ struct PassIO<'a> {
 	index: Res<BufferHandle>,
 	out: Res<ImageView>,
 	imgs: ArenaMap<'a, u64, Res<ImageView>>,
+	hdr: bool,
 }
 
 #[repr(C)]
@@ -88,7 +91,26 @@ struct PushConstantsDynamic {
 
 impl Renderer {
 	pub fn new(device: &Device) -> Result<Self> {
-		let pass = RenderPass::new(
+		Ok(Self {
+			images: FxHashMap::default(),
+			sdr: Self::make_pass(device, false)?,
+			hdr: Self::make_pass(device, true)?,
+			blit: FullscreenPass::new(
+				device,
+				ShaderInfo {
+					shader: "egui.blit",
+					..Default::default()
+				},
+				&[vk::Format::A2B10G10R10_UNORM_PACK32],
+			)?,
+			vertex_size: VERTEX_BUFFER_START_CAPACITY,
+			index_size: INDEX_BUFFER_START_CAPACITY,
+			default_sampler: device.sampler(SamplerDesc::default()),
+		})
+	}
+
+	fn make_pass(device: &Device, hdr: bool) -> Result<RenderPass<PushConstantsStatic>> {
+		RenderPass::new(
 			device,
 			GraphicsPipelineDesc {
 				shaders: &[
@@ -101,26 +123,22 @@ impl Renderer {
 						..Default::default()
 					},
 				],
-				color_attachments: &[vk::Format::B8G8R8A8_UNORM],
+				color_attachments: &[if hdr {
+					vk::Format::R16G16B16A16_SFLOAT
+				} else {
+					vk::Format::B8G8R8A8_UNORM
+				}],
 				blend: simple_blend(&[default_blend()]),
 				raster: no_cull(),
 				..Default::default()
 			},
 			false,
-		)?;
-
-		Ok(Self {
-			images: FxHashMap::default(),
-			pass,
-			vertex_size: VERTEX_BUFFER_START_CAPACITY,
-			index_size: INDEX_BUFFER_START_CAPACITY,
-			default_sampler: device.sampler(SamplerDesc::default()),
-		})
+		)
 	}
 
-	pub fn run<'pass, 'graph, D: VirtualResourceDesc<Resource = ImageView>>(
+	pub fn run<'pass, 'graph>(
 		&'pass mut self, frame: &mut Frame<'pass, 'graph>, tris: Vec<ClippedPrimitive>, delta: TexturesDelta,
-		screen: ScreenDescriptor, out: D,
+		screen: ScreenDescriptor, out: SwapchainImage,
 	) where
 		'graph: 'pass,
 	{
@@ -152,7 +170,24 @@ impl Renderer {
 			self.index_size *= 2;
 		}
 		let index = pass.resource(BufferDesc::upload(self.index_size), BufferUsage::index());
-		let out = pass.resource(out, ImageUsage::format_color_attachment(vk::Format::B8G8R8A8_UNORM));
+
+		let hdr = out.format == vk::Format::A2B10G10R10_UNORM_PACK32;
+		// We need real alpha, so we can't use the swapchain HDR image
+		let outr = if hdr {
+			pass.resource(
+				ImageDesc {
+					size: vk::Extent3D::default()
+						.width(out.size.width)
+						.height(out.size.height)
+						.depth(1),
+					format: vk::Format::R16G16B16A16_SFLOAT,
+					..Default::default()
+				},
+				ImageUsage::color_attachment(),
+			)
+		} else {
+			pass.resource(out, ImageUsage::format_color_attachment(vk::Format::B8G8R8A8_UNORM))
+		};
 
 		unsafe {
 			for tris in tris.iter() {
@@ -169,30 +204,45 @@ impl Renderer {
 			}
 		}
 
+		let this = &*self;
 		pass.build(move |pass| {
-			self.execute(
+			this.execute(
 				pass,
 				PassIO {
 					vertex,
 					index,
-					out,
+					out: outr,
 					imgs,
+					hdr,
 				},
 				&tris,
 				&screen,
 			)
 		});
+
+		if hdr {
+			let mut pass = frame.pass("blit ui");
+			pass.reference(outr, ImageUsage::sampled_2d(Shader::Fragment));
+			let out = pass.resource(out, ImageUsage::color_attachment());
+			pass.build(move |mut pass| {
+				let id = pass.get(outr).id.unwrap();
+				this.blit.run_one(&mut pass, &id, out);
+			});
+		}
 	}
 
 	/// # Safety
 	/// Appropriate synchronization must be performed.
-	pub unsafe fn destroy(self) { self.pass.destroy(); }
+	pub unsafe fn destroy(self) {
+		self.sdr.destroy();
+		self.hdr.destroy();
+	}
 
-	fn execute(&mut self, mut pass: PassContext, io: PassIO<'_>, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
+	fn execute(&self, mut pass: PassContext, io: PassIO<'_>, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
 		Self::generate_buffers(&mut pass, io.vertex, io.index, tris);
 
 		let vertex_buffer = pass.get(io.vertex).ptr();
-		let mut pass = self.pass.start(
+		let mut pass = if io.hdr { &self.hdr } else { &self.sdr }.start(
 			&mut pass,
 			&PushConstantsStatic {
 				screen_size: screen.physical_size.map(|x| x as f32) / screen.scaling,
@@ -363,9 +413,10 @@ impl Renderer {
 	}
 
 	fn reference_images(&self, pass: &mut PassBuilder, imgs: &mut ArenaMap<'_, u64, Res<ImageView>>) {
+		let format = vk::Format::R8G8B8A8_UNORM;
 		for (&id, &(image, size, _)) in self.images.iter() {
 			match imgs.entry(id) {
-				Entry::Occupied(x) => pass.reference(*x.get(), ImageUsage::sampled_2d(Shader::Fragment)),
+				Entry::Occupied(x) => pass.reference(*x.get(), ImageUsage::format_sampled_2d(format, Shader::Fragment)),
 				Entry::Vacant(v) => {
 					v.insert(pass.resource(
 						ImageDesc {
@@ -374,12 +425,12 @@ impl Renderer {
 								height: size.y,
 								depth: 1,
 							},
-							format: vk::Format::R8G8B8A8_UNORM,
+							format,
 							persist: Some(image),
 							..Default::default()
 						},
 						ImageUsage {
-							format: vk::Format::UNDEFINED,
+							format,
 							usages: &[
 								ImageUsageType::ShaderReadSampledImage(Shader::Fragment),
 								ImageUsageType::AddUsage(vk::ImageUsageFlags::TRANSFER_DST),

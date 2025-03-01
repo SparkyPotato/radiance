@@ -28,7 +28,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 	p.b = f32x3(1.f);
 	p.prev_hit_norm = f32x3(0.f);
 
-	for (int bounces = 0; bounces < 2; bounces++) {
+	for (int bounces = 0; bounces < 10; bounces++) {
 		p.ray.trace(RAY_FLAG_FORCE_OPAQUE, 0, p);
 		if (!p.hit)
 			break;

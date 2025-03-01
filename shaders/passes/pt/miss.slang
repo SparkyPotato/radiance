@@ -8,7 +8,6 @@ void main(inout HitPayload p) {
 
 	let le = Constants.sky.sample_primary(p.ray.origin, p.ray.dir);
 	f32 w = 1.f;
-	// let le = f32x3(10.f);
 	if (!p.specular) {
 		// MIS for the sky light.
 		let p_light = light_sample_pdf() * dot(p.ray.dir, p.prev_hit_norm) / PI;

@@ -272,7 +272,7 @@ LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	var L = f * abs(wi.z) * ls.L / ls.pdf;
 	if (!ls.punctual) {
 		let p_bounce = bsdf_pdf(hit.params, wo, wi);
-		L *= pow_heuristic(1, p_bounce, 1, ls.pdf);	 // Should this be the other way around?
+		L *= pow_heuristic(1, ls.pdf, 1, p_bounce);	 // Should this be the other way around?
 	}
 	return { L, ray };
 }
@@ -300,7 +300,7 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	p.ray = Ray(hit.ray_origin(), hit.from_shading(bs.wi));
 	p.specular = bs.is_specular;
 
-	// Keep this as low as possible to minimize the live state kept between the shadow ray trace.
+	// Do this as late as possible to minimize the live state kept between the shadow ray trace.
 	var el = estimate_with_light_sample(p.rng, hit, wo);
 	if (all(el.L <= 0.f))
 		el.shadow.t = 0.f;

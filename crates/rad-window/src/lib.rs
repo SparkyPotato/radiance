@@ -43,7 +43,7 @@ struct AppWrapper<T: App> {
 
 impl<T: App> ApplicationHandler for AppWrapper<T> {
 	fn resumed(&mut self, el: &ActiveEventLoop) {
-		self.window = Some(Window::new("radiance", el).unwrap());
+		self.window = Some(Window::new("radiance", true, el).unwrap());
 		self.app.init(el, &self.window.as_ref().unwrap().inner).unwrap();
 	}
 
@@ -83,14 +83,15 @@ struct Window {
 	old_swapchain: OldSwapchain,
 	swapchain: vk::SwapchainKHR,
 	images: Vec<vk::Image>,
-	semas: [(vk::Semaphore, vk::Semaphore); 3],
+	semas: [(vk::Semaphore, vk::Semaphore); 2],
 	curr_frame: usize,
 	format: vk::Format,
 	size: vk::Extent2D,
+	hdr: bool,
 }
 
 impl Window {
-	pub fn new(title: &str, event_loop: &ActiveEventLoop) -> Result<Self> {
+	pub fn new(title: &str, hdr: bool, event_loop: &ActiveEventLoop) -> Result<Self> {
 		let device: &Device = Engine::get().global();
 		let inner = event_loop
 			.create_window(
@@ -115,11 +116,11 @@ impl Window {
 			semas: [
 				(semaphore(device)?, semaphore(device)?),
 				(semaphore(device)?, semaphore(device)?),
-				(semaphore(device)?, semaphore(device)?),
 			],
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
 			size: vk::Extent2D::default(),
+			hdr,
 		};
 		this.make(device)?;
 		Ok(this)
@@ -127,7 +128,7 @@ impl Window {
 
 	fn acquire(&mut self) -> Result<Option<(SwapchainImage, u32)>> {
 		unsafe {
-			self.curr_frame = (self.curr_frame + 1) % 3;
+			self.curr_frame ^= 1;
 			let (available, rendered) = self.semas[self.curr_frame];
 			let (id, _) =
 				match self
@@ -202,13 +203,23 @@ impl Window {
 				surface_ext.get_physical_device_surface_capabilities(device.physical_device(), self.surface)?;
 			let formats = surface_ext.get_physical_device_surface_formats(device.physical_device(), self.surface)?;
 
-			let (format, color_space) = formats
-				.iter()
-				.find(|format| {
-					format.format == vk::Format::B8G8R8A8_UNORM
-						&& format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+			let hdr = self
+				.hdr
+				.then(|| {
+					formats.iter().find(|x| {
+						x.format == vk::Format::A2B10G10R10_UNORM_PACK32
+							&& x.color_space == vk::ColorSpaceKHR::HDR10_ST2084_EXT
+					})
 				})
-				.map(|format| (format.format, format.color_space))
+				.flatten();
+
+			let (format, color_space) = hdr
+				.or_else(|| {
+					formats.iter().find(|x| {
+						x.format == vk::Format::B8G8R8A8_UNORM && x.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+					})
+				})
+				.map(|x| (x.format, x.color_space))
 				.unwrap_or((formats[0].format, formats[0].color_space));
 
 			self.cleanup_old(device)?;

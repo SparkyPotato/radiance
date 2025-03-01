@@ -1,6 +1,8 @@
 module egui;
 
 import graph;
+import graph.util;
+import graph.util.color;
 
 struct VertexInput {
 	f32x2 position;
@@ -44,19 +46,27 @@ VertexOutput vertex(u32 vertex: SV_VertexID) {
 	return output;
 }
 
-f32x3 srgb_gamma_from_linear(f32x3 rgb) {
-	let cutoff = rgb < 0.0031308;
-	let lower = rgb * 12.92;
-	let higher = 1.055 * pow(rgb, 1.0 / 2.4) - 0.055;
-	return lerp(higher, lower, f32x3(cutoff));
-}
-
-// 0-1 sRGBA gamma  from  0-1 linear
-f32x4 srgba_gamma_from_linear(f32x4 rgba) {
-	return f32x4(srgb_gamma_from_linear(rgba.rgb), rgba.a);
-}
+// All inputs are sRGB OETF encoded images with UNORM views (so the shader deals with encoded values, not linear).
+// In SDR, the output is also a UNORM view so we can directly write to the swapchain.
+// In HDR, convert to linear sRGB, then to linear Rec2020, and finally to PQ Rec2020.
 
 [shader("pixel")]
 f32x4 pixel(VertexOutput input) {
 	return Constants.image.sample(Constants.sampler, input.uv) * input.color;
+}
+
+struct BlitConstants {
+	Tex2D<f32x3> image;
+}
+
+[vk::push_constant]
+BlitConstants BConstants;
+
+[shader("pixel")]
+f32x4 blit(ScreenOutput input) {
+	var col = BConstants.image.load(BConstants.image.pixel_of_uv(input.uv));
+	col = rec709_eotf(col) * 200.f;
+	col = rec709_to_rec2020(col);
+	col = pq_oetf(col);
+	return f32x4(col, 1.f);
 }
