@@ -12,7 +12,10 @@ use rad_graph::{
 	graph::{Frame, RenderGraph, SwapchainImage},
 	Result,
 };
-use rad_window::winit::{event::WindowEvent, event_loop::ActiveEventLoop, window::Window as WWindow};
+use rad_window::{
+	winit::{event::WindowEvent, event_loop::ActiveEventLoop},
+	Window as WWindow,
+};
 use vek::Vec2;
 
 pub use crate::render::{raw_texture_to_id, to_texture_id};
@@ -35,7 +38,8 @@ impl Module for UiModule {
 
 pub struct Window<'a> {
 	pub inner: &'a WWindow,
-	pub format: vk::Format,
+	pub hdr: bool,
+	pub hdr_supported: bool,
 }
 
 impl Deref for Window<'_> {
@@ -53,7 +57,7 @@ pub struct UiApp<T> {
 }
 
 pub trait App {
-	fn render<'pass>(&'pass mut self, window: &Window, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()>;
+	fn render<'pass>(&'pass mut self, window: &mut Window, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()>;
 
 	fn on_window_event(&mut self, _window: &WWindow, _event: &WindowEvent) {}
 }
@@ -74,7 +78,7 @@ impl<T: App> UiApp<T> {
 }
 
 impl<T: App> rad_window::App for UiApp<T> {
-	fn init(&mut self, el: &ActiveEventLoop, _: &WWindow) -> Result<()> {
+	fn init(&mut self, el: &ActiveEventLoop, _: &mut WWindow) -> Result<()> {
 		self.state = Some(State::new(
 			Engine::get().global::<Context>().clone(),
 			ViewportId::default(),
@@ -87,21 +91,22 @@ impl<T: App> rad_window::App for UiApp<T> {
 		Ok(())
 	}
 
-	fn draw(&mut self, window: &WWindow, image: SwapchainImage) -> Result<()> {
+	fn draw(&mut self, window: &mut WWindow, image: SwapchainImage) -> Result<()> {
 		let ctx = Engine::get().global::<Context>();
 		self.arena.reset();
 
 		let mut frame = self.graph.frame(Engine::get().global(), &self.arena)?;
 
 		ctx.begin_pass(self.state.as_mut().unwrap().take_egui_input(window));
-		self.inner.render(
-			&Window {
-				inner: window,
-				format: image.format,
-			},
-			&mut frame,
-			ctx,
-		)?;
+		let hdr = image.format == vk::Format::A2B10G10R10_UNORM_PACK32;
+		let hdr_supported = window.hdr_supported();
+		let mut win = Window {
+			inner: window,
+			hdr,
+			hdr_supported,
+		};
+		self.inner.render(&mut win, &mut frame, ctx)?;
+		window.change_hdr(win.hdr)?;
 		let output = ctx.end_pass();
 
 		self.state
@@ -128,7 +133,7 @@ impl<T: App> rad_window::App for UiApp<T> {
 		Ok(())
 	}
 
-	fn event(&mut self, window: &WWindow, event: WindowEvent) -> Result<()> {
+	fn event(&mut self, window: &mut WWindow, event: WindowEvent) -> Result<()> {
 		self.inner.on_window_event(window, &event);
 		let _ = self.state.as_mut().unwrap().on_window_event(window, &event);
 		Ok(())

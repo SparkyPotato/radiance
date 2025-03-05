@@ -1,3 +1,5 @@
+use std::ops::Deref;
+
 use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{
 	ash::{khr, vk},
@@ -44,7 +46,7 @@ struct AppWrapper<T: App> {
 impl<T: App> ApplicationHandler for AppWrapper<T> {
 	fn resumed(&mut self, el: &ActiveEventLoop) {
 		self.window = Some(Window::new("radiance", true, el).unwrap());
-		self.app.init(el, &self.window.as_ref().unwrap().inner).unwrap();
+		self.app.init(el, self.window.as_mut().unwrap()).unwrap();
 	}
 
 	fn about_to_wait(&mut self, _: &ActiveEventLoop) {
@@ -61,7 +63,7 @@ impl<T: App> ApplicationHandler for AppWrapper<T> {
 					self.minimized = true;
 					return;
 				};
-				self.app.draw(&window.inner, image).unwrap();
+				self.app.draw(window, image).unwrap();
 				let _ = window.present(id);
 			},
 			WindowEvent::Resized(x) => {
@@ -71,12 +73,12 @@ impl<T: App> ApplicationHandler for AppWrapper<T> {
 				self.window.as_mut().unwrap().resize().unwrap()
 			},
 			WindowEvent::CloseRequested => el.exit(),
-			x => self.app.event(&self.window.as_ref().unwrap().inner, x).unwrap(),
+			x => self.app.event(self.window.as_mut().unwrap(), x).unwrap(),
 		}
 	}
 }
 
-struct Window {
+pub struct Window {
 	inner: WinitWindow,
 	surface: vk::SurfaceKHR,
 	swapchain_ext: khr::swapchain::Device,
@@ -87,7 +89,14 @@ struct Window {
 	curr_frame: usize,
 	format: vk::Format,
 	size: vk::Extent2D,
-	hdr: bool,
+	hdr_requested: bool,
+	hdr_supported: bool,
+}
+
+impl Deref for Window {
+	type Target = WinitWindow;
+
+	fn deref(&self) -> &Self::Target { &self.inner }
 }
 
 impl Window {
@@ -120,10 +129,22 @@ impl Window {
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
 			size: vk::Extent2D::default(),
-			hdr,
+			hdr_requested: hdr,
+			hdr_supported: false,
 		};
 		this.make(device)?;
 		Ok(this)
+	}
+
+	pub fn hdr_supported(&self) -> bool { self.hdr_supported }
+
+	pub fn change_hdr(&mut self, hdr: bool) -> Result<()> {
+		if self.hdr_requested != hdr {
+			self.hdr_requested = hdr;
+			self.resize()?;
+		}
+
+		Ok(())
 	}
 
 	fn acquire(&mut self) -> Result<Option<(SwapchainImage, u32)>> {
@@ -203,17 +224,15 @@ impl Window {
 				surface_ext.get_physical_device_surface_capabilities(device.physical_device(), self.surface)?;
 			let formats = surface_ext.get_physical_device_surface_formats(device.physical_device(), self.surface)?;
 
-			let hdr = self
-				.hdr
-				.then(|| {
-					formats.iter().find(|x| {
-						x.format == vk::Format::A2B10G10R10_UNORM_PACK32
-							&& x.color_space == vk::ColorSpaceKHR::HDR10_ST2084_EXT
-					})
-				})
-				.flatten();
+			let hdr_format = formats.iter().find(|x| {
+				x.format == vk::Format::A2B10G10R10_UNORM_PACK32 && x.color_space == vk::ColorSpaceKHR::HDR10_ST2084_EXT
+			});
+			self.hdr_supported = hdr_format.is_some();
 
-			let (format, color_space) = hdr
+			let (format, color_space) = self
+				.hdr_requested
+				.then_some(hdr_format)
+				.flatten()
 				.or_else(|| {
 					formats.iter().find(|x| {
 						x.format == vk::Format::B8G8R8A8_UNORM && x.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
@@ -290,9 +309,9 @@ pub fn semaphore(device: &Device) -> Result<vk::Semaphore> {
 }
 
 pub trait App {
-	fn init(&mut self, el: &ActiveEventLoop, window: &WinitWindow) -> Result<()>;
+	fn init(&mut self, el: &ActiveEventLoop, window: &mut Window) -> Result<()>;
 
-	fn draw(&mut self, window: &WinitWindow, image: SwapchainImage) -> Result<()>;
+	fn draw(&mut self, window: &mut Window, image: SwapchainImage) -> Result<()>;
 
-	fn event(&mut self, window: &WinitWindow, event: WindowEvent) -> Result<()>;
+	fn event(&mut self, window: &mut Window, event: WindowEvent) -> Result<()>;
 }

@@ -5,7 +5,7 @@ use rad_renderer::{
 	mesh::{CullStats, PassStats},
 	tonemap::exposure::{ExposureCalc, ExposureStats},
 };
-use rad_ui::egui::{ComboBox, Context, DragValue, Ui, Window};
+use rad_ui::egui::{Checkbox, ComboBox, Context, DragValue, Ui, Window};
 
 #[derive(Copy, Clone)]
 pub enum RenderMode {
@@ -80,7 +80,8 @@ impl DebugWindow {
 	}
 
 	pub fn render(
-		&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>, pt: Option<(ExposureStats, u32, bool)>,
+		&mut self, device: &Device, window: &mut rad_ui::Window, ctx: &Context, stats: Option<CullStats>,
+		pt: Option<(ExposureStats, u32, bool)>,
 	) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut sel = self.render_mode as usize;
@@ -93,10 +94,12 @@ impl DebugWindow {
 				_ => unreachable!(),
 			};
 
+			ui.add_enabled(window.hdr_supported, Checkbox::new(&mut window.hdr, "hdr output"));
+
 			match self.render_mode {
 				RenderMode::Path => {
 					let mut sel = self.tonemap as usize;
-					ui.add_enabled_ui(!pt.as_ref().unwrap().2, |ui| {
+					ui.add_enabled_ui(!pt.as_ref().map(|x| x.2).unwrap_or(false), |ui| {
 						ComboBox::from_label("tonemap")
 							.selected_text(Self::tonemap_text(sel))
 							.show_index(ui, &mut sel, 5, Self::tonemap_text)

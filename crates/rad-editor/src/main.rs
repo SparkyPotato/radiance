@@ -7,10 +7,7 @@ use rad_graph::{graph::Frame, Result};
 use rad_renderer::RendererModule;
 use rad_rhi::RhiModule;
 use rad_ui::{egui::Context, App, UiApp, UiModule, Window};
-use rad_window::{
-	winit::{event::WindowEvent, window::Window as WWindow},
-	WindowModule,
-};
+use rad_window::{winit::event::WindowEvent, Window as WWindow, WindowModule};
 use rad_world::WorldModule;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 
@@ -75,7 +72,7 @@ impl EditorApp {
 }
 
 impl App for EditorApp {
-	fn render<'pass>(&'pass mut self, window: &Window, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()> {
+	fn render<'pass>(&'pass mut self, window: &mut Window, frame: &mut Frame<'pass, '_>, ctx: &Context) -> Result<()> {
 		self.menu.render(ctx, &mut self.renderer);
 		self.assets.render(ctx, &mut self.world);
 		self.renderer.render(window, frame, ctx, &mut self.world);

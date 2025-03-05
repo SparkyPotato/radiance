@@ -1,5 +1,5 @@
 use rad_core::Engine;
-use rad_graph::{ash::vk, graph::Frame, Result};
+use rad_graph::{graph::Frame, Result};
 use rad_renderer::{
 	debug::mesh::DebugMesh,
 	mesh::{self, VisBuffer},
@@ -71,7 +71,8 @@ impl Renderer {
 	}
 
 	pub fn render<'pass>(
-		&'pass mut self, window: &Window, frame: &mut Frame<'pass, '_>, ctx: &Context, world: &'pass mut WorldContext,
+		&'pass mut self, window: &mut Window, frame: &mut Frame<'pass, '_>, ctx: &Context,
+		world: &'pass mut WorldContext,
 	) {
 		let (stats, pt) = CentralPanel::default()
 			.show(ctx, |ui| {
@@ -115,8 +116,7 @@ impl Renderer {
 							ui.input(|x| x.stable_dt),
 						);
 
-						let is_hdr = window.format == vk::Format::A2B10G10R10_UNORM_PACK32;
-						let img = if is_hdr {
+						let img = if window.hdr {
 							self.null.run(frame, raw, exp)
 						} else {
 							match self.debug_window.tonemap() {
@@ -128,7 +128,7 @@ impl Renderer {
 							}
 						};
 
-						(img, None, Some((stats, s, is_hdr)))
+						(img, None, Some((stats, s, window.hdr)))
 					},
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(
@@ -149,7 +149,7 @@ impl Renderer {
 			})
 			.inner;
 
-		self.debug_window.render(frame.device(), ctx, stats, pt);
+		self.debug_window.render(frame.device(), window, ctx, stats, pt);
 	}
 
 	pub unsafe fn destroy(self) {
