@@ -87,6 +87,7 @@ struct PushConstantsStatic {
 struct PushConstantsDynamic {
 	image: ImageId,
 	sampler: SamplerId,
+	hdr_image: u32,
 }
 
 impl Renderer {
@@ -193,10 +194,21 @@ impl Renderer {
 			for tris in tris.iter() {
 				match &tris.primitive {
 					Primitive::Mesh(m) => match m.texture_id {
-						TextureId::User(x) if (x & (1 << 63)) == 0 => pass.reference::<ImageView>(
-							Res::from_raw(x as _),
-							ImageUsage::format_sampled_2d(vk::Format::R8G8B8A8_UNORM, Shader::Fragment),
-						),
+						TextureId::User(x) if (x & (1 << 63)) == 0 => {
+							let res = Res::<ImageView>::from_raw(x as _);
+							let desc = pass.desc(res);
+							pass.reference::<ImageView>(
+								res,
+								ImageUsage::format_sampled_2d(
+									if desc.format == vk::Format::R8G8B8A8_SRGB {
+										vk::Format::R8G8B8A8_UNORM
+									} else {
+										desc.format
+									},
+									Shader::Fragment,
+								),
+							)
+						},
 						_ => {},
 					},
 					_ => {},
@@ -273,27 +285,35 @@ impl Renderer {
 					}
 					pass.scissor(rect);
 
-					let (image, sampler) = match m.texture_id {
+					let (image, sampler, hdr_image) = match m.texture_id {
 						TextureId::Managed(x) => {
 							let &img = io.imgs.get(&x).unwrap();
 							let &(_, _, sampler) = self.images.get(&x).unwrap();
-							(pass.pass.get(img).id.unwrap(), sampler)
+							(pass.pass.get(img).id.unwrap(), sampler, false)
 						},
 						TextureId::User(x) => {
 							let masked = x & !(1 << 63);
-							let image = unsafe {
+							let (image, hdr) = unsafe {
 								if masked != x {
-									ImageId::from_raw(masked as _)
+									(ImageId::from_raw(masked as _), false)
 								} else {
-									pass.pass.get(Res::<ImageView>::from_raw(masked as _)).id.unwrap()
+									let id = Res::<ImageView>::from_raw(masked as _);
+									(
+										pass.pass.get(id).id.unwrap(),
+										pass.pass.desc(id).format == vk::Format::A2B10G10R10_UNORM_PACK32,
+									)
 								}
 							};
-							(image, self.default_sampler)
+							(image, self.default_sampler, hdr)
 						},
 					};
 					pass.push(
 						std::mem::size_of::<PushConstantsStatic>(),
-						&PushConstantsDynamic { image, sampler },
+						&PushConstantsDynamic {
+							image,
+							sampler,
+							hdr_image: hdr_image as _,
+						},
 					);
 					pass.draw_indexed(m.indices.len() as u32, 1, start_index, start_vertex, 0);
 					start_index += m.indices.len() as u32;

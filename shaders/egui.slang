@@ -21,6 +21,7 @@ struct PushConstants {
 	VertexInput* vertices;
 	Tex2D<f32x4> image;
 	Sampler sampler;
+	u32 hdr_image;
 }
 
 [vk::push_constant]
@@ -46,13 +47,20 @@ VertexOutput vertex(u32 vertex: SV_VertexID) {
 	return output;
 }
 
-// All inputs are sRGB OETF encoded images with UNORM views (so the shader deals with encoded values, not linear).
-// In SDR, the output is also a UNORM view so we can directly write to the swapchain.
-// In HDR, convert to linear sRGB, then to linear Rec2020, and finally to PQ Rec2020.
+// Egui requires rendering in Rec709 OETF space, or else blending will be incorrect.
+// SDR images are Rec709 OETF encoded with UNORM views so they can be passed through as-is.
+// HDR images are PQ Rec2020 encoded, so we need to convert them to Rec709 OETF (out-of-gamut colors are preserved!)
 
 [shader("pixel")]
 f32x4 pixel(VertexOutput input) {
-	return Constants.image.sample(Constants.sampler, input.uv) * input.color;
+	var cola = Constants.image.sample(Constants.sampler, input.uv) * input.color;
+	var col = cola.xyz;
+	if (Constants.hdr_image != 0) {
+		col = pq_eotf(col) / 200.f;
+		col = rec2020_to_rec709(col);
+		col = rec709_oetf(col);
+	}
+	return f32x4(col, cola.w);
 }
 
 struct BlitConstants {
@@ -62,11 +70,14 @@ struct BlitConstants {
 [vk::push_constant]
 BlitConstants BConstants;
 
+// The blit is only used for HDR output.
+// Since the UI is in Rec709 OETF, we must convert to PQ Rec2020 before writing.
+
 [shader("pixel")]
 f32x4 blit(ScreenOutput input) {
 	var col = BConstants.image.load(BConstants.image.pixel_of_uv(input.uv));
-	col = rec709_eotf(col) * 200.f;
-	col = rec709_to_rec2020(col);
+	col = rec709_eotf(col);
+	col = rec709_to_rec2020(col) * 200.f;
 	col = pq_oetf(col);
 	return f32x4(col, 1.f);
 }

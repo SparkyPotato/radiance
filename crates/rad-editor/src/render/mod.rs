@@ -10,6 +10,7 @@ use rad_renderer::{
 		aces::AcesTonemap,
 		agx::{AgXLook, AgXTonemap},
 		exposure::ExposureCalc,
+		null::NullTonemap,
 		tony_mc_mapface::TonyMcMapfaceTonemap,
 	},
 	vek::Vec2,
@@ -41,6 +42,7 @@ pub struct Renderer {
 	aces: AcesTonemap,
 	agx: AgXTonemap,
 	tony_mcmapface: TonyMcMapfaceTonemap,
+	null: NullTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
 }
@@ -57,6 +59,7 @@ impl Renderer {
 			aces: AcesTonemap::new(device)?,
 			agx: AgXTonemap::new(device)?,
 			tony_mcmapface: TonyMcMapfaceTonemap::new(device)?,
+			null: NullTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
 		})
@@ -110,13 +113,14 @@ impl Renderer {
 							self.debug_window.exposure_compensation(),
 							ui.input(|x| x.stable_dt),
 						);
-						let img = match self.debug_window.tonemap() {
-							Tonemap::Aces => self.aces.run(frame, hdr, exp),
-							Tonemap::AgX => self.agx.run(frame, hdr, exp, AgXLook::default()),
-							Tonemap::AgXPunchy => self.agx.run(frame, hdr, exp, AgXLook::punchy()),
-							Tonemap::AgXFilmic => self.agx.run(frame, hdr, exp, AgXLook::filmic()),
-							Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, hdr, exp),
-						};
+						// let img = match self.debug_window.tonemap() {
+						// 	Tonemap::Aces => self.aces.run(frame, hdr, exp),
+						// 	Tonemap::AgX => self.agx.run(frame, hdr, exp, AgXLook::default()),
+						// 	Tonemap::AgXPunchy => self.agx.run(frame, hdr, exp, AgXLook::punchy()),
+						// 	Tonemap::AgXFilmic => self.agx.run(frame, hdr, exp, AgXLook::filmic()),
+						// 	Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, hdr, exp),
+						// };
+						let img = self.null.run(frame, hdr, exp);
 						(img, None, Some((stats, s)))
 					},
 					RenderMode::Debug => {

@@ -34,7 +34,7 @@ f32x3 li(inout Rng rng, Ray ray) {
 			break;
 
 		if (bounces > 1) {
-			let q = max(0.05f, 1.f - luminance(p.b));
+			let q = max(0.05f, 1.f - luminance_rec2020(p.b));
 			if (p.rng.sample() < q)
 				break;
 			p.b /= 1.f - q;

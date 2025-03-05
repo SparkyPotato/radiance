@@ -1,3 +1,5 @@
+module agx;
+
 // https://iolite-engine.com/blog_posts/minimal_agx_implementation
 // https://github.com/Sunset-Flock/Timberdoodle/blob/main/src/rendering/tasks/write_swapchain.hlsl
 
@@ -18,6 +20,8 @@ static const f32x3x3 LINEAR_REC2020_TO_LINEAR_SRGB = transpose(
 	float3x3(float3(1.6605, -0.1246, -0.0182), float3(-0.5876, 1.1329, -0.1006), float3(-0.0728, -0.0083, 1.1187)));
 static const f32x3x3 LINEAR_SRGB_TO_LINEAR_REC2020 =
 	transpose(float3x3(float3(0.6274, 0.0691, 0.0164), float3(0.3293, 0.9195, 0.0880), float3(0.0433, 0.0113, 0.8956)));
+
+// TODO: Make this work in Rec709 and Rec2020.
 
 struct AgX : IFunc<f32x3, f32x3> {
 	f32x3 offset;
@@ -43,7 +47,7 @@ struct AgX : IFunc<f32x3, f32x3> {
 	}
 
 	f32x3 agx_look(f32x3 val) {
-		let lum = luminance(val);
+		let lum = luminance_rec2020(val);
 		val = pow(val * this.slope + this.offset, this.power);
 		return lum + this.sat * (val - lum);
 	}

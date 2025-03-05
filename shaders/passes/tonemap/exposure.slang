@@ -1,3 +1,5 @@
+module exposure;
+
 // https://bruop.github.io/exposure/
 
 import graph;
@@ -33,7 +35,7 @@ void histogram(u32x2 id: SV_DispatchThreadID, u32 gid: SV_GroupIndex, u32x2 grou
 	let size = HConstants.input.size();
 	if (id.x < size.x && id.y < size.y) {
 		let color = HConstants.input.load(id).xyz;
-		let bin = u32(bin_lum(luminance(color)));
+		let bin = u32(bin_lum(luminance_rec2020(color)));
 		atomic_add(shared_histogram[bin], 1, Scope.Workgroup, Loc.Workgroup);
 	}
 	workgroup_sync_barrier();

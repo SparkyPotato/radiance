@@ -86,8 +86,11 @@ f32x3 eval_lambert(ShadingParams params, f32x3 wo, f32x3 wi) {
 	return diffuse_color / PI;
 }
 
-f32x3 sample_lambert(inout Rng rng) {
-	return rng.sample_cos_hemi();
+BsdfSample sample_lambert(inout Rng rng, ShadingParams params, f32x3 wo) {
+	let wi = rng.sample_cos_hemi();
+	let pdf = pdf_lambert(wi);
+	let f = eval_lambert(params, wo, wi);
+	return { f, wi, pdf, false };
 }
 
 f32 pdf_lambert(f32x3 wi) {
@@ -192,18 +195,19 @@ f32x3 eval_ggx(ShadingParams params, f32x3 wo, f32x3 wm, f32x3 wi) {
 	return rho_ss * (1.f + m_ss);
 }
 
-f32x3 sample_ggx(inout Rng rng, ShadingParams params, f32x3 wo) {
-	if (params.roughness < 0.001f)
-		return f32x3(-wo.xy, wo.z);
+BsdfSample sample_ggx(inout Rng rng, ShadingParams params, f32x3 wo) {
+	if (params.roughness < 0.001f) {
+		let wi = f32x3(-wo.xy, wo.z);
+		let pdf = 1.f;
+		let f = lerp(f32x3(0.04f), params.base_color, params.metallic);
+		return { f, wi, pdf, true };
+	}
 
 	let wm = sample_dv_ggx(rng, wo, params.roughness);
-	return reflect(-wo, wm);
-}
-
-public f32 pow_heuristic(u32 nf, f32 f_pdf, u32 ng, f32 g_pdf) {
-	let f = f_pdf * f32(nf);
-	let g = g_pdf * f32(ng);
-	return f * f / (f * f + g * g);
+	let wi = reflect(-wo, wm);
+	let pdf = pdf_ggx(wm, wo, params.roughness);
+	let f = eval_ggx(params, wo, wm, wi);
+	return { f, wi, pdf, false };
 }
 
 public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
@@ -214,26 +218,22 @@ public f32x3 eval_bsdf(ShadingParams params, f32x3 wo, f32x3 wi) {
 }
 
 public BsdfSample sample_bsdf(inout Rng rng, ShadingParams params, f32x3 wo) {
-	let spec = params.roughness < 0.001f;
 	let lambert_chance = lerp(lerp(0.4f, 0.9f, params.roughness), 0.f, params.metallic);
 	let spec_chance = 1.f - lambert_chance;
 
-	f32x3 wi;
+	BsdfSample s;
 	if (rng.sample() < lambert_chance) {
-		wi = sample_lambert(rng);
+		s = sample_lambert(rng, params, wo);
+		let wm = normalize(s.wi + wo);
+		let pdf_r = pdf_ggx(wm, wo, params.roughness);
+		s.f *= bal_heuristic_1(s.pdf, pdf_r);
 	} else {
-		wi = sample_ggx(rng, params, wo);
+		s = sample_ggx(rng, params, wo);
+		let pdf_d = pdf_lambert(s.wi);
+		s.f *= bal_heuristic_1(s.pdf, pdf_d);
+		s.is_specular &= lambert_chance == 0.f;
 	}
-
-	let wm = normalize(wi + wo);
-	let fd = eval_lambert(params, wo, wi);
-	let f0 = lerp(f32x3(0.04f), params.base_color, params.metallic);
-	let fr = spec ? f0 : eval_ggx(params, wo, wm, wi);
-
-	let pdf_d = lambert_chance * pdf_lambert(wi);
-	let pdf_r = spec_chance * (spec ? 1.f : pdf_ggx(wm, wo, params.roughness));
-
-	return { fd + fr, wi, pdf_d + pdf_r, spec && lambert_chance == 0.f };
+	return s;
 }
 
 public f32 bsdf_pdf(ShadingParams params, f32x3 wo, f32x3 wi) {

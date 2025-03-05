@@ -1,3 +1,5 @@
+module tony_mc_mapface;
+
 import graph;
 import graph.util;
 import passes.tonemap.common;

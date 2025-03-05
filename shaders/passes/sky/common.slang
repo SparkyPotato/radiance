@@ -9,6 +9,9 @@ module common;
 // https://github.com/Sunset-Flock/Timberdoodle/
 
 import graph;
+import graph.util.color;
+
+// TODO: Render in Rec2020.
 
 // TODO: parameterize over these.
 public static const f32 GROUND_RADIUS_MM = 6.36f;

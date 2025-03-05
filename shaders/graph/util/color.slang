@@ -2,9 +2,7 @@ module color;
 
 import graph;
 
-public f32 luminance(f32x3 color) {
-	return dot(color, f32x3(0.2125f, 0.7154f, 0.0721f));
-}
+// TODO: Make a color type generic over a colorspace.
 
 public f32x3 rec709_to_xyz(f32x3 color) {
 	// clang-format off
@@ -59,16 +57,19 @@ public f32x3 Yxy_to_xyz(f32x3 color) {
 	return f32x3(color.x * color.y / color.z, color.x, color.x * (1.f - color.y - color.z) / color.z);
 }
 
-public f32x3 rec709_to_Yxy(f32x3 color) {
-	return xyz_to_Yxy(rec709_to_xyz(color));
-}
-
-public f32x3 Yxy_to_rec709(f32x3 color) {
-	return xyz_to_rec709(Yxy_to_xyz(color));
-}
-
 public f32x3 rec709_to_rec2020(f32x3 color) {
 	return xyz_to_rec2020(rec709_to_xyz(color));
+}
+
+public f32x3 rec2020_to_rec709(f32x3 color) {
+	return xyz_to_rec709(rec2020_to_xyz(color));
+}
+
+public f32x3 rec709_oetf(f32x3 color) {
+	let mask = color < 0.018f;
+	let a = color * 4.5f;
+	let b = 1.099f * pow(color, 0.45f) - 0.099f;
+	return select(mask, a, b);
 }
 
 public f32x3 rec709_eotf(f32x3 color) {
@@ -88,4 +89,23 @@ public f32x3 pq_oetf(f32x3 color) {
 	let y = color / 10000.f;
 	let ym1 = pow(y, m1);
 	return pow((c1 + c2 * ym1) / (1.f + c3 * ym1), m2);
+}
+
+public f32x3 pq_eotf(f32x3 color) {
+	let m1 = 1305.f / 8192.f;
+	let m2 = 2523.f / 32.f;
+	let c1 = 107.f / 128.f;
+	let c2 = 2413.f / 128.f;
+	let c3 = 2392.f / 128.f;
+
+	let ym2 = pow(color, 1.f / m2);
+	return 10000.f * pow((max(ym2 - c1, 0.f)) / (c2 - c3 * ym2), 1.f / m1);
+}
+
+public f32 luminance_rec709(f32x3 color) {
+	return rec709_to_xyz(color).y;
+}
+
+public f32 luminance_rec2020(f32x3 color) {
+	return rec2020_to_xyz(color).y;
 }

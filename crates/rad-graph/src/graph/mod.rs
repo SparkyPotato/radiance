@@ -176,6 +176,7 @@ impl Frame<'_, '_> {
 		let arena = self.arena();
 		// SAFETY: data is reset when the frame is constructed.
 		unsafe {
+			device.device().device_wait_idle()?;
 			self.graph.caches.upload_buffers[self.graph.curr_frame].reset(device);
 			self.graph.caches.buffers.reset(device);
 			self.graph.caches.persistent_buffers.reset(device);

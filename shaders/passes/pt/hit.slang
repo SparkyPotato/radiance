@@ -1,4 +1,5 @@
 import graph;
+import graph.util.color;
 import graph.util.rng;
 import asset;
 import passes.bsdf;
@@ -127,12 +128,12 @@ struct Hit {
 		let white = f32x4(1.f);
 		let blue = f32x4(0.f, 0.f, 1.f, 1.f);
 
-		this.params.base_color = (bc.sample(s, thit.uv, white) * mat->base_color_factor).xyz;
+		this.params.base_color = rec709_to_rec2020((bc.sample(s, thit.uv, white) * mat->base_color_factor).xyz);
 		let met_rough = mr.sample(s, thit.uv, white);
 		let rough = met_rough.y * mat->roughness_factor;
 		this.params.metallic = met_rough.z * mat->metallic_factor;
 		this.params.roughness = rough * rough;
-		this.emissive = em.sample(s, thit.uv, white).xyz * mat->emissive_factor;
+		this.emissive = rec709_to_rec2020(em.sample(s, thit.uv, white).xyz * mat->emissive_factor);
 
 		this.params.ggx_energy_compensation_lut = Constants.ggx_energy_compensation_lut;
 		this.params.lut_sampler = Constants.sampler;
@@ -188,7 +189,7 @@ LightSample sample_emissive(inout Rng rng, Hit hit, u32 i) {
 	let mat = instance->material;
 	let em = mat->emissive.get();
 	let emf = mat->emissive_factor;
-	let L = em.sample(Constants.sampler, thit.uv, f32x4(1.f)).xyz * emf;
+	let L = rec709_to_rec2020(em.sample(Constants.sampler, thit.uv, f32x4(1.f)).xyz * emf);
 
 	let r = thit.position - hit.position;
 	let t2 = dot(r, r);
@@ -208,7 +209,7 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 			let pos = light.pos_or_dir;
 			let dir = pos - hit.position;
 			let t2 = dot(dir, dir);
-			let L = light.radiance / t2;
+			let L = rec709_to_rec2020(light.radiance / t2);
 			let t = sqrt(t2);
 			let wi = dir / t;
 			return { L, wi, t, 1.f, true };
@@ -216,7 +217,7 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 		case LightType.Directional: {
 			// TODO: sample disk and figure out atmosphere transmittance correctly.
 			let dir = -light.pos_or_dir;
-			let L = light.radiance * Constants.sky.sun_transmittance(hit.position, dir);
+			let L = rec709_to_rec2020(light.radiance * Constants.sky.sun_transmittance(hit.position, dir));
 			let disk_pdf = solid_angle_pdf(radians(0.5f));
 			return { L / disk_pdf, dir, 1e10f, 1.f, true };
 		}
@@ -232,7 +233,7 @@ LightSample sample_light(inout Rng rng, Hit hit, Light light) {
 LightSample sample_sky(inout Rng rng, Hit hit) {
 	let wi = rng.sample_cos_hemi();
 	let dir = hit.from_shading(wi);
-	let L = Constants.sky.sample(hit.position, dir);
+	let L = rec709_to_rec2020(Constants.sky.sample(hit.position, dir));
 	return { L, dir, 1e10f, wi.z / PI, false };
 }
 
@@ -272,7 +273,7 @@ LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	var L = f * abs(wi.z) * ls.L / ls.pdf;
 	if (!ls.punctual) {
 		let p_bounce = bsdf_pdf(hit.params, wo, wi);
-		L *= pow_heuristic(1, ls.pdf, 1, p_bounce);	 // Should this be the other way around?
+		L *= pow_heuristic_1(ls.pdf, p_bounce);	 // Should this be the other way around?
 	}
 	return { L, ray };
 }
@@ -287,7 +288,7 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	if (!p.specular) {
 		// MIS for area light.
 		let p_light = light_sample_pdf() / (hit.area * f32(hit.tri_count));
-		w = pow_heuristic(1, p.p_bounce, 1, p_light);
+		w = pow_heuristic_1(p.p_bounce, p_light);
 	}
 	p.L += p.b * w * le;
 	// TODO: disable MIS if the ray hits a light without a bsdf?

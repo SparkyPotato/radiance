@@ -60,3 +60,11 @@ public struct Rng {
 		return float3(p.x, p.y, z);
 	}
 }
+
+public f32 pow_heuristic_1(f32 f, f32 g) {
+	return f * f / (f * f + g * g);
+}
+
+public f32 bal_heuristic_1(f32 f, f32 g) {
+	return f / (f + g);
+}
