@@ -3,7 +3,6 @@
 // levels.
 // https://alextardif.com/Tonemapping.html
 
-pub mod aces;
 pub mod agx;
 pub mod exposure;
 pub mod null;

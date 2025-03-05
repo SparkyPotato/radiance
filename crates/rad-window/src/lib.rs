@@ -45,7 +45,7 @@ struct AppWrapper<T: App> {
 
 impl<T: App> ApplicationHandler for AppWrapper<T> {
 	fn resumed(&mut self, el: &ActiveEventLoop) {
-		self.window = Some(Window::new("radiance", true, el).unwrap());
+		self.window = Some(Window::new("radiance", el).unwrap());
 		self.app.init(el, self.window.as_mut().unwrap()).unwrap();
 	}
 
@@ -89,6 +89,7 @@ pub struct Window {
 	curr_frame: usize,
 	format: vk::Format,
 	size: vk::Extent2D,
+	vsync: bool,
 	hdr_requested: bool,
 	hdr_supported: bool,
 }
@@ -100,7 +101,7 @@ impl Deref for Window {
 }
 
 impl Window {
-	pub fn new(title: &str, hdr: bool, event_loop: &ActiveEventLoop) -> Result<Self> {
+	fn new(title: &str, event_loop: &ActiveEventLoop) -> Result<Self> {
 		let device: &Device = Engine::get().global();
 		let inner = event_loop
 			.create_window(
@@ -129,21 +130,33 @@ impl Window {
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
 			size: vk::Extent2D::default(),
-			hdr_requested: hdr,
+			vsync: true,
+			hdr_requested: true,
 			hdr_supported: false,
 		};
 		this.make(device)?;
 		Ok(this)
 	}
 
+	pub fn hdr_enabled(&self) -> bool { self.format == vk::Format::A2B10G10R10_UNORM_PACK32 }
+
 	pub fn hdr_supported(&self) -> bool { self.hdr_supported }
 
-	pub fn change_hdr(&mut self, hdr: bool) -> Result<()> {
+	pub fn set_hdr(&mut self, hdr: bool) -> Result<()> {
 		if self.hdr_requested != hdr {
 			self.hdr_requested = hdr;
 			self.resize()?;
 		}
+		Ok(())
+	}
 
+	pub fn vsync_enabled(&self) -> bool { self.vsync }
+
+	pub fn set_vsync(&mut self, vsync: bool) -> Result<()> {
+		if self.vsync != vsync {
+			self.vsync = vsync;
+			self.resize()?;
+		}
 		Ok(())
 	}
 
@@ -249,24 +262,31 @@ impl Window {
 				};
 			}
 
+			let queues = device.queue_families();
+			self.size = vk::Extent2D {
+				width: size.width,
+				height: size.height,
+			};
 			self.swapchain = self
 				.swapchain_ext
 				.create_swapchain(
 					&vk::SwapchainCreateInfoKHR::default()
 						.surface(self.surface)
-						.min_image_count(if (capabilities.min_image_count..=capabilities.max_image_count).contains(&2) { 2 } else { capabilities.min_image_count })
+						.min_image_count(3.clamp(capabilities.min_image_count, capabilities.max_image_count))
 						.image_format(format)
 						.image_color_space(color_space)
-						.image_extent(vk::Extent2D {
-							width: size.width,
-							height: size.height,
-						})
+						.image_extent(self.size)
 						.image_array_layers(1)
-						.image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT) // Check
-						.image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+						.image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+						.image_sharing_mode(vk::SharingMode::CONCURRENT)
+						.queue_family_indices(&[queues.graphics, queues.compute, queues.transfer])
 						.pre_transform(capabilities.current_transform)
 						.composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-						.present_mode(vk::PresentModeKHR::FIFO)
+						.present_mode(if self.vsync {
+							vk::PresentModeKHR::FIFO
+						} else {
+							vk::PresentModeKHR::IMMEDIATE
+						})
 						.old_swapchain(self.old_swapchain.swapchain)
 						.clipped(true),
 					None,
@@ -274,10 +294,6 @@ impl Window {
 				.unwrap();
 			self.images = self.swapchain_ext.get_swapchain_images(self.swapchain).unwrap();
 			self.format = format;
-			self.size = vk::Extent2D {
-				width: size.width,
-				height: size.height,
-			};
 		}
 
 		Ok(())

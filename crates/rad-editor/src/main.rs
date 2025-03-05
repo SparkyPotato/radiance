@@ -6,8 +6,8 @@ use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{graph::Frame, Result};
 use rad_renderer::RendererModule;
 use rad_rhi::RhiModule;
-use rad_ui::{egui::Context, App, UiApp, UiModule, Window};
-use rad_window::{winit::event::WindowEvent, Window as WWindow, WindowModule};
+use rad_ui::{egui::Context, App, UiApp, UiModule};
+use rad_window::{winit::event::WindowEvent, Window, WindowModule};
 use rad_world::WorldModule;
 use tracing_subscriber::{fmt::format::FmtSpan, layer::SubscriberExt, EnvFilter, Layer, Registry};
 
@@ -80,7 +80,7 @@ impl App for EditorApp {
 		Ok(())
 	}
 
-	fn on_window_event(&mut self, window: &WWindow, event: &WindowEvent) {
+	fn window_event(&mut self, window: &mut Window, event: &WindowEvent) {
 		self.renderer.on_window_event(window, event);
 	}
 }

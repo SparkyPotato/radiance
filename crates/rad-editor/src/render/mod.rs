@@ -7,7 +7,6 @@ use rad_renderer::{
 	scene::{camera::CameraSceneInfo, WorldRenderer},
 	sky::SkyLuts,
 	tonemap::{
-		aces::AcesTonemap,
 		agx::{AgXLook, AgXTonemap},
 		exposure::ExposureCalc,
 		null::NullTonemap,
@@ -18,9 +17,8 @@ use rad_renderer::{
 use rad_ui::{
 	egui::{CentralPanel, Context, Image, PointerButton, Sense},
 	to_texture_id,
-	Window,
 };
-use rad_window::winit::{event::WindowEvent, window::Window as WWindow};
+use rad_window::{winit::event::WindowEvent, Window};
 use tracing::trace_span;
 
 use crate::{
@@ -40,7 +38,6 @@ pub struct Renderer {
 	visbuffer: VisBuffer,
 	pt: PathTracer,
 	exposure: ExposureCalc,
-	aces: AcesTonemap,
 	agx: AgXTonemap,
 	tony_mcmapface: TonyMcMapfaceTonemap,
 	null: NullTonemap,
@@ -57,7 +54,6 @@ impl Renderer {
 			visbuffer: VisBuffer::new(device)?,
 			pt: PathTracer::new(device)?,
 			exposure: ExposureCalc::new(device)?,
-			aces: AcesTonemap::new(device)?,
 			agx: AgXTonemap::new(device)?,
 			tony_mcmapface: TonyMcMapfaceTonemap::new(device)?,
 			null: NullTonemap::new(device)?,
@@ -66,7 +62,7 @@ impl Renderer {
 		})
 	}
 
-	pub fn on_window_event(&mut self, window: &WWindow, event: &WindowEvent) {
+	pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
 		self.camera.on_window_event(window, event);
 	}
 
@@ -116,19 +112,17 @@ impl Renderer {
 							ui.input(|x| x.stable_dt),
 						);
 
-						let img = if window.hdr {
+						let img = if window.hdr_enabled() {
 							self.null.run(frame, raw, exp)
 						} else {
 							match self.debug_window.tonemap() {
-								Tonemap::Aces => self.aces.run(frame, raw, exp),
 								Tonemap::AgX => self.agx.run(frame, raw, exp, AgXLook::default()),
 								Tonemap::AgXPunchy => self.agx.run(frame, raw, exp, AgXLook::punchy()),
-								Tonemap::AgXFilmic => self.agx.run(frame, raw, exp, AgXLook::filmic()),
 								Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, raw, exp),
 							}
 						};
 
-						(img, None, Some((stats, s, window.hdr)))
+						(img, None, Some((stats, s)))
 					},
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(
@@ -157,7 +151,6 @@ impl Renderer {
 		self.visbuffer.destroy();
 		self.pt.destroy();
 		self.exposure.destroy();
-		self.aces.destroy();
 		self.agx.destroy();
 		self.tony_mcmapface.destroy();
 		self.debug.destroy();

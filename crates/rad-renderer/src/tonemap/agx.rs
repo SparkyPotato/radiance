@@ -38,15 +38,6 @@ impl AgXLook {
 		Self {
 			offset: Vec3::broadcast(0.0),
 			slope: Vec3::broadcast(1.0),
-			power: Vec3::broadcast(1.35),
-			sat: 1.4,
-		}
-	}
-
-	pub fn filmic() -> Self {
-		Self {
-			offset: Vec3::broadcast(0.0),
-			slope: Vec3::broadcast(1.0),
 			power: Vec3::broadcast(1.1),
 			sat: 1.1,
 		}

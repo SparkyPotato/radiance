@@ -15,10 +15,8 @@ pub enum RenderMode {
 
 #[derive(Copy, Clone)]
 pub enum Tonemap {
-	Aces,
 	AgX,
 	AgXPunchy,
-	AgXFilmic,
 	TonyMcMapface,
 }
 
@@ -70,18 +68,16 @@ impl DebugWindow {
 
 	fn tonemap_text(tonemap: usize) -> &'static str {
 		match tonemap {
-			0 => "aces",
-			1 => "agx",
-			2 => "agx (punchy)",
-			3 => "agx (filmic)",
-			4 => "tony mcmapface",
+			0 => "agx",
+			1 => "agx (punchy)",
+			2 => "tony mcmapface",
 			_ => unreachable!(),
 		}
 	}
 
 	pub fn render(
-		&mut self, device: &Device, window: &mut rad_ui::Window, ctx: &Context, stats: Option<CullStats>,
-		pt: Option<(ExposureStats, u32, bool)>,
+		&mut self, device: &Device, window: &mut rad_window::Window, ctx: &Context, stats: Option<CullStats>,
+		pt: Option<(ExposureStats, u32)>,
 	) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut sel = self.render_mode as usize;
@@ -94,22 +90,28 @@ impl DebugWindow {
 				_ => unreachable!(),
 			};
 
-			ui.add_enabled(window.hdr_supported, Checkbox::new(&mut window.hdr, "hdr output"));
+			let dt = ui.input(|x| x.unstable_dt);
+			ui.label(format!("frame time: {:.2} ms / {:.0} fps", dt * 1000.0, 1.0 / dt));
+
+			let mut hdr = window.hdr_enabled();
+			ui.add_enabled(window.hdr_supported(), Checkbox::new(&mut hdr, "hdr output"));
+			let _ = window.set_hdr(hdr);
+			let mut vsync = window.vsync_enabled();
+			ui.add(Checkbox::new(&mut vsync, "vsync"));
+			let _ = window.set_vsync(vsync);
 
 			match self.render_mode {
 				RenderMode::Path => {
 					let mut sel = self.tonemap as usize;
-					ui.add_enabled_ui(!pt.as_ref().map(|x| x.2).unwrap_or(false), |ui| {
+					ui.add_enabled_ui(!hdr, |ui| {
 						ComboBox::from_label("tonemap")
 							.selected_text(Self::tonemap_text(sel))
-							.show_index(ui, &mut sel, 5, Self::tonemap_text)
+							.show_index(ui, &mut sel, 3, Self::tonemap_text)
 					});
 					self.tonemap = match sel {
-						0 => Tonemap::Aces,
-						1 => Tonemap::AgX,
-						2 => Tonemap::AgXPunchy,
-						3 => Tonemap::AgXFilmic,
-						4 => Tonemap::TonyMcMapface,
+						0 => Tonemap::AgX,
+						1 => Tonemap::AgXPunchy,
+						2 => Tonemap::TonyMcMapface,
 						_ => unreachable!(),
 					};
 				},
@@ -161,7 +163,7 @@ impl DebugWindow {
 				Self::pass_stats(ui, stats.late);
 			}
 
-			if let Some((exp, samples, _)) = pt {
+			if let Some((exp, samples)) = pt {
 				ui.label(format!("samples: {}", samples));
 
 				ui.label(format!("exposure: {:.2}", exp.exposure));
