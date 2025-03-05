@@ -6,9 +6,9 @@ use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{graph::Frame, Result};
 use rad_renderer::RendererModule;
 use rad_rhi::RhiModule;
-use rad_ui::{egui::Context, App, UiApp, UiModule};
+use rad_ui::{egui::Context, App, UiApp, UiModule, Window};
 use rad_window::{
-	winit::{event::WindowEvent, window::Window},
+	winit::{event::WindowEvent, window::Window as WWindow},
 	WindowModule,
 };
 use rad_world::WorldModule;
@@ -83,7 +83,7 @@ impl App for EditorApp {
 		Ok(())
 	}
 
-	fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
+	fn on_window_event(&mut self, window: &WWindow, event: &WindowEvent) {
 		self.renderer.on_window_event(window, event);
 	}
 }

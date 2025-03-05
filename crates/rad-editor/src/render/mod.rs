@@ -1,5 +1,5 @@
 use rad_core::Engine;
-use rad_graph::{graph::Frame, Result};
+use rad_graph::{ash::vk, graph::Frame, Result};
 use rad_renderer::{
 	debug::mesh::DebugMesh,
 	mesh::{self, VisBuffer},
@@ -18,8 +18,9 @@ use rad_renderer::{
 use rad_ui::{
 	egui::{CentralPanel, Context, Image, PointerButton, Sense},
 	to_texture_id,
+	Window,
 };
-use rad_window::winit::{event::WindowEvent, window::Window};
+use rad_window::winit::{event::WindowEvent, window::Window as WWindow};
 use tracing::trace_span;
 
 use crate::{
@@ -65,7 +66,7 @@ impl Renderer {
 		})
 	}
 
-	pub fn on_window_event(&mut self, window: &Window, event: &WindowEvent) {
+	pub fn on_window_event(&mut self, window: &WWindow, event: &WindowEvent) {
 		self.camera.on_window_event(window, event);
 	}
 
@@ -99,7 +100,7 @@ impl Renderer {
 				let (img, stats, exp) = match self.debug_window.render_mode() {
 					RenderMode::Path => {
 						let sky = self.sky.run(frame, &mut rend);
-						let (hdr, s) = self.pt.run(
+						let (raw, s) = self.pt.run(
 							frame,
 							&mut rend,
 							pt::RenderInfo {
@@ -109,19 +110,25 @@ impl Renderer {
 						);
 						let (exp, stats) = self.exposure.run(
 							frame,
-							hdr,
+							raw,
 							self.debug_window.exposure_compensation(),
 							ui.input(|x| x.stable_dt),
 						);
-						// let img = match self.debug_window.tonemap() {
-						// 	Tonemap::Aces => self.aces.run(frame, hdr, exp),
-						// 	Tonemap::AgX => self.agx.run(frame, hdr, exp, AgXLook::default()),
-						// 	Tonemap::AgXPunchy => self.agx.run(frame, hdr, exp, AgXLook::punchy()),
-						// 	Tonemap::AgXFilmic => self.agx.run(frame, hdr, exp, AgXLook::filmic()),
-						// 	Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, hdr, exp),
-						// };
-						let img = self.null.run(frame, hdr, exp);
-						(img, None, Some((stats, s)))
+
+						let is_hdr = window.format == vk::Format::A2B10G10R10_UNORM_PACK32;
+						let img = if is_hdr {
+							self.null.run(frame, raw, exp)
+						} else {
+							match self.debug_window.tonemap() {
+								Tonemap::Aces => self.aces.run(frame, raw, exp),
+								Tonemap::AgX => self.agx.run(frame, raw, exp, AgXLook::default()),
+								Tonemap::AgXPunchy => self.agx.run(frame, raw, exp, AgXLook::punchy()),
+								Tonemap::AgXFilmic => self.agx.run(frame, raw, exp, AgXLook::filmic()),
+								Tonemap::TonyMcMapface => self.tony_mcmapface.run(frame, raw, exp),
+							}
+						};
+
+						(img, None, Some((stats, s, is_hdr)))
 					},
 					RenderMode::Debug => {
 						let visbuffer = self.visbuffer.run(
@@ -151,6 +158,7 @@ impl Renderer {
 		self.pt.destroy();
 		self.exposure.destroy();
 		self.aces.destroy();
+		self.agx.destroy();
 		self.tony_mcmapface.destroy();
 		self.debug.destroy();
 	}

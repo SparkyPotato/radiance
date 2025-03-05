@@ -80,7 +80,7 @@ impl DebugWindow {
 	}
 
 	pub fn render(
-		&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>, pt: Option<(ExposureStats, u32)>,
+		&mut self, device: &Device, ctx: &Context, stats: Option<CullStats>, pt: Option<(ExposureStats, u32, bool)>,
 	) {
 		Window::new("debug").open(&mut self.enabled).show(ctx, |ui| {
 			let mut sel = self.render_mode as usize;
@@ -96,9 +96,11 @@ impl DebugWindow {
 			match self.render_mode {
 				RenderMode::Path => {
 					let mut sel = self.tonemap as usize;
-					ComboBox::from_label("tonemap")
-						.selected_text(Self::tonemap_text(sel))
-						.show_index(ui, &mut sel, 5, Self::tonemap_text);
+					ui.add_enabled_ui(!pt.as_ref().unwrap().2, |ui| {
+						ComboBox::from_label("tonemap")
+							.selected_text(Self::tonemap_text(sel))
+							.show_index(ui, &mut sel, 5, Self::tonemap_text)
+					});
 					self.tonemap = match sel {
 						0 => Tonemap::Aces,
 						1 => Tonemap::AgX,
@@ -156,7 +158,7 @@ impl DebugWindow {
 				Self::pass_stats(ui, stats.late);
 			}
 
-			if let Some((exp, samples)) = pt {
+			if let Some((exp, samples, _)) = pt {
 				ui.label(format!("samples: {}", samples));
 
 				ui.label(format!("exposure: {:.2}", exp.exposure));
