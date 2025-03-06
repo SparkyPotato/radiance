@@ -16,10 +16,6 @@ static const f32x3x3 AGX_OUT_MAT =
 	transpose(float3x3(float3(1.1271005818144368, -0.1413297634984383, -0.14132976349843826),
 					   float3(-0.11060664309660323, 1.157823702216272, -0.11060664309660294),
 					   float3(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405)));
-static const f32x3x3 LINEAR_REC2020_TO_LINEAR_SRGB = transpose(
-	float3x3(float3(1.6605, -0.1246, -0.0182), float3(-0.5876, 1.1329, -0.1006), float3(-0.0728, -0.0083, 1.1187)));
-static const f32x3x3 LINEAR_SRGB_TO_LINEAR_REC2020 =
-	transpose(float3x3(float3(0.6274, 0.0691, 0.0164), float3(0.3293, 0.9195, 0.0880), float3(0.0433, 0.0113, 0.8956)));
 
 // TODO: Make this work in Rec709 and Rec2020.
 
@@ -39,7 +35,6 @@ struct AgX : IFunc<f32x3, f32x3> {
 	f32x3 agx(f32x3 val) {
 		let min_ev = -12.47393f;
 		let max_ev = 4.026069f;
-		val = mul(LINEAR_SRGB_TO_LINEAR_REC2020, val);
 		val = mul(AGX_IN_MAT, val);
 		val = clamp(log2(val), min_ev, max_ev);
 		val = (val - min_ev) / (max_ev - min_ev);
@@ -55,7 +50,7 @@ struct AgX : IFunc<f32x3, f32x3> {
 	f32x3 agx_eotf(f32x3 val) {
 		val = mul(AGX_OUT_MAT, val);
 		val = pow(val, 2.2f);
-		val = mul(LINEAR_REC2020_TO_LINEAR_SRGB, val);
+		val = rec2020_to_rec709(val);
 		return clamp(val, 0.0f, 1.0f);
 	}
 

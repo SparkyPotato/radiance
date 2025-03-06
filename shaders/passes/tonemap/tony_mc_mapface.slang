@@ -2,6 +2,7 @@ module tony_mc_mapface;
 
 import graph;
 import graph.util;
+import graph.util.color;
 import passes.tonemap.common;
 
 static const f32 LUT_SIZE = 48.f;
@@ -10,6 +11,7 @@ struct TonyMcMapface : IFunc<f32x3, f32x3> {
 	Tex3D<f32x3> lut;
 	Sampler sampler;
 	f32x3 operator()(f32x3 color) {
+		color = rec2020_to_rec709(color);
 		color /= color + 1.f;
 		let uv = color * ((LUT_SIZE - 1.f) / LUT_SIZE) + (0.5f / LUT_SIZE);
 		return this.lut.sample_mip(this.sampler, uv, 0.f);
