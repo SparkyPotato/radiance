@@ -5,5 +5,6 @@
 
 pub mod agx;
 pub mod exposure;
+pub mod frostbite;
 pub mod null;
 pub mod tony_mc_mapface;

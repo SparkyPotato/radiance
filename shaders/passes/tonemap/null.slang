@@ -7,6 +7,7 @@ import passes.tonemap.common;
 
 struct Null : IFunc<f32x3, f32x3> {
 	f32x3 operator()(f32x3 color) {
+		// TODO: parameterize sdr whitepoint.
 		color = pq_oetf(color * 200.f);
 		return color;
 	}

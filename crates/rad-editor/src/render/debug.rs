@@ -14,6 +14,12 @@ pub enum RenderMode {
 }
 
 #[derive(Copy, Clone)]
+pub enum HdrTonemap {
+	Null,
+	Frostbite,
+}
+
+#[derive(Copy, Clone)]
 pub enum Tonemap {
 	AgX,
 	AgXPunchy,
@@ -24,6 +30,7 @@ pub struct DebugWindow {
 	pub enabled: bool,
 	render_mode: RenderMode,
 	tonemap: Tonemap,
+	hdr_tonemap: HdrTonemap,
 	debug_vis: DebugVis,
 	scale: f32,
 	exposure_compensation: f32,
@@ -35,6 +42,7 @@ impl DebugWindow {
 			enabled: false,
 			render_mode: RenderMode::Path,
 			tonemap: Tonemap::TonyMcMapface,
+			hdr_tonemap: HdrTonemap::Frostbite,
 			debug_vis: DebugVis::Meshlets,
 			scale: 0.15,
 			exposure_compensation: 0.0,
@@ -75,6 +83,14 @@ impl DebugWindow {
 		}
 	}
 
+	fn hdr_tonemap_text(tonemap: usize) -> &'static str {
+		match tonemap {
+			0 => "null",
+			1 => "frostbite",
+			_ => unreachable!(),
+		}
+	}
+
 	pub fn render(
 		&mut self, device: &Device, window: &mut rad_window::Window, ctx: &Context, stats: Option<CullStats>,
 		pt: Option<(ExposureStats, u32)>,
@@ -102,18 +118,28 @@ impl DebugWindow {
 
 			match self.render_mode {
 				RenderMode::Path => {
-					let mut sel = self.tonemap as usize;
-					ui.add_enabled_ui(!hdr, |ui| {
+					if hdr {
+						let mut sel = self.hdr_tonemap as usize;
+						ComboBox::from_label("hdr tonemap")
+							.selected_text(Self::hdr_tonemap_text(sel))
+							.show_index(ui, &mut sel, 2, Self::hdr_tonemap_text);
+						self.hdr_tonemap = match sel {
+							0 => HdrTonemap::Null,
+							1 => HdrTonemap::Frostbite,
+							_ => unreachable!(),
+						};
+					} else {
+						let mut sel = self.tonemap as usize;
 						ComboBox::from_label("tonemap")
 							.selected_text(Self::tonemap_text(sel))
-							.show_index(ui, &mut sel, 3, Self::tonemap_text)
-					});
-					self.tonemap = match sel {
-						0 => Tonemap::AgX,
-						1 => Tonemap::AgXPunchy,
-						2 => Tonemap::TonyMcMapface,
-						_ => unreachable!(),
-					};
+							.show_index(ui, &mut sel, 3, Self::tonemap_text);
+						self.tonemap = match sel {
+							0 => Tonemap::AgX,
+							1 => Tonemap::AgXPunchy,
+							2 => Tonemap::TonyMcMapface,
+							_ => unreachable!(),
+						};
+					}
 				},
 				RenderMode::Debug => {
 					let mut sel = self.debug_vis.to_u32() as usize;
@@ -229,6 +255,8 @@ impl DebugWindow {
 	pub fn render_mode(&self) -> RenderMode { self.render_mode }
 
 	pub fn tonemap(&self) -> Tonemap { self.tonemap }
+
+	pub fn hdr_tonemap(&self) -> HdrTonemap { self.hdr_tonemap }
 
 	pub fn exposure_compensation(&self) -> f32 { self.exposure_compensation }
 

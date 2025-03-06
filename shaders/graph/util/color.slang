@@ -26,6 +26,17 @@ public f32x3 rec2020_to_xyz(f32x3 color) {
 	return mul(mat, color);
 }
 
+public f32x3 lms_to_xyz(f32x3 color) {
+	// clang-format off
+	f32x3x3 mat = {
+		2.07018f, -1.326457f, 0.206616f,
+		0.364988f, 0.680467f, -0.045422f,
+		-0.0495955f, -0.0494212f, 1.187996f
+	};
+	// clang-format on
+	return mul(mat, color);
+}
+
 public f32x3 xyz_to_rec709(f32x3 color) {
 	// clang-format off
 	f32x3x3 mat = {
@@ -46,6 +57,43 @@ public f32x3 xyz_to_rec2020(f32x3 color) {
 	};
 	// clang-format on
 	return mul(mat, color);
+}
+
+public f32x3 xyz_to_lms(f32x3 color) {
+	// clang-format off
+	f32x3x3 mat = {
+		0.3592f, 0.6976f, -0.0358f,
+		-0.1922f, 1.1004f, 0.0755f,
+		0.007f, 0.0749f, 0.8434f
+	};
+	// clang-format on
+	return mul(mat, color);
+}
+
+public f32x3 rec2020_to_ICtCp(f32x3 color) {
+	color = xyz_to_lms(rec2020_to_xyz(color));
+	color = pq_oetf(color * 200.f);
+	// clang-format off
+	f32x3x3 mat = {
+		0.5f, 0.5f, 0.f,
+		1.6137f, -3.3234f, 1.7097f,
+		4.378f, -4.2455f, -0.1325f
+	};
+	// clang-format on
+	return mul(mat, color);
+}
+
+public f32x3 ICtCp_to_rec2020(f32x3 color) {
+	// clang-format off
+	f32x3x3 mat = {
+		1.f, 0.008605f, 0.1110356f,
+		1.f, -0.008605f, -0.1110356f,
+		1.f, 0.56004886f, -0.320637f
+	};
+	// clang-format on
+	color = mul(mat, color);
+	color = pq_eotf(color) / 200.f;
+	return xyz_to_rec2020(lms_to_xyz(color));
 }
 
 public f32x3 xyz_to_Yxy(f32x3 color) {
@@ -79,27 +127,21 @@ public f32x3 rec709_eotf(f32x3 color) {
 	return select(mask, a, b);
 }
 
-public f32x3 pq_oetf(f32x3 color) {
-	let m1 = 1305.f / 8192.f;
-	let m2 = 2523.f / 32.f;
-	let c1 = 107.f / 128.f;
-	let c2 = 2413.f / 128.f;
-	let c3 = 2392.f / 128.f;
+static const f32 M1 = 1305.f / 8192.f;
+static const f32 M2 = 2523.f / 32.f;
+static const f32 C1 = 107.f / 128.f;
+static const f32 C2 = 2413.f / 128.f;
+static const f32 C3 = 2392.f / 128.f;
 
+public f32x3 pq_oetf(f32x3 color) {
 	let y = color / 10000.f;
-	let ym1 = pow(y, m1);
-	return pow((c1 + c2 * ym1) / (1.f + c3 * ym1), m2);
+	let ym1 = pow(y, M1);
+	return pow((C1 + C2 * ym1) / (1.f + C3 * ym1), M2);
 }
 
 public f32x3 pq_eotf(f32x3 color) {
-	let m1 = 1305.f / 8192.f;
-	let m2 = 2523.f / 32.f;
-	let c1 = 107.f / 128.f;
-	let c2 = 2413.f / 128.f;
-	let c3 = 2392.f / 128.f;
-
-	let ym2 = pow(color, 1.f / m2);
-	return 10000.f * pow((max(ym2 - c1, 0.f)) / (c2 - c3 * ym2), 1.f / m1);
+	let ym2 = pow(color, 1.f / M2);
+	return 10000.f * pow((max(ym2 - C1, 0.f)) / (C2 - C3 * ym2), 1.f / M1);
 }
 
 public f32 luminance_rec709(f32x3 color) {

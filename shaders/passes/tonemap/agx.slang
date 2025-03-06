@@ -33,8 +33,8 @@ struct AgX : IFunc<f32x3, f32x3> {
 	}
 
 	f32x3 agx(f32x3 val) {
-		let min_ev = -12.47393f;
-		let max_ev = 4.026069f;
+		let min_ev = -12.47393f;  // log2(exp2(-10) * 0.18)
+		let max_ev = 4.026069f;	  // log2(exp2(6.5) * 0.18)
 		val = mul(AGX_IN_MAT, val);
 		val = clamp(log2(val), min_ev, max_ev);
 		val = (val - min_ev) / (max_ev - min_ev);

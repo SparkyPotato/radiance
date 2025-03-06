@@ -9,6 +9,7 @@ use rad_renderer::{
 	tonemap::{
 		agx::{AgXLook, AgXTonemap},
 		exposure::ExposureCalc,
+		frostbite::FrostbiteTonemap,
 		null::NullTonemap,
 		tony_mc_mapface::TonyMcMapfaceTonemap,
 	},
@@ -24,7 +25,7 @@ use tracing::trace_span;
 use crate::{
 	render::{
 		camera::{CameraController, Mode},
-		debug::{DebugWindow, RenderMode, Tonemap},
+		debug::{DebugWindow, HdrTonemap, RenderMode, Tonemap},
 	},
 	world::WorldContext,
 };
@@ -41,6 +42,7 @@ pub struct Renderer {
 	agx: AgXTonemap,
 	tony_mcmapface: TonyMcMapfaceTonemap,
 	null: NullTonemap,
+	frostbite: FrostbiteTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
 }
@@ -57,6 +59,7 @@ impl Renderer {
 			agx: AgXTonemap::new(device)?,
 			tony_mcmapface: TonyMcMapfaceTonemap::new(device)?,
 			null: NullTonemap::new(device)?,
+			frostbite: FrostbiteTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
 		})
@@ -113,7 +116,10 @@ impl Renderer {
 						);
 
 						let img = if window.hdr_enabled() {
-							self.null.run(frame, raw, exp)
+							match self.debug_window.hdr_tonemap() {
+								HdrTonemap::Null => self.null.run(frame, raw, exp),
+								HdrTonemap::Frostbite => self.frostbite.run(frame, raw, exp),
+							}
 						} else {
 							match self.debug_window.tonemap() {
 								Tonemap::AgX => self.agx.run(frame, raw, exp, AgXLook::default()),

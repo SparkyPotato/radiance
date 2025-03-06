@@ -56,6 +56,7 @@ f32x4 pixel(VertexOutput input) {
 	var cola = Constants.image.sample(Constants.sampler, input.uv) * input.color;
 	var col = cola.xyz;
 	if (Constants.hdr_image != 0) {
+		// TODO: parameterize sdr whitepoint.
 		col = pq_eotf(col) / 200.f;
 		col = rec2020_to_rec709(col);
 		col = rec709_oetf(col);
