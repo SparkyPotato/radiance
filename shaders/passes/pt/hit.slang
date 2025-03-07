@@ -270,7 +270,7 @@ LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let f = eval_bsdf(hit.params, wo, wi);
 	if (all(f <= 0.f))
 		return { f32x3(0.f), ray };
-	var L = f * abs(wi.z) * ls.L / ls.pdf;
+	var L = f * ls.L / ls.pdf;
 	if (!ls.punctual) {
 		let p_bounce = bsdf_pdf(hit.params, wo, wi);
 		L *= pow_heuristic_1(ls.pdf, p_bounce);	 // Should this be the other way around?
@@ -296,7 +296,7 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	let wo = hit.to_shading(-p.ray.dir);
 
 	let bs = sample_bsdf(p.rng, hit.params, wo);
-	let throughput = bs.f * abs(bs.wi.z) / bs.pdf;
+	let throughput = bs.f;
 	p.p_bounce = bs.pdf;
 	p.ray = Ray(hit.ray_origin(), hit.from_shading(bs.wi));
 	p.specular = bs.is_specular;

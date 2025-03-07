@@ -79,7 +79,6 @@ void exposure(u32 gid: SV_GroupIndex) {
 			sum_histogram[i] = curr;
 			prev = curr;
 		}
-		return;
 	}
 	workgroup_sync_barrier();
 
@@ -87,7 +86,7 @@ void exposure(u32 gid: SV_GroupIndex) {
 	let min_sum = sum * EConstants.histogram_min;
 	let max_sum = sum * EConstants.histogram_max;
 
-	let prev_val = sum_histogram[gid - 1];
+	let prev_val = gid == 0 ? 0 : sum_histogram[gid - 1];
 	let us_val = sum_histogram[gid];
 	let count = clamp(us_val, min_sum, max_sum) - clamp(prev_val, min_sum, max_sum);
 
@@ -98,14 +97,14 @@ void exposure(u32 gid: SV_GroupIndex) {
 
 	for (var cutoff = 128; cutoff > 0; cutoff >>= 1) {
 		// gid 0 is not alive.
-		if (gid + 1 < cutoff) {
-			sum_histogram[gid - 1] += sum_histogram[gid - 1 + cutoff];
-			count_histogram[gid - 1] += count_histogram[gid - 1 + cutoff];
+		if (gid < cutoff) {
+			sum_histogram[gid] += sum_histogram[gid + cutoff];
+			count_histogram[gid] += count_histogram[gid + cutoff];
 		}
 		workgroup_sync_barrier();
 	}
 
-	if (gid == 1) {
+	if (gid == 0) {
 		let hist_sum = sum_histogram[0];
 		let hist_count = count_histogram[0];
 		f32 exposure;
