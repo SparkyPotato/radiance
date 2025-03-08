@@ -23,16 +23,18 @@ public struct ShadingParams {
 // clang-format off
 // Resources:
 // PBRT of course: https://pbr-book.org/4ed/contents
-// [0] Self Shadow: https://blog.selfshadow.com/links/
+// [0] https://blog.selfshadow.com/links/
 // [1] Cook Torrance: https://graphics.pixar.com/library/ReflectanceModel/paper.pdf
 // [2] Disney PBR: https://media.disneyanimation.com/uploads/production/publication_asset/48/asset/s2012_pbs_disney_brdf_notes_v3.pdf
-// [3] GGX: https://www.graphics.cornell.edu/~bjw/microfacetbsdf.pdf
-// [4] Filament: https://google.github.io/filament/Filament.md.html#materialsystem
-// [5] Eric Heitz' Smith extension: https://jcgt.org/published/0003/02/03/paper.pdf
-// [6] Naty Hoffman Notes: https://blog.selfshadow.com/publications/s2012-shading-course/hoffman/s2012_pbs_physics_math_notes.pd
-// [7] Implenting Disney BRDF: https://schuttejoe.github.io/post/disneybsdf/
-// [8] Karis reference: https://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
-// [9] https://github.com/schuttejoe/Selas/blob/dev/Source/Core/Shading/Disney.cpp
+// [3] https://github.com/schuttejoe/Selas/blob/dev/Source/Core/Shading/Disney.cpp
+// [3] https://schuttejoe.github.io/post/disneybsdf/
+// [5] GGX: https://www.graphics.cornell.edu/~bjw/microfacetbsdf.pdf
+// [6] Filament: https://google.github.io/filament/Filament.md.html#materialsystem
+// [7] https://jcgt.org/published/0003/02/03/paper.pdf
+// [8] https://blog.selfshadow.com/publications/s2012-shading-course/hoffman/s2012_pbs_physics_math_notes.pd
+// [9] https://graphicrants.blogspot.com/2013/08/specular-brdf-reference.html
+// [10] Bounded VNDF sampling: https://gpuopen.com/download/publications/Bounded_VNDF_Sampling_for_Smith-GGX_Reflections.pdf
+// [11] Multiscatter-GGX: https://blog.selfshadow.com/publications/turquin/ms_comp_final.pdf
 // clang-format on
 
 f32 brdf_cos(f32x3 v) {
@@ -177,8 +179,6 @@ f32 pdf_ggx(f32x3 wo, f32x3 wm, f32x3 wi, f32 rough) {
 	return d * (t - wo.z) / (2.f * len2);
 }
 
-// Bounded VNDF sampling:
-// https://gpuopen.com/download/publications/Bounded_VNDF_Sampling_for_Smith-GGX_Reflections.pdf
 f32x3 sample_ggx(inout Rng rng, ShadingParams params, f32x3 wo) {
 	let rough = params.roughness;
 	let u = rng.sample2();
