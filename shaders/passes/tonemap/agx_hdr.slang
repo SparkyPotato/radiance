@@ -17,8 +17,6 @@ static const f32x3x3 AGX_OUT_MAT =
 					  f32x3(-0.11060664309660323, 1.157823702216272, -0.11060664309660294),
 					  f32x3(-0.016493938717834573, -0.016493938717834257, 1.2519364065950405)));
 
-// TODO: Make this work in Rec709 and Rec2020.
-
 struct AgX : IFunc<f32x3, f32x3> {
 	f32x3 offset;
 	f32x3 slope;
@@ -28,15 +26,19 @@ struct AgX : IFunc<f32x3, f32x3> {
 	f32x3 agx_contrast_approx(f32x3 x) {
 		let x2 = x * x;
 		let x4 = x2 * x2;
-		return 15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x -
-			   0.00232f;
+		let s =
+			15.5f * x4 * x2 - 40.14f * x4 * x + 31.96f * x4 - 6.868f * x2 * x + 0.4298f * x2 + 0.1191f * x - 0.00232f;
+		let l = 0.5f * (x - 1.f) + 1.f;
+		return select(x <= 0.898125f, s, l);
 	}
 
 	f32x3 agx(f32x3 val) {
-		let min_ev = -12.47393f;  // log2(exp2(-10) * 0.18)
-		let max_ev = 4.026069f;	  // log2(exp2(6.5) * 0.18)
+		// let min_ev = -12.47393f;  // log2(exp2(-10) * 0.18)
+		// let max_ev = 4.026069f;	  // log2(exp2(6.5) * 0.18)
+		let min_ev = log2(exp2(-10.f) * 0.18f);
+		let max_ev = log2(exp2(6.5f) * 0.18f);
 		val = mul(AGX_IN_MAT, val);
-		val = clamp(log2(val), min_ev, max_ev);
+		val = max(log2(val), min_ev);
 		val = (val - min_ev) / (max_ev - min_ev);
 		return agx_contrast_approx(val);
 	}
@@ -50,8 +52,8 @@ struct AgX : IFunc<f32x3, f32x3> {
 	f32x3 agx_eotf(f32x3 val) {
 		val = mul(AGX_OUT_MAT, val);
 		val = pow(val, 2.2f);
-		val = rec2020_to_rec709(val);
-		return clamp(val, 0.0f, 1.0f);
+		// TODO: parameterize sdr whitepoint.
+		return pq_oetf(val * 300.f);
 	}
 
 	f32x3 operator()(f32x3 color) {

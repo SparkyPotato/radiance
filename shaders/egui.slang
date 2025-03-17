@@ -57,7 +57,7 @@ f32x4 pixel(VertexOutput input) {
 	var col = cola.xyz;
 	if (Constants.hdr_image != 0) {
 		// TODO: parameterize sdr whitepoint.
-		col = pq_eotf(col) / 200.f;
+		col = pq_eotf(col) / 300.f;
 		col = rec2020_to_rec709(col);
 		col = rec709_oetf(col);
 	}
@@ -78,7 +78,7 @@ BlitConstants BConstants;
 f32x4 blit(ScreenOutput input) {
 	var col = BConstants.image.load(BConstants.image.pixel_of_uv(input.uv));
 	col = rec709_eotf(col);
-	col = rec709_to_rec2020(col) * 200.f;
+	col = rec709_to_rec2020(col) * 300.f;
 	col = pq_oetf(col);
 	return f32x4(col, 1.f);
 }

@@ -181,8 +181,6 @@ pub struct Setup {
 	stats_readback: Persist<Buffer>,
 }
 
-fn prev_pot(x: u32) -> u32 { 1 << x.ilog2() }
-
 impl Setup {
 	pub fn new() -> Self {
 		Self {
@@ -204,7 +202,7 @@ impl Setup {
 		let res = info.size;
 
 		let mut pass = frame.pass("setup cull buffers");
-		let size = info.size.map(prev_pot);
+		let size = info.size.map(|x| 1 << x.ilog2());
 		let hzb = pass.resource(
 			ImageDesc {
 				size: vk::Extent3D {

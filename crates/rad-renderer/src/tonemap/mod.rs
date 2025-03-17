@@ -4,6 +4,7 @@
 // https://alextardif.com/Tonemapping.html
 
 pub mod agx;
+pub mod agx_hdr;
 pub mod exposure;
 pub mod frostbite;
 pub mod null;

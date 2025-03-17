@@ -17,6 +17,8 @@ pub enum RenderMode {
 pub enum HdrTonemap {
 	Null,
 	Frostbite,
+	AgX,
+	AgXPunchy,
 }
 
 #[derive(Copy, Clone)]
@@ -42,7 +44,7 @@ impl DebugWindow {
 			enabled: false,
 			render_mode: RenderMode::Path,
 			tonemap: Tonemap::TonyMcMapface,
-			hdr_tonemap: HdrTonemap::Frostbite,
+			hdr_tonemap: HdrTonemap::AgX,
 			debug_vis: DebugVis::Meshlets,
 			scale: 0.15,
 			exposure_compensation: 0.0,
@@ -87,6 +89,8 @@ impl DebugWindow {
 		match tonemap {
 			0 => "null",
 			1 => "frostbite",
+			2 => "agx",
+			3 => "agx (punchy)",
 			_ => unreachable!(),
 		}
 	}
@@ -122,10 +126,12 @@ impl DebugWindow {
 						let mut sel = self.hdr_tonemap as usize;
 						ComboBox::from_label("hdr tonemap")
 							.selected_text(Self::hdr_tonemap_text(sel))
-							.show_index(ui, &mut sel, 2, Self::hdr_tonemap_text);
+							.show_index(ui, &mut sel, 4, Self::hdr_tonemap_text);
 						self.hdr_tonemap = match sel {
 							0 => HdrTonemap::Null,
 							1 => HdrTonemap::Frostbite,
+							2 => HdrTonemap::AgX,
+							3 => HdrTonemap::AgXPunchy,
 							_ => unreachable!(),
 						};
 					} else {

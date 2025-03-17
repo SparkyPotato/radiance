@@ -8,6 +8,7 @@ use rad_renderer::{
 	sky::SkyLuts,
 	tonemap::{
 		agx::{AgXLook, AgXTonemap},
+		agx_hdr::AgxHdrTonemap,
 		exposure::ExposureCalc,
 		frostbite::FrostbiteTonemap,
 		null::NullTonemap,
@@ -43,6 +44,7 @@ pub struct Renderer {
 	tony_mcmapface: TonyMcMapfaceTonemap,
 	null: NullTonemap,
 	frostbite: FrostbiteTonemap,
+	agx_hdr: AgxHdrTonemap,
 	debug: DebugMesh,
 	camera: CameraController,
 }
@@ -60,6 +62,7 @@ impl Renderer {
 			tony_mcmapface: TonyMcMapfaceTonemap::new(device)?,
 			null: NullTonemap::new(device)?,
 			frostbite: FrostbiteTonemap::new(device)?,
+			agx_hdr: AgxHdrTonemap::new(device)?,
 			debug: DebugMesh::new(device)?,
 			camera: CameraController::new(),
 		})
@@ -119,6 +122,8 @@ impl Renderer {
 							match self.debug_window.hdr_tonemap() {
 								HdrTonemap::Null => self.null.run(frame, raw, exp),
 								HdrTonemap::Frostbite => self.frostbite.run(frame, raw, exp),
+								HdrTonemap::AgX => self.agx_hdr.run(frame, raw, exp, AgXLook::default()),
+								HdrTonemap::AgXPunchy => self.agx_hdr.run(frame, raw, exp, AgXLook::punchy()),
 							}
 						} else {
 							match self.debug_window.tonemap() {

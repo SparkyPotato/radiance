@@ -1,4 +1,5 @@
 use std::{
+	collections::hash_map::Entry,
 	fs::File,
 	io::{self, BufReader},
 	path::{Path, PathBuf},
@@ -15,6 +16,7 @@ use gltf::{
 	Document,
 	Gltf,
 };
+use parking_lot::Mutex;
 use rad_core::{
 	asset::{aref::AssetId, Asset},
 	Engine,
@@ -35,6 +37,7 @@ use rad_renderer::{
 };
 use rad_world::{transform::Transform, World};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
+use rustc_hash::FxHashMap;
 use tracing::{span, trace_span, Level};
 
 use crate::asset::fs::FsAssetSystem;
@@ -43,11 +46,11 @@ pub struct GltfImporter {
 	gltf: Document,
 	base: PathBuf,
 	buffers: Vec<buffer::Data>,
+	image_cache: Mutex<FxHashMap<(usize, bool), AssetId<ImageAsset>>>,
 }
 
 #[derive(Copy, Clone)]
 struct ImportProgress {
-	images: u32,
 	materials: u32,
 	meshes: u32,
 	scenes: u32,
@@ -55,8 +58,7 @@ struct ImportProgress {
 
 impl ImportProgress {
 	fn ratio(&self, total: ImportProgress) -> f32 {
-		(self.images + self.materials + self.meshes + self.scenes) as f32
-			/ (total.images + total.materials + total.meshes + total.scenes) as f32
+		(self.materials + self.meshes + self.scenes) as f32 / (total.materials + total.meshes + total.scenes) as f32
 	}
 }
 
@@ -83,93 +85,12 @@ impl GltfImporter {
 
 	pub fn import(self, progress: impl Fn(f32) + Send + Sync) -> Result<(), io::Error> {
 		let total = ImportProgress {
-			images: self.gltf.images().count() as _,
 			materials: self.gltf.materials().count() as _,
 			meshes: self.gltf.meshes().count() as _,
 			scenes: self.gltf.scenes().count() as _,
 		};
 		progress(0.0);
 		let sys: &Arc<FsAssetSystem> = Engine::get().asset_source();
-
-		let prog = AtomicUsize::new(0);
-		let images: Vec<_> = self.gltf.images().collect();
-		let images: Vec<_> = {
-			let s = trace_span!("importing images");
-			let _e = s.enter();
-
-			images
-				.into_par_iter()
-				.map(|image| {
-					let id = AssetId::new();
-					let name = image
-						.name()
-						.map(|x| x.to_string())
-						.or_else(|| {
-							let Source::Uri { uri, .. } = image.source() else {
-								return None;
-							};
-							Some(uri.to_string())
-						})
-						.unwrap_or_else(|| id.to_string());
-					let s = trace_span!("import image", name = name);
-					let _e = s.enter();
-
-					let path = Path::new("images").join(&name);
-					let mut d = {
-						let s = trace_span!("load");
-						let _e = s.enter();
-						image::Data::from_source(image.source(), Some(self.base.as_path()), &self.buffers)
-							.map_err(io::Error::other)?
-					};
-					if d.format == image::Format::R8G8B8 {
-						let s = trace_span!("add alpha");
-						let _e = s.enter();
-						d.pixels = d
-							.pixels
-							.chunks_exact(3)
-							.flat_map(|x| x.iter().copied().chain(std::iter::once(255)))
-							.collect();
-						d.format = image::Format::R8G8B8A8;
-					}
-
-					{
-						let s = trace_span!("save");
-						let _e = s.enter();
-						ImageAsset {
-							size: Vec3::new(d.width, d.height, 1),
-							format: match d.format {
-								image::Format::R8 => vk::Format::R8_UNORM,
-								image::Format::R8G8 => vk::Format::R8G8_UNORM,
-								image::Format::R8G8B8 => vk::Format::R8G8B8_UNORM,
-								image::Format::R8G8B8A8 => vk::Format::R8G8B8A8_UNORM,
-								image::Format::R16 => vk::Format::R16_UNORM,
-								image::Format::R16G16 => vk::Format::R16G16_UNORM,
-								image::Format::R16G16B16 => vk::Format::R16G16B16_UNORM,
-								image::Format::R16G16B16A16 => vk::Format::R16G16B16A16_UNORM,
-								image::Format::R32G32B32FLOAT => vk::Format::R32G32B32_SFLOAT,
-								image::Format::R32G32B32A32FLOAT => vk::Format::R32G32B32A32_SFLOAT,
-							}
-							.as_raw(),
-							data: d.pixels,
-						}
-						.save(&mut sys.create(&path, id)?)?;
-					}
-
-					let old = prog.fetch_add(1, Ordering::Relaxed);
-					progress(
-						ImportProgress {
-							images: old as u32 + 1,
-							materials: 0,
-							meshes: 0,
-							scenes: 0,
-						}
-						.ratio(total),
-					);
-
-					Ok::<_, io::Error>(id)
-				})
-				.collect::<Result<_, _>>()?
-		};
 
 		let prog = AtomicUsize::new(0);
 		let materials: Vec<_> = self.gltf.materials().collect();
@@ -194,19 +115,23 @@ impl GltfImporter {
 						Material {
 							base_color: m
 								.base_color_texture()
-								.map(|x| images[x.texture().source().index()].clone()),
+								.map(|x| self.image(x.texture().source(), true))
+								.transpose()?,
 							base_color_factor: m.base_color_factor().into(),
 							metallic_roughness: m
 								.metallic_roughness_texture()
-								.map(|x| images[x.texture().source().index()].clone()),
+								.map(|x| self.image(x.texture().source(), false))
+								.transpose()?,
 							metallic_factor: m.metallic_factor(),
 							roughness_factor: m.roughness_factor(),
 							normal: mat
 								.normal_texture()
-								.map(|x| images[x.texture().source().index()].clone()),
+								.map(|x| self.image(x.texture().source(), false))
+								.transpose()?,
 							emissive: mat
 								.emissive_texture()
-								.map(|x| images[x.texture().source().index()].clone()),
+								.map(|x| self.image(x.texture().source(), true))
+								.transpose()?,
 							emissive_factor: mat.emissive_factor().map(|x| x * es).into(),
 						}
 						.save(&mut sys.create(&path, id)?)?;
@@ -215,7 +140,6 @@ impl GltfImporter {
 					let old = prog.fetch_add(1, Ordering::Relaxed);
 					progress(
 						ImportProgress {
-							images: total.images,
 							materials: old as u32 + 1,
 							meshes: 0,
 							scenes: 0,
@@ -272,7 +196,6 @@ impl GltfImporter {
 					let old = prog.fetch_add(1, Ordering::Relaxed);
 					progress(
 						ImportProgress {
-							images: total.images,
 							materials: total.materials,
 							meshes: old as u32 + 1,
 							scenes: 0,
@@ -307,7 +230,6 @@ impl GltfImporter {
 				let old = prog.fetch_add(1, Ordering::Relaxed);
 				progress(
 					ImportProgress {
-						images: total.images,
 						materials: total.materials,
 						meshes: total.meshes,
 						scenes: old as u32 + 1,
@@ -339,20 +261,8 @@ impl GltfImporter {
 			gltf,
 			base: base.to_path_buf(),
 			buffers,
+			image_cache: Mutex::new(FxHashMap::default()),
 		})
-	}
-
-	fn default_material(&self) -> Material {
-		Material {
-			base_color: None,
-			base_color_factor: Vec4::new(1.0, 1.0, 1.0, 1.0),
-			metallic_roughness: None,
-			metallic_factor: 1.0,
-			roughness_factor: 1.0,
-			normal: None,
-			emissive: None,
-			emissive_factor: Vec3::zero(),
-		}
 	}
 
 	fn scene(&self, name: &str, scene: gltf::Scene, meshes: &[Vec<AssetId<Mesh>>]) -> Result<World, gltf::Error> {
@@ -417,6 +327,96 @@ impl GltfImporter {
 
 		for child in node.children() {
 			self.node(child, transform, meshes, out);
+		}
+	}
+
+	fn image(&self, image: gltf::Image, srgb: bool) -> Result<AssetId<ImageAsset>, io::Error> {
+		let mut cache = self.image_cache.lock();
+		let id = match cache.entry((image.index(), srgb)) {
+			Entry::Occupied(x) => return Ok(*x.get()),
+			Entry::Vacant(x) => *x.insert(AssetId::new()),
+		};
+		drop(cache);
+
+		let name = image
+			.name()
+			.map(|x| x.to_string())
+			.or_else(|| {
+				let Source::Uri { uri, .. } = image.source() else {
+					return None;
+				};
+				Some(uri.to_string())
+			})
+			.unwrap_or_else(|| id.to_string());
+		let s = trace_span!("import image", name = name);
+		let _e = s.enter();
+
+		let path = Path::new("images").join(&name);
+		let mut d = {
+			let s = trace_span!("load");
+			let _e = s.enter();
+			image::Data::from_source(image.source(), Some(self.base.as_path()), &self.buffers)
+				.map_err(io::Error::other)?
+		};
+		if d.format == image::Format::R8G8B8 {
+			let s = trace_span!("add alpha");
+			let _e = s.enter();
+			d.pixels = d
+				.pixels
+				.chunks_exact(3)
+				.flat_map(|x| x.iter().copied().chain([255]))
+				.collect();
+			d.format = image::Format::R8G8B8A8;
+		} else if d.format == image::Format::R8G8 && srgb {
+			let s = trace_span!("add blue and alpha");
+			let _e = s.enter();
+			d.pixels = d
+				.pixels
+				.chunks_exact(2)
+				.flat_map(|x| x.iter().copied().chain([0, 255]))
+				.collect();
+			d.format = image::Format::R8G8B8A8;
+		}
+
+		{
+			let sys: &Arc<FsAssetSystem> = Engine::get().asset_source();
+			let s = trace_span!("save");
+			let _e = s.enter();
+			ImageAsset {
+				size: Vec3::new(d.width, d.height, 1),
+				format: match (d.format, srgb) {
+					(image::Format::R8, false) => vk::Format::R8_UNORM,
+					(image::Format::R8G8, false) => vk::Format::R8G8_UNORM,
+					(image::Format::R8G8B8A8, false) => vk::Format::R8G8B8A8_UNORM,
+					(image::Format::R8, true) => vk::Format::R8_SRGB,
+					(image::Format::R8G8B8A8, true) => vk::Format::R8G8B8A8_SRGB,
+					(image::Format::R16, _) => vk::Format::R16_UNORM,
+					(image::Format::R16G16, _) => vk::Format::R16G16_UNORM,
+					(image::Format::R16G16B16, _) => vk::Format::R16G16B16_UNORM,
+					(image::Format::R16G16B16A16, _) => vk::Format::R16G16B16A16_UNORM,
+					(image::Format::R32G32B32FLOAT, _) => vk::Format::R32G32B32_SFLOAT,
+					(image::Format::R32G32B32A32FLOAT, _) => vk::Format::R32G32B32A32_SFLOAT,
+					_ => return Err(io::Error::other("unsupported image format")),
+				}
+				.as_raw(),
+				data: d.pixels,
+			}
+			.save(&mut sys.create(&path, id)?)?;
+		}
+
+		Ok::<_, io::Error>(id)
+	}
+
+	fn default_material(&self) -> Material {
+		Material {
+			base_color: None,
+			base_color_factor: Vec4::new(1.0, 1.0, 1.0, 1.0),
+			metallic_roughness: None,
+			metallic_factor: 1.0,
+			roughness_factor: 1.0,
+			normal: None,
+			emissive: None,
+			emissive_factor: Vec3::zero(),
 		}
 	}
 
