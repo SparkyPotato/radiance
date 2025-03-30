@@ -163,7 +163,7 @@ impl ImageAssetView {
 			},
 		)?;
 		unsafe {
-			let mut pool = CommandPool::new(device, device.queue_families().transfer)?;
+			let mut pool = CommandPool::new(device, device.queue_families().into::<Transfer>())?;
 			let cmd = pool.next(device)?;
 			staging.data().as_mut().write_all(&data.data)?;
 			device

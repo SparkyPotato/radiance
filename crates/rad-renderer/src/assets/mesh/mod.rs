@@ -94,7 +94,7 @@ impl AssetView for RaytracingMeshView {
 
 		let tri_count = m.indices.len() as u32 / 3;
 		unsafe {
-			let mut pool = CommandPool::new(device, device.queue_families().compute)?;
+			let mut pool = CommandPool::new(device, device.queue_families().into::<Compute>())?;
 			let qpool = device
 				.device()
 				.create_query_pool(

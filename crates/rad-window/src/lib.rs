@@ -3,7 +3,7 @@ use std::ops::Deref;
 use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{
 	ash::{khr, vk},
-	device::{Device, Graphics, SyncPoint},
+	device::{Device, Graphics, Queues, SyncPoint},
 	graph::SwapchainImage,
 	Result,
 };
@@ -262,36 +262,44 @@ impl Window {
 				};
 			}
 
-			let queues = device.queue_families();
 			self.size = vk::Extent2D {
 				width: size.width,
 				height: size.height,
 			};
-			self.swapchain = self
-				.swapchain_ext
-				.create_swapchain(
-					&vk::SwapchainCreateInfoKHR::default()
-						.surface(self.surface)
-						.min_image_count(3.clamp(capabilities.min_image_count, capabilities.max_image_count))
-						.image_format(format)
-						.image_color_space(color_space)
-						.image_extent(self.size)
-						.image_array_layers(1)
-						.image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+
+			let info = vk::SwapchainCreateInfoKHR::default()
+				.surface(self.surface)
+				.min_image_count(3.clamp(capabilities.min_image_count, capabilities.max_image_count))
+				.image_format(format)
+				.image_color_space(color_space)
+				.image_extent(self.size)
+				.image_array_layers(1)
+				.image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+				.pre_transform(capabilities.current_transform)
+				.composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+				.present_mode(if self.vsync {
+					vk::PresentModeKHR::FIFO
+				} else {
+					vk::PresentModeKHR::IMMEDIATE
+				})
+				.old_swapchain(self.old_swapchain.swapchain)
+				.clipped(true);
+			self.swapchain = match device.queue_families() {
+				Queues::Multiple {
+					graphics,
+					compute,
+					transfer,
+				} => self.swapchain_ext.create_swapchain(
+					&info
 						.image_sharing_mode(vk::SharingMode::CONCURRENT)
-						.queue_family_indices(&[queues.graphics, queues.compute, queues.transfer])
-						.pre_transform(capabilities.current_transform)
-						.composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
-						.present_mode(if self.vsync {
-							vk::PresentModeKHR::FIFO
-						} else {
-							vk::PresentModeKHR::IMMEDIATE
-						})
-						.old_swapchain(self.old_swapchain.swapchain)
-						.clipped(true),
+						.queue_family_indices(&[graphics, compute, transfer]),
 					None,
-				)
-				.unwrap();
+				),
+				Queues::Single(_) => self
+					.swapchain_ext
+					.create_swapchain(&info.image_sharing_mode(vk::SharingMode::EXCLUSIVE), None),
+			}
+			.unwrap();
 			self.images = self.swapchain_ext.get_swapchain_images(self.swapchain).unwrap();
 			self.format = format;
 		}

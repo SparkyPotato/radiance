@@ -42,7 +42,7 @@ impl FrameData {
 	pub fn new(device: &Device) -> Result<Self> {
 		Ok(Self {
 			sync: SyncPoint::default(),
-			pool: CommandPool::new(device, device.queue_families().graphics)?,
+			pool: CommandPool::new(device, device.queue_families().into::<Graphics>())?,
 			delete_queue: Vec::new(),
 		})
 	}

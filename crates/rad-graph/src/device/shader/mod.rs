@@ -17,9 +17,9 @@ use notify_debouncer_full::{
 	FileIdMap,
 };
 use rspirv::{
-	binary::{Consumer, ParseAction, Parser},
-	dr::{Instruction, ModuleHeader, Operand},
-	spirv::{ExecutionModel, Op},
+	binary::Assemble,
+	dr::{load_words, Builder, Operand},
+	spirv::{AddressingModel, Capability, ExecutionModel, MemoryModel},
 };
 
 use crate::{
@@ -313,72 +313,49 @@ struct PipelineCompiler {
 
 impl PipelineCompiler {
 	fn get_shader(&mut self, info: ShaderInfo) -> Result<(Vec<u32>, vk::ShaderStageFlags), String> {
-		struct Dec(vk::ShaderStageFlags);
-		impl Consumer for Dec {
-			fn initialize(&mut self) -> ParseAction { ParseAction::Continue }
-
-			fn finalize(&mut self) -> ParseAction { ParseAction::Continue }
-
-			fn consume_header(&mut self, _: ModuleHeader) -> ParseAction { ParseAction::Continue }
-
-			fn consume_instruction(&mut self, inst: Instruction) -> ParseAction {
-				match inst.class.opcode {
-					Op::EntryPoint => {
-						for op in inst.operands {
-							match op {
-								Operand::ExecutionModel(m) => {
-									self.0 = match m {
-										ExecutionModel::Vertex => vk::ShaderStageFlags::VERTEX,
-										ExecutionModel::TessellationControl => {
-											vk::ShaderStageFlags::TESSELLATION_CONTROL
-										},
-										ExecutionModel::TessellationEvaluation => {
-											vk::ShaderStageFlags::TESSELLATION_EVALUATION
-										},
-										ExecutionModel::Geometry => vk::ShaderStageFlags::GEOMETRY,
-										ExecutionModel::Fragment => vk::ShaderStageFlags::FRAGMENT,
-										ExecutionModel::GLCompute => vk::ShaderStageFlags::COMPUTE,
-										ExecutionModel::Kernel => panic!("why do you have an opencl shader"),
-										ExecutionModel::TaskNV => vk::ShaderStageFlags::TASK_NV,
-										ExecutionModel::MeshNV => vk::ShaderStageFlags::MESH_NV,
-										ExecutionModel::RayGenerationNV => vk::ShaderStageFlags::RAYGEN_NV,
-										ExecutionModel::IntersectionNV => vk::ShaderStageFlags::INTERSECTION_NV,
-										ExecutionModel::AnyHitNV => vk::ShaderStageFlags::ANY_HIT_NV,
-										ExecutionModel::ClosestHitNV => vk::ShaderStageFlags::CLOSEST_HIT_NV,
-										ExecutionModel::MissNV => vk::ShaderStageFlags::MISS_NV,
-										ExecutionModel::CallableNV => vk::ShaderStageFlags::CALLABLE_NV,
-										ExecutionModel::TaskEXT => vk::ShaderStageFlags::TASK_EXT,
-										ExecutionModel::MeshEXT => vk::ShaderStageFlags::MESH_EXT,
-									};
-									break;
-								},
-								_ => {},
-							}
-						}
-						ParseAction::Stop
-					},
-					_ => ParseAction::Continue,
-				}
-			}
-		}
-
 		let (module, entry) = info.shader.rsplit_once('.').unwrap();
-		let mut spirv = self.builder.load_module(module, entry, info.spec)?;
-		let byte_slice = unsafe { std::slice::from_raw_parts(spirv.as_ptr() as _, spirv.len() * 4) };
+		let spirv = self.builder.load_module(module, entry, info.spec)?;
 
-		let mut dec = Dec(vk::ShaderStageFlags::empty());
-		let _ = Parser::new(byte_slice, &mut dec).parse();
-		spirv.splice(5..5, [17 | (2 << 16), 5345]); // OpCapability VulkanMemoryModel
-		let mut iter = spirv.iter_mut();
-		while let Some(w) = iter.next() {
-			if *w == 14 | (3 << 16) {
-				break;
-			}
-		}
-		iter.next().unwrap();
-		*iter.next().unwrap() = 3;
+		let mut builder = Builder::new_from_module(
+			load_words(&spirv).map_err(|e| format!("invalid spirv in {}: {e:?}", info.shader))?,
+		);
+		builder.extension("SPV_KHR_vulkan_memory_model");
+		builder.capability(Capability::VulkanMemoryModel);
+		builder.extension("SPV_KHR_physical_storage_buffer");
+		builder.capability(Capability::PhysicalStorageBufferAddresses);
+		builder.extension("SPV_EXT_shader_image_int64");
+		builder.capability(Capability::Int64ImageEXT);
+		builder.memory_model(AddressingModel::PhysicalStorageBuffer64, MemoryModel::Vulkan);
+		let module = builder.module();
 
-		Ok((spirv, dec.0))
+		let stage = module.entry_points[0]
+			.operands
+			.iter()
+			.find_map(|x| match x {
+				Operand::ExecutionModel(m) => Some(match m {
+					ExecutionModel::Vertex => vk::ShaderStageFlags::VERTEX,
+					ExecutionModel::TessellationControl => vk::ShaderStageFlags::TESSELLATION_CONTROL,
+					ExecutionModel::TessellationEvaluation => vk::ShaderStageFlags::TESSELLATION_EVALUATION,
+					ExecutionModel::Geometry => vk::ShaderStageFlags::GEOMETRY,
+					ExecutionModel::Fragment => vk::ShaderStageFlags::FRAGMENT,
+					ExecutionModel::GLCompute => vk::ShaderStageFlags::COMPUTE,
+					ExecutionModel::Kernel => panic!("why do you have an opencl shader"),
+					ExecutionModel::TaskNV => vk::ShaderStageFlags::TASK_NV,
+					ExecutionModel::MeshNV => vk::ShaderStageFlags::MESH_NV,
+					ExecutionModel::RayGenerationKHR => vk::ShaderStageFlags::RAYGEN_KHR,
+					ExecutionModel::IntersectionKHR => vk::ShaderStageFlags::INTERSECTION_KHR,
+					ExecutionModel::AnyHitKHR => vk::ShaderStageFlags::ANY_HIT_KHR,
+					ExecutionModel::ClosestHitKHR => vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+					ExecutionModel::MissKHR => vk::ShaderStageFlags::MISS_KHR,
+					ExecutionModel::CallableKHR => vk::ShaderStageFlags::CALLABLE_KHR,
+					ExecutionModel::TaskEXT => vk::ShaderStageFlags::TASK_EXT,
+					ExecutionModel::MeshEXT => vk::ShaderStageFlags::MESH_EXT,
+				}),
+				_ => None,
+			})
+			.unwrap();
+
+		Ok((module.assemble(), stage))
 	}
 
 	#[track_caller]

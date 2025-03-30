@@ -34,27 +34,72 @@ mod sealed {
 	pub trait Sealed {}
 	impl Sealed for Graphics {}
 	impl QueueType for Graphics {
-		fn get<T>(q: &Queues<T>) -> &T { &q.graphics }
+		fn get<T>(q: &Queues<T>) -> &T {
+			match q {
+				Queues::Multiple { graphics, .. } => graphics,
+				Queues::Single(value) => value,
+			}
+		}
 
-		fn get_mut<T>(q: &mut Queues<T>) -> &mut T { &mut q.graphics }
+		fn get_mut<T>(q: &mut Queues<T>) -> &mut T {
+			match q {
+				Queues::Multiple { graphics, .. } => graphics,
+				Queues::Single(value) => value,
+			}
+		}
 
-		fn into<T>(q: Queues<T>) -> T { q.graphics }
+		fn into<T>(q: Queues<T>) -> T {
+			match q {
+				Queues::Multiple { graphics, .. } => graphics,
+				Queues::Single(value) => value,
+			}
+		}
 	}
 	impl Sealed for Compute {}
 	impl QueueType for Compute {
-		fn get<T>(q: &Queues<T>) -> &T { &q.compute }
+		fn get<T>(q: &Queues<T>) -> &T {
+			match q {
+				Queues::Multiple { compute, .. } => compute,
+				Queues::Single(value) => value,
+			}
+		}
 
-		fn get_mut<T>(q: &mut Queues<T>) -> &mut T { &mut q.compute }
+		fn get_mut<T>(q: &mut Queues<T>) -> &mut T {
+			match q {
+				Queues::Multiple { compute, .. } => compute,
+				Queues::Single(value) => value,
+			}
+		}
 
-		fn into<T>(q: Queues<T>) -> T { q.compute }
+		fn into<T>(q: Queues<T>) -> T {
+			match q {
+				Queues::Multiple { compute, .. } => compute,
+				Queues::Single(value) => value,
+			}
+		}
 	}
 	impl Sealed for Transfer {}
 	impl QueueType for Transfer {
-		fn get<T>(q: &Queues<T>) -> &T { &q.transfer }
+		fn get<T>(q: &Queues<T>) -> &T {
+			match q {
+				Queues::Multiple { transfer, .. } => transfer,
+				Queues::Single(value) => value,
+			}
+		}
 
-		fn get_mut<T>(q: &mut Queues<T>) -> &mut T { &mut q.transfer }
+		fn get_mut<T>(q: &mut Queues<T>) -> &mut T {
+			match q {
+				Queues::Multiple { transfer, .. } => transfer,
+				Queues::Single(value) => value,
+			}
+		}
 
-		fn into<T>(q: Queues<T>) -> T { q.transfer }
+		fn into<T>(q: Queues<T>) -> T {
+			match q {
+				Queues::Multiple { transfer, .. } => transfer,
+				Queues::Single(value) => value,
+			}
+		}
 	}
 }
 
@@ -89,11 +134,13 @@ impl<TY: QueueType> SyncPoint<TY> {
 	pub fn later(self, other: Self) -> Self { Self(self.0.max(other.0), PhantomData) }
 }
 
-#[derive(Default)]
-pub struct Queues<T> {
-	pub graphics: T, // Also supports presentation.
-	pub compute: T,
-	pub transfer: T,
+pub enum Queues<T> {
+	Multiple {
+		graphics: T, // Also supports presentation.
+		compute: T,
+		transfer: T,
+	},
+	Single(T),
 }
 
 impl<T> Queues<T> {
@@ -104,56 +151,64 @@ impl<T> Queues<T> {
 	pub fn into<TY: QueueType>(self) -> T { TY::into(self) }
 
 	pub fn map<U>(self, mut f: impl FnMut(T) -> U) -> Queues<U> {
-		let Queues {
-			graphics,
-			compute,
-			transfer,
-		} = self;
-		Queues {
-			graphics: f(graphics),
-			compute: f(compute),
-			transfer: f(transfer),
+		match self {
+			Queues::Multiple {
+				graphics,
+				compute,
+				transfer,
+			} => Queues::Multiple {
+				graphics: f(graphics),
+				compute: f(compute),
+				transfer: f(transfer),
+			},
+			Queues::Single(value) => Queues::Single(f(value)),
 		}
 	}
 
 	pub fn map_ref<U>(&self, mut f: impl FnMut(&T) -> U) -> Queues<U> {
-		let Queues {
-			graphics,
-			compute,
-			transfer,
-		} = self;
-		Queues {
-			graphics: f(graphics),
-			compute: f(compute),
-			transfer: f(transfer),
+		match self {
+			Queues::Multiple {
+				graphics,
+				compute,
+				transfer,
+			} => Queues::Multiple {
+				graphics: f(graphics),
+				compute: f(compute),
+				transfer: f(transfer),
+			},
+			Queues::Single(value) => Queues::Single(f(value)),
 		}
 	}
 
 	pub fn try_map<U, E>(self, mut f: impl FnMut(T) -> std::result::Result<U, E>) -> std::result::Result<Queues<U>, E> {
-		let Queues {
-			graphics,
-			compute,
-			transfer,
-		} = self;
-		Ok(Queues {
-			graphics: f(graphics)?,
-			compute: f(compute)?,
-			transfer: f(transfer)?,
+		Ok(match self {
+			Queues::Multiple {
+				graphics,
+				compute,
+				transfer,
+			} => Queues::Multiple {
+				graphics: f(graphics)?,
+				compute: f(compute)?,
+				transfer: f(transfer)?,
+			},
+			Queues::Single(value) => Queues::Single(f(value)?),
 		})
 	}
 
 	pub fn try_map_mut<U, E>(
 		&mut self, mut f: impl FnMut(&mut T) -> std::result::Result<U, E>,
 	) -> std::result::Result<Queues<U>, E> {
-		let Queues {
-			graphics,
-			compute,
-			transfer,
-		} = self;
-		Ok(Queues {
-			graphics: f(graphics)?,
-			compute: f(compute)?,
-			transfer: f(transfer)?,
+		Ok(match self {
+			Queues::Multiple {
+				graphics,
+				compute,
+				transfer,
+			} => Queues::Multiple {
+				graphics: f(graphics)?,
+				compute: f(compute)?,
+				transfer: f(transfer)?,
+			},
+			Queues::Single(value) => Queues::Single(f(value)?),
 		})
 	}
 }

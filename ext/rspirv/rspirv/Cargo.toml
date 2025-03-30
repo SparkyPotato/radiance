@@ -1,0 +1,26 @@
+[package]
+name = "rspirv"
+version = "0.12.0+sdk-1.4.309.0"
+authors = ["Lei Zhang <antiagainst@gmail.com>"]
+edition = "2018"
+
+description = "Rust library APIs for SPIR-V module manipulation"
+documentation = "https://docs.rs/rspirv"
+repository = "https://github.com/gfx-rs/rspirv"
+readme = "README.md"
+license = "Apache-2.0"
+keywords = ["spirv", "vulkan", "opengl", "opencl"]
+
+[lib]
+path = "lib.rs"
+
+[badges]
+travis-ci = { repository = "gfx-rs/rspirv" }
+
+[dependencies]
+clippy = { version = "0.0", optional = true }
+rustc-hash = "1.1.0"
+spirv = { version = "0.3.0", path = "../spirv" }
+
+[dev-dependencies]
+assert_matches = "1.1"

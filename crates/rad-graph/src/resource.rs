@@ -176,30 +176,34 @@ impl Resource for Buffer {
 				return Ok(Self::default());
 			}
 
-			let Queues {
-				graphics,
-				compute,
-				transfer,
-			} = device.queue_families();
-			let buffer = device.device().create_buffer(
-				&vk::BufferCreateInfo::default()
-					.size(desc.size)
-					.usage(
-						vk::BufferUsageFlags::TRANSFER_SRC
-							| vk::BufferUsageFlags::TRANSFER_DST
-							| vk::BufferUsageFlags::STORAGE_BUFFER
-							| vk::BufferUsageFlags::INDEX_BUFFER
-							| vk::BufferUsageFlags::VERTEX_BUFFER
-							| vk::BufferUsageFlags::INDIRECT_BUFFER
-							| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-							| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
-							| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
-							| vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
-					)
-					.sharing_mode(vk::SharingMode::CONCURRENT)
-					.queue_family_indices(&[graphics, compute, transfer]),
-				None,
-			)?;
+			let info = vk::BufferCreateInfo::default().size(desc.size).usage(
+				vk::BufferUsageFlags::TRANSFER_SRC
+					| vk::BufferUsageFlags::TRANSFER_DST
+					| vk::BufferUsageFlags::STORAGE_BUFFER
+					| vk::BufferUsageFlags::INDEX_BUFFER
+					| vk::BufferUsageFlags::VERTEX_BUFFER
+					| vk::BufferUsageFlags::INDIRECT_BUFFER
+					| vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+					| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR
+					| vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+					| vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR,
+			);
+
+			let buffer = match device.queue_families() {
+				Queues::Multiple {
+					graphics,
+					compute,
+					transfer,
+				} => device.device().create_buffer(
+					&info
+						.sharing_mode(vk::SharingMode::CONCURRENT)
+						.queue_family_indices(&[graphics, compute, transfer]),
+					None,
+				),
+				Queues::Single(_) => device
+					.device()
+					.create_buffer(&info.sharing_mode(vk::SharingMode::EXCLUSIVE), None),
+			}?;
 
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
@@ -309,32 +313,38 @@ impl Resource for Image {
 
 	fn create(device: &Device, desc: Self::Desc<'_>) -> Result<Self> {
 		unsafe {
-			let Queues {
-				graphics,
-				compute,
-				transfer,
-			} = device.queue_families();
-			let image = device.device().create_image(
-				&vk::ImageCreateInfo::default()
-					.flags(desc.flags)
-					.image_type(if desc.size.depth > 1 {
-						vk::ImageType::TYPE_3D
-					} else if desc.size.height > 1 {
-						vk::ImageType::TYPE_2D
-					} else {
-						vk::ImageType::TYPE_1D
-					})
-					.format(desc.format)
-					.extent(desc.size)
-					.mip_levels(desc.levels)
-					.array_layers(desc.layers)
-					.samples(desc.samples)
-					.usage(desc.usage)
-					.sharing_mode(vk::SharingMode::CONCURRENT)
-					.queue_family_indices(&[graphics, compute, transfer])
-					.initial_layout(vk::ImageLayout::UNDEFINED),
-				None,
-			)?;
+			let info = vk::ImageCreateInfo::default()
+				.flags(desc.flags)
+				.image_type(if desc.size.depth > 1 {
+					vk::ImageType::TYPE_3D
+				} else if desc.size.height > 1 {
+					vk::ImageType::TYPE_2D
+				} else {
+					vk::ImageType::TYPE_1D
+				})
+				.format(desc.format)
+				.extent(desc.size)
+				.mip_levels(desc.levels)
+				.array_layers(desc.layers)
+				.samples(desc.samples)
+				.usage(desc.usage)
+				.initial_layout(vk::ImageLayout::UNDEFINED);
+			let image = match device.queue_families() {
+				Queues::Multiple {
+					graphics,
+					compute,
+					transfer,
+				} => device.device().create_image(
+					&info
+						.sharing_mode(vk::SharingMode::CONCURRENT)
+						.queue_family_indices(&[graphics, compute, transfer]),
+					None,
+				),
+				Queues::Single(_) => device
+					.device()
+					.create_image(&info.sharing_mode(vk::SharingMode::EXCLUSIVE), None),
+			}?;
+
 			let _ = device.debug_utils_ext().map(|d| {
 				let name = CString::new(desc.name).unwrap();
 				d.set_debug_utils_object_name(
