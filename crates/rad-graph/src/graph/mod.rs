@@ -324,6 +324,10 @@ impl<'frame, 'pass, 'graph> PassBuilder<'frame, 'pass, 'graph> {
 		unsafe { T::desc(data) }
 	}
 
+	pub fn persistent_desc<T: VirtualResource>(&mut self, res: Persist<T>) -> Option<T::Desc> {
+		T::persistent_desc(&self.frame.graph.caches, res)
+	}
+
 	/// Build the pass with the given callback.
 	pub fn build(self, callback: impl FnOnce(PassContext<'_, 'graph>) + 'pass) {
 		let pass = PassData {

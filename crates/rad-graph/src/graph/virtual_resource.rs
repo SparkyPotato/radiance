@@ -10,7 +10,7 @@ use crate::{
 	resource::{
 		Buffer,
 		BufferHandle,
-		Image,
+		BufferType,
 		ImageView,
 		ImageViewDescUnnamed,
 		ImageViewUsage,
@@ -35,7 +35,7 @@ pub enum BufferLoc {
 pub struct BufferDesc {
 	pub size: u64,
 	pub loc: BufferLoc,
-	pub persist: Option<Persist<Buffer>>,
+	pub persist: Option<Persist<BufferHandle>>,
 }
 
 impl BufferDesc {
@@ -63,14 +63,14 @@ impl BufferDesc {
 		}
 	}
 
-	pub fn persist(self, persist: Persist<Buffer>) -> Self {
+	pub fn persist(self, persist: Persist<BufferHandle>) -> Self {
 		Self {
 			persist: Some(persist),
 			..self
 		}
 	}
 
-	pub fn readback(size: u64, persist: Persist<Buffer>) -> Self {
+	pub fn readback(size: u64, persist: Persist<BufferHandle>) -> Self {
 		Self {
 			size,
 			loc: BufferLoc::Readback,
@@ -170,7 +170,7 @@ pub struct ImageDesc {
 	pub levels: u32,
 	pub layers: u32,
 	pub samples: vk::SampleCountFlags,
-	pub persist: Option<Persist<Image>>,
+	pub persist: Option<Persist<ImageView>>,
 }
 
 impl Default for ImageDesc {
@@ -384,9 +384,11 @@ pub trait VirtualResourceDesc {
 	) -> VirtualResourceType<'graph>;
 }
 
-pub trait VirtualResource {
+pub trait VirtualResource: Sized {
 	type Usage<A: Allocator>;
 	type Desc;
+
+	fn persistent_desc(caches: &Caches, res: Persist<Self>) -> Option<Self::Desc>;
 
 	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc;
 
@@ -448,6 +450,19 @@ impl VirtualResource for BufferHandle {
 	type Desc = BufferDesc;
 	type Usage<A: Allocator> = BufferUsageOwned<A>;
 
+	fn persistent_desc(caches: &Caches, res: Persist<Self>) -> Option<Self::Desc> {
+		let desc = caches.persistent_buffers.get_desc(res.key)?;
+		Some(BufferDesc {
+			size: desc.size,
+			loc: match desc.ty {
+				BufferType::Gpu => BufferLoc::Gpu,
+				BufferType::Staging => BufferLoc::Staging,
+				BufferType::Readback => BufferLoc::Readback,
+			},
+			persist: Some(res),
+		})
+	}
+
 	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
 		let mut d = ty.ty.buffer().desc;
 		d.persist = None;
@@ -483,6 +498,18 @@ impl VirtualResourceDesc for BufferDesc {
 impl VirtualResource for ImageView {
 	type Desc = ImageDesc;
 	type Usage<A: Allocator> = ImageUsageOwned<A>;
+
+	fn persistent_desc(caches: &Caches, res: Persist<Self>) -> Option<Self::Desc> {
+		let desc = caches.persistent_images.get_desc(res.key)?;
+		Some(ImageDesc {
+			size: desc.size,
+			format: desc.format,
+			levels: desc.levels,
+			layers: desc.layers,
+			samples: desc.samples,
+			persist: Some(res),
+		})
+	}
 
 	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
 		let mut d = ty.ty.image().desc;

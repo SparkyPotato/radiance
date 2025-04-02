@@ -2,7 +2,7 @@ use bytemuck::NoUninit;
 use rad_graph::{
 	device::{descriptor::ImageId, Device, ShaderInfo},
 	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, Persist, Res},
-	resource::{Buffer, BufferHandle, GpuPtr, ImageView},
+	resource::{BufferHandle, GpuPtr, ImageView},
 	sync::Shader,
 	util::compute::ComputePass,
 	Result,
@@ -34,9 +34,9 @@ struct EPushConstants {
 pub struct ExposureCalc {
 	histogram: ComputePass<HPushConstants>,
 	exposure: ComputePass<EPushConstants>,
-	exposure_value: Persist<Buffer>,
-	histogram_readback: Persist<Buffer>,
-	exposure_readback: Persist<Buffer>,
+	exposure_value: Persist<BufferHandle>,
+	histogram_readback: Persist<BufferHandle>,
+	exposure_readback: Persist<BufferHandle>,
 	curr_exposure: f32,
 	target_exposure: f32,
 	scene_exposure: f32,

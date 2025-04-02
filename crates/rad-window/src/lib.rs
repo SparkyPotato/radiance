@@ -59,18 +59,20 @@ impl<T: App> ApplicationHandler for AppWrapper<T> {
 		match event {
 			WindowEvent::RedrawRequested => {
 				let window = self.window.as_mut().unwrap();
-				let Some((image, id)) = window.acquire().unwrap() else {
-					self.minimized = true;
-					return;
-				};
+				let (image, id) = window.acquire().unwrap();
 				self.app.draw(window, image).unwrap();
 				let _ = window.present(id);
+
+				tracy::frame!();
 			},
 			WindowEvent::Resized(x) => {
 				if x.width != 0 && x.height != 0 {
 					self.minimized = false;
+				} else if x.width == 0 || x.height == 0 {
+					self.minimized = true;
+					return;
 				}
-				self.window.as_mut().unwrap().resize().unwrap()
+				self.window.as_mut().unwrap().resize().unwrap();
 			},
 			WindowEvent::CloseRequested => el.exit(),
 			x => self.app.event(self.window.as_mut().unwrap(), x).unwrap(),
@@ -89,6 +91,7 @@ pub struct Window {
 	curr_frame: usize,
 	format: vk::Format,
 	size: vk::Extent2D,
+	remake_requested: bool,
 	vsync: bool,
 	hdr_requested: bool,
 	hdr_supported: bool,
@@ -130,11 +133,12 @@ impl Window {
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
 			size: vk::Extent2D::default(),
+			remake_requested: false,
 			vsync: true,
 			hdr_requested: true,
 			hdr_supported: false,
 		};
-		this.make(device)?;
+		this.resize()?;
 		Ok(this)
 	}
 
@@ -142,26 +146,32 @@ impl Window {
 
 	pub fn hdr_supported(&self) -> bool { self.hdr_supported }
 
-	pub fn set_hdr(&mut self, hdr: bool) -> Result<()> {
+	pub fn set_hdr(&mut self, hdr: bool) {
 		if self.hdr_requested != hdr {
 			self.hdr_requested = hdr;
-			self.resize()?;
+			self.remake_requested = true;
 		}
-		Ok(())
 	}
 
 	pub fn vsync_enabled(&self) -> bool { self.vsync }
 
-	pub fn set_vsync(&mut self, vsync: bool) -> Result<()> {
+	pub fn set_vsync(&mut self, vsync: bool) {
 		if self.vsync != vsync {
 			self.vsync = vsync;
-			self.resize()?;
+			self.remake_requested = true;
 		}
-		Ok(())
 	}
 
-	fn acquire(&mut self) -> Result<Option<(SwapchainImage, u32)>> {
+	fn acquire(&mut self) -> Result<(SwapchainImage, u32)> {
 		unsafe {
+			let s = tracing::trace_span!("acquire");
+			let _e = s.enter();
+
+			if self.remake_requested {
+				self.resize()?;
+				self.remake_requested = false;
+			}
+
 			self.curr_frame ^= 1;
 			let (available, rendered) = self.semas[self.curr_frame];
 			let (id, _) =
@@ -170,10 +180,11 @@ impl Window {
 					.acquire_next_image(self.swapchain, u64::MAX, available, vk::Fence::null())
 				{
 					Ok(x) => x,
-					Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Ok(None),
 					Err(x) => return Err(x.into()),
 				};
-			let ret = (
+			tracing::trace!("acquired {{{id}}}");
+
+			Ok((
 				SwapchainImage {
 					handle: self.images[id as usize],
 					size: self.size,
@@ -182,19 +193,16 @@ impl Window {
 					rendered,
 				},
 				id,
-			);
-
-			Ok(Some(ret))
+			))
 		}
 	}
 
 	fn present(&mut self, id: u32) -> Result<()> {
 		unsafe {
-			tracing::trace!("present");
+			let s = tracing::trace_span!("present", id);
+			let _e = s.enter();
 
 			let device: &Device = Engine::get().global();
-			self.cleanup_old(device)?;
-
 			let (_, rendered) = self.semas[self.curr_frame];
 			self.swapchain_ext.queue_present(
 				*device.queue::<Graphics>(),
@@ -210,28 +218,8 @@ impl Window {
 
 	fn resize(&mut self) -> Result<()> {
 		let device: &Device = Engine::get().global();
-		self.make(device)
-	}
-
-	fn cleanup_old(&mut self, device: &Device) -> Result<()> {
-		if self.old_swapchain.swapchain != vk::SwapchainKHR::null() {
-			self.old_swapchain.sync.wait(device)?;
-			unsafe {
-				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
-			}
-			self.old_swapchain.swapchain = vk::SwapchainKHR::null();
-		}
-
-		Ok(())
-	}
-
-	fn make(&mut self, device: &Device) -> Result<()> {
 		unsafe {
 			let size = self.inner.inner_size();
-			if size.height == 0 || size.width == 0 {
-				return Ok(());
-			}
-
 			let surface_ext = device.surface_ext();
 			let capabilities =
 				surface_ext.get_physical_device_surface_capabilities(device.physical_device(), self.surface)?;
@@ -269,7 +257,14 @@ impl Window {
 
 			let info = vk::SwapchainCreateInfoKHR::default()
 				.surface(self.surface)
-				.min_image_count(3.clamp(capabilities.min_image_count, capabilities.max_image_count))
+				.min_image_count(3.clamp(
+					capabilities.min_image_count,
+					if capabilities.max_image_count == 0 {
+						u32::MAX
+					} else {
+						capabilities.max_image_count
+					},
+				))
 				.image_format(format)
 				.image_color_space(color_space)
 				.image_extent(self.size)
@@ -302,6 +297,18 @@ impl Window {
 			.unwrap();
 			self.images = self.swapchain_ext.get_swapchain_images(self.swapchain).unwrap();
 			self.format = format;
+		}
+
+		Ok(())
+	}
+
+	fn cleanup_old(&mut self, device: &Device) -> Result<()> {
+		if self.old_swapchain.swapchain != vk::SwapchainKHR::null() {
+			self.old_swapchain.sync.wait(device)?;
+			unsafe {
+				self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
+			}
+			self.old_swapchain.swapchain = vk::SwapchainKHR::null();
 		}
 
 		Ok(())

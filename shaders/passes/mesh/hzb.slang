@@ -8,7 +8,7 @@ import passes.visbuffer;
 struct PushConstants {
 	u32* atomic;
 	VisBufferTex visbuffer;
-	STex<f32, D2, Coherent, NonUniform> out[12];
+	STex2D<f32, r32f, NonUniform> out[12];
 	u32 mips;
 	u32 target;
 }
@@ -28,7 +28,11 @@ f32 reduce(f32x4 v) {
 }
 
 void store(u32x2 p, u32 mip, f32 v) {
-	Constants.out[mip].store(p, v);
+	if (mip == 5) {
+		Constants.out[mip].store(p, v, Scope.Queue);
+	} else {
+		Constants.out[mip][p] = v;
+	}
 }
 
 void store4(u32x2 p, u32 mip, f32x4 v) {
@@ -57,10 +61,10 @@ f32x4x4 fetch4x4(u32x2 p) {
 }
 
 f32x4 fetch2x2_6(u32x2 p) {
-	let x = Constants.out[5].load(p + u32x2(0, 0));
-	let y = Constants.out[5].load(p + u32x2(1, 0));
-	let z = Constants.out[5].load(p + u32x2(0, 1));
-	let w = Constants.out[5].load(p + u32x2(1, 1));
+	let x = Constants.out[5].load(p + u32x2(0, 0), Scope.Queue);
+	let y = Constants.out[5].load(p + u32x2(1, 0), Scope.Queue);
+	let z = Constants.out[5].load(p + u32x2(0, 1), Scope.Queue);
+	let w = Constants.out[5].load(p + u32x2(1, 1), Scope.Queue);
 	return f32x4(x, y, z, w);
 }
 
@@ -137,7 +141,7 @@ void main(u32x2 gid: SV_GroupID) {
 		return;
 
 	if (lid == 0)
-		store(gid.xy, 5, d);	
+		store(gid.xy, 5, d);
 	if (Constants.mips <= 6)
 		return;
 

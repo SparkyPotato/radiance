@@ -50,15 +50,15 @@ void main() {
 	var rng = Constants.rng.init_at(pix);
 
 	let r = primary_ray(rng, pix);
-	var ret = li(rng, r);
+	var ret = f32x4(li(rng, r), 1.f);
 	if (any(isnan(ret) || isinf(ret)))
-		ret = f32x3(1.f, 0.f, 1.f) * 1e7f;
+		ret = f32x4(1.f, 0.f, 1.f, 1.f) * 1e7f;
 
 	let n = Constants.samples;
 	if (n == 0) {
-		Constants.output.store(pix, ret);
+		Constants.output[pix] = ret;
 	} else {
-		let prev = Constants.output.load(pix);
-		Constants.output.store(pix, lerp(prev, ret, 1.f / (f32(n) + 1.f)));
+		let out = &Constants.output[pix];
+		*out = lerp(*out, ret, 1.f / (f32(n) + 1.f));
 	}
 }

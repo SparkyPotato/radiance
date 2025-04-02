@@ -17,6 +17,14 @@ __DynamicResource Textures[];
 public struct Tex<T : ITexelElement, S : __ITextureShape, U : Uniformity = Uniform> {
 	u32 index;
 
+	public __init() {
+		this.index = 0;
+	}
+
+	__init(u32 index) {
+		this.index = index;
+	}
+
 	public static Tex<T, S, U> from_index(u32 index) {
 		return { index };
 	}
@@ -178,65 +186,46 @@ __generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex3D<T, 
 [vk::binding(1, 0)]
 __DynamicResource STextures[];
 
-public struct STex<T : ITexelElement, S : __ITextureShape, C : Coherency = Incoherent, U : Uniformity = Uniform> {
+public struct STex<T : ITexelElement, S : __ITextureShape, F : TextureFormat, U : Uniformity = Uniform> {
 	u32 index;
 
-	_Texture<T, S, 0, 0, 0, 1, 0, 0, 0> get() {
-		return STextures[U.wrap_index(this.index)].as<_Texture<T, S, 0, 0, 0, 1, 0, 0, 0>>();
+	_Texture<T, S, 0, 0, 0, 1, 0, 0, F.Format> get() {
+		return STextures[U.wrap_index(this.index)].as<_Texture<T, S, 0, 0, 0, 1, 0, 0, F.Format>>();
 	}
 
-	public T load(vector<u32, S.dimensions> pixel) {
-		if (C.is_coherent()) {
-			let img = this.get();
-			u32 sc = DEFAULT_SCOPE;
-			return spirv_asm {
-				OpCapability VulkanMemoryModel;
-				result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
-			};
-		} else {
-			return this.get().Load(pixel);
+	public __subscript(vector<u32, S.dimensions> pixel)->Ref<T> {
+		get {
+			return this.get()[pixel];
 		}
 	}
 
-	public void store(vector<u32, S.dimensions> pixel, T value) {
-		if (C.is_coherent()) {
-			let img = this.get();
-			u32 sc = DEFAULT_SCOPE;
-			spirv_asm {
-				OpCapability VulkanMemoryModel;
-				OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
-			};
-		} else {
-			this.get()[pixel] = value;
-		}
+	public T load(vector<u32, S.dimensions> pixel, constexpr Scope sc = DEFAULT_SCOPE) {
+		let img = this.get();
+		return spirv_asm {
+			result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
+		};
+	}
+
+	public void store(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE) {
+		let img = this.get();
+		spirv_asm {
+			OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
+		};
 	}
 }
 
-__generic<T : ITexelElement> public typealias STex1D = STex<T, D1>;
-__generic<T : ITexelElement> public typealias STex2D = STex<T, D2>;
-__generic<T : ITexelElement> public typealias STex3D = STex<T, D3>;
+__generic<T : ITexelElement, F : TextureFormat, U : Uniformity = Uniform> public typealias STex1D = STex<T, D1, F, U>;
+__generic<T : ITexelElement, F : TextureFormat, U : Uniformity = Uniform> public typealias STex2D = STex<T, D2, F, U>;
+__generic<T : ITexelElement, F : TextureFormat, U : Uniformity = Uniform> public typealias STex3D = STex<T, D3, F, U>;
 
-__generic<T : ITexelElement & __BuiltinArithmeticType, S : __ITextureShape, C : Coherency,
-		  U : Uniformity> public extension STex<T, S, C, U> {
-	public T atomic_add(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
-						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
-		return ::atomic_add(this.get()[pixel], value, sc, loc, se);
-	}
-
-	public T atomic_max(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
-						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
-		return ::atomic_max(this.get()[pixel], value, sc, loc, se);
-	}
-}
-
-__generic<T : ITexelElement, C : Coherency, U : Uniformity> public extension STex<T, D1, C, U> {
+__generic<T : ITexelElement, F : TextureFormat, U : Uniformity> public extension STex1D<T, F, U> {
 	public u32 size() {
 		u32 w;
 		this.get().GetDimensions(w);
 		return w;
 	}
 }
-__generic<T : ITexelElement, C : Coherency, U : Uniformity> public extension STex<T, D2, C, U> {
+__generic<T : ITexelElement, F : TextureFormat, U : Uniformity> public extension STex2D<T, F, U> {
 	public u32x2 size() {
 		u32 w, h;
 		this.get().GetDimensions(w, h);
@@ -249,7 +238,7 @@ __generic<T : ITexelElement, C : Coherency, U : Uniformity> public extension STe
 		return u32x2(xy);
 	}
 }
-__generic<T : ITexelElement, C : Coherency, U : Uniformity> public extension STex<T, D3, C, U> {
+__generic<T : ITexelElement, F : TextureFormat, U : Uniformity> public extension STex3D<T, F, U> {
 	public u32x3 size() {
 		u32 w, h, d;
 		this.get().GetDimensions(w, h, d);

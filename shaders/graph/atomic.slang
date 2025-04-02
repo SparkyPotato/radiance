@@ -28,6 +28,20 @@ public static const Scope DEFAULT_SCOPE = Scope.Queue;
 public static const Sem DEFAULT_SEM = Sem.Relaxed;
 public static const Loc DEFAULT_LOC = Loc.None;
 
+__generic<T> public extension T* {
+	T load(constexpr Scope sc = DEFAULT_SCOPE) {
+		return spirv_asm {
+			result:$$T = OpLoad $this NonPrivatePointer | MakePointerAvailable $sc;
+		};
+	}
+
+	void store(T value, constexpr Scope sc = DEFAULT_SCOPE) {
+		spirv_asm {
+			OpStore $this $value NonPrivatePointer | MakePointerVisible $sc;
+		};
+	}
+}
+
 public T atomic_load<T : __BuiltinArithmeticType>(__ref T ptr, constexpr Scope sc = DEFAULT_SCOPE,
 												  constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 	u32 sem = loc | se;

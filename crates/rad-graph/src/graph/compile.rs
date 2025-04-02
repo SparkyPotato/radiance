@@ -349,7 +349,7 @@ impl<'graph> ResourceAliaser<'graph> {
 								let x = graph
 									.caches
 									.persistent_buffers
-									.get(device, persist, desc, vk::ImageLayout::UNDEFINED)
+									.get(device, persist.key, desc, vk::ImageLayout::UNDEFINED)
 									.expect("failed to allocated graph buffer");
 								(x.0, x.1)
 							},
@@ -362,7 +362,7 @@ impl<'graph> ResourceAliaser<'graph> {
 							(BufferLoc::Readback, x) => {
 								let persist = x.expect("readback buffers must be persistent");
 								let x = graph.caches.readback_buffers[graph.curr_frame]
-									.get(device, persist, desc, vk::ImageLayout::UNDEFINED)
+									.get(device, persist.key, desc, vk::ImageLayout::UNDEFINED)
 									.expect("failed to allocated graph buffer");
 								(x.0, x.1)
 							},
@@ -392,7 +392,7 @@ impl<'graph> ResourceAliaser<'graph> {
 							let x = graph
 								.caches
 								.persistent_images
-								.get(device, persist, desc, next_layout)
+								.get(device, persist.key, desc, next_layout)
 								.expect("failed to allocate graph image");
 							((x.0, x.2), x.1)
 						} else {

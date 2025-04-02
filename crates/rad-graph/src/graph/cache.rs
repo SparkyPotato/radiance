@@ -12,7 +12,7 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	device::Device,
-	graph::FRAMES_IN_FLIGHT,
+	graph::{VirtualResource, FRAMES_IN_FLIGHT},
 	resource::{Resource, ToNamed},
 	Result,
 };
@@ -187,27 +187,27 @@ struct PersistentResource<T: Resource> {
 	layout: vk::ImageLayout,
 }
 
-pub struct Persist<T: Resource> {
-	key: NonZeroU64,
+pub struct Persist<T: VirtualResource> {
+	pub(crate) key: NonZeroU64,
 	_phantom: PhantomData<fn() -> T>,
 }
-impl<T: Resource> Copy for Persist<T> {}
-impl<T: Resource> Clone for Persist<T> {
+impl<T: VirtualResource> Copy for Persist<T> {}
+impl<T: VirtualResource> Clone for Persist<T> {
 	fn clone(&self) -> Self { *self }
 }
-impl<T: Resource> Hash for Persist<T> {
+impl<T: VirtualResource> Hash for Persist<T> {
 	fn hash<H: std::hash::Hasher>(&self, state: &mut H) { self.key.hash(state) }
 }
-impl<T: Resource> PartialEq for Persist<T> {
+impl<T: VirtualResource> PartialEq for Persist<T> {
 	fn eq(&self, other: &Self) -> bool { self.key == other.key }
 }
-impl<T: Resource> Eq for Persist<T> {}
-impl<T: Resource> Debug for Persist<T> {
+impl<T: VirtualResource> Eq for Persist<T> {}
+impl<T: VirtualResource> Debug for Persist<T> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "Persist({})", self.key.get()) }
 }
 
 static COUNTER: AtomicU64 = AtomicU64::new(1);
-impl<T: Resource> Persist<T> {
+impl<T: VirtualResource> Persist<T> {
 	pub fn new() -> Self {
 		Self {
 			key: NonZeroU64::new(COUNTER.fetch_add(1, Ordering::Relaxed)).unwrap(),
@@ -217,7 +217,7 @@ impl<T: Resource> Persist<T> {
 }
 
 pub struct PersistentCache<T: Resource> {
-	resources: FxHashMap<Persist<T>, PersistentResource<T>>,
+	resources: FxHashMap<NonZeroU64, PersistentResource<T>>,
 }
 
 impl<T: Resource> PersistentCache<T> {
@@ -228,9 +228,11 @@ impl<T: Resource> PersistentCache<T> {
 		}
 	}
 
+	pub fn get_desc(&self, key: NonZeroU64) -> Option<T::UnnamedDesc> { self.resources.get(&key).map(|r| r.desc) }
+
 	/// Get the resource with the given descriptor. Is valid until [`Self::reset`] is called.
 	pub fn get(
-		&mut self, device: &Device, key: Persist<T>, desc: T::UnnamedDesc, next_layout: vk::ImageLayout,
+		&mut self, device: &Device, key: NonZeroU64, desc: T::UnnamedDesc, next_layout: vk::ImageLayout,
 	) -> Result<(T::Handle, bool, vk::ImageLayout)> {
 		match self.resources.entry(key) {
 			Entry::Vacant(v) => {

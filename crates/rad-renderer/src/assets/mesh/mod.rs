@@ -128,8 +128,7 @@ impl AssetView for RaytracingMeshView {
 					.ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
 					.flags(
 						vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE
-							| vk::BuildAccelerationStructureFlagsKHR::ALLOW_COMPACTION
-							| vk::BuildAccelerationStructureFlagsKHR::ALLOW_DATA_ACCESS,
+							| vk::BuildAccelerationStructureFlagsKHR::ALLOW_COMPACTION,
 					)
 					.mode(vk::BuildAccelerationStructureModeKHR::BUILD)
 					.geometries(&geo);

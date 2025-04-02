@@ -10,7 +10,7 @@ use rad_graph::{
 		ShaderInfo,
 	},
 	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Persist, Res},
-	resource::{GpuPtr, Image, ImageView},
+	resource::{GpuPtr, ImageView},
 	sync::Shader,
 	util::compute::RtPass,
 	Result,
@@ -33,7 +33,7 @@ use crate::{
 pub struct PathTracer {
 	pass: RtPass<PushConstants>,
 	sampler: SamplerId,
-	accum: Persist<Image>,
+	accum: Persist<ImageView>,
 	cached: Option<Vec2<u32>>,
 	samples: u32,
 	ggx_e_lut: ImageAssetView,

@@ -36,7 +36,7 @@ use rad_graph::{
 		Shader,
 		SwapchainImage,
 	},
-	resource::{BufferHandle, GpuPtr, Image, ImageView, Subresource},
+	resource::{BufferHandle, GpuPtr, ImageView, Subresource},
 	util::{
 		pass::{Attachment, ImageCopy, Load},
 		pipeline::{default_blend, no_cull, simple_blend},
@@ -58,7 +58,7 @@ pub struct ScreenDescriptor {
 }
 
 pub struct Renderer {
-	images: FxHashMap<u64, (Persist<Image>, Vec2<u32>, SamplerId)>,
+	images: FxHashMap<u64, (Persist<ImageView>, Vec2<u32>, SamplerId)>,
 	sdr: RenderPass<PushConstantsStatic>,
 	hdr: RenderPass<PushConstantsStatic>,
 	blit: FullscreenPass<ImageId>,

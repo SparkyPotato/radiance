@@ -12,7 +12,7 @@ public struct PushConstants {
 	public Camera* camera;
 	public AS as;
 	public Sampler sampler;
-	public STex2D<f32x3> output;
+	public STex2D<f32x4, rgba32f> output;
 	public Tex2D<f32> ggx_energy_compensation_lut;
 	public Rng rng;
 	public u32 samples;

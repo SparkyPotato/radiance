@@ -8,7 +8,7 @@ use rad_graph::{
 		ShaderInfo,
 	},
 	graph::{Frame, ImageDesc, ImageUsage, PassBuilder, PassContext, Persist, Res},
-	resource::{Image, ImageView},
+	resource::ImageView,
 	sync::Shader,
 	util::{
 		pass::{Attachment, Load},
@@ -24,8 +24,8 @@ pub struct SkyLuts {
 	transmittance: FullscreenPass<()>,
 	scattering: FullscreenPass<ScatteringConstants>,
 	eval: FullscreenPass<EvalConstants>,
-	transmittance_image: Persist<Image>,
-	scattering_image: Persist<Image>,
+	transmittance_image: Persist<ImageView>,
+	scattering_image: Persist<ImageView>,
 	sampler: SamplerId,
 }
 

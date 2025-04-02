@@ -57,13 +57,15 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 
 	pub fn push(&mut self, offset: usize, value: &impl NoUninit) {
 		unsafe {
-			self.device.device().cmd_push_constants(
-				self.buf,
-				self.device.layout(),
-				vk::ShaderStageFlags::ALL,
-				offset as _,
-				bytes_of(value),
-			);
+			if std::mem::size_of_val(value) > 0 {
+				self.device.device().cmd_push_constants(
+					self.buf,
+					self.device.layout(),
+					vk::ShaderStageFlags::ALL,
+					offset as _,
+					bytes_of(value),
+				);
+			}
 		}
 	}
 

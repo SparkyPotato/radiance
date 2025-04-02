@@ -95,18 +95,18 @@ public struct NonUniform : Uniformity {
 	}
 }
 
-public interface Coherency {
-	static bool is_coherent();
+public interface TextureFormat {
+	static const i32 Format;
 }
-public struct Coherent : Coherency {
-	[ForceInline]
-	public static bool is_coherent() {
-		return true;
-	}
+public struct r32u : TextureFormat {
+	public static const i32 Format = 37;
 }
-public struct Incoherent : Coherency {
-	[ForceInline]
-	public static bool is_coherent() {
-		return false;
-	}
+public struct r32f : TextureFormat {
+	public static const i32 Format = 6;
+}
+public struct r64u : TextureFormat {
+	public static const i32 Format = 40;
+}
+public struct rgba32f : TextureFormat {
+	public static const i32 Format = 1;
 }

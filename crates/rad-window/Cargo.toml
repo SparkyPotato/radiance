@@ -8,4 +8,5 @@ rad-core = { workspace = true }
 rad-graph = { workspace = true }
 
 tracing = { workspace = true }
+tracy = { workspace = true }
 winit = { workspace = true }

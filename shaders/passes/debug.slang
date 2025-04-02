@@ -164,7 +164,7 @@ f32x4 main(ScreenOutput input) : SV_Target0 {
 		}
 		case DebugVis.Error: {
 			let res = Constants.read.size();
-			let cull = Cull(Constants.camera, tri.instance, 0, res, {}, {});
+			let cull = Cull(Constants.camera, tri.instance, 0, res, Tex2D<f32>(), Sampler<Uniform>());
 			let error_over_dist = cull.error_over_dist(tri.meshlet->lod_bounds, tri.meshlet->error);
 			let thresh = cull.threshold_for_pix(1.f);
 			let error = error_over_dist / thresh;

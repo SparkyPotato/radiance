@@ -15,7 +15,7 @@ use rad_graph::{
 		Persist,
 		Res,
 	},
-	resource::{Buffer, BufferHandle, Image, ImageView, Subresource},
+	resource::{BufferHandle, ImageView, Subresource},
 	sync::Shader,
 };
 use tracing::error;
@@ -177,8 +177,8 @@ impl Resources {
 
 pub struct Setup {
 	pub stats: CullStats,
-	hzb: Persist<Image>,
-	stats_readback: Persist<Buffer>,
+	hzb: Persist<ImageView>,
+	stats_readback: Persist<BufferHandle>,
 }
 
 impl Setup {
@@ -197,32 +197,33 @@ impl Setup {
 		let scene = rend.get::<VirtualScene>(frame);
 		let camera = rend.get::<CameraScene>(frame);
 
-		// TODO: handle world change.
-		let needs_clear = camera.prev.camera != camera.curr.camera;
-		let res = info.size;
-
 		let mut pass = frame.pass("setup cull buffers");
+
+		let res = info.size;
 		let size = info.size.map(|x| 1 << x.ilog2());
-		let hzb = pass.resource(
-			ImageDesc {
-				size: vk::Extent3D {
-					width: size.x,
-					height: size.y,
-					depth: 1,
-				},
-				format: vk::Format::R32_SFLOAT,
-				levels: size.x.max(size.y).ilog2(),
-				persist: Some(self.hzb),
-				..Default::default()
+		// TODO: handle world change.
+		let hzb_desc = ImageDesc {
+			size: vk::Extent3D {
+				width: size.x,
+				height: size.y,
+				depth: 1,
 			},
+			format: vk::Format::R32_SFLOAT,
+			levels: size.x.max(size.y).ilog2(),
+			persist: Some(self.hzb),
+			..Default::default()
+		};
+		let needs_clear = camera.prev.camera != camera.curr.camera || pass.persistent_desc(self.hzb) != Some(hzb_desc);
+		let hzb = pass.resource(
+			hzb_desc,
 			ImageUsage {
 				format: vk::Format::UNDEFINED,
 				usages: if needs_clear {
 					&[ImageUsageType::TransferWrite]
 				} else {
 					&[
+						ImageUsageType::ShaderReadSampledImage(Shader::Compute),
 						ImageUsageType::AddUsage(vk::ImageUsageFlags::TRANSFER_DST),
-						ImageUsageType::OverrideLayout(vk::ImageLayout::READ_ONLY_OPTIMAL),
 					]
 				},
 				view_type: None,
