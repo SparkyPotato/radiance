@@ -19,14 +19,17 @@ resolver = "2"
 
 [profile.dev.build-override]
 opt-level = 3
+codegen-units = 24
 [profile.release.build-override]
 opt-level = 3
 codegen-units = 24
 
 [profile.dev]
+panic = "abort"
 debug = true
 opt-level = 1
 [profile.release]
+panic = "abort"
 debug = true
 
 [workspace.dependencies]

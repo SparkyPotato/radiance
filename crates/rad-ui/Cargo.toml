@@ -15,5 +15,4 @@ egui-winit = { workspace = true }
 hashbrown = { workspace = true }
 rustc-hash = { workspace = true }
 tracing = { workspace = true }
-tracy = { workspace = true }
 vek = { workspace = true }

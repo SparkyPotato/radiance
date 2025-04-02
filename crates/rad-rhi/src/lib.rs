@@ -47,10 +47,6 @@ impl Module for RhiModule {
 						.push_next(
 							&mut vk::PhysicalDeviceShaderImageAtomicInt64FeaturesEXT::default()
 								.shader_image_int64_atomics(true),
-						)
-						.push_next(
-							&mut vk::PhysicalDeviceRayTracingPositionFetchFeaturesKHR::default()
-								.ray_tracing_position_fetch(true),
 						),
 				)
 				.build()
