@@ -59,7 +59,7 @@ public struct VisBufferTex {
 
 	public void write(u32x2 pos, f32 depth, u32 data, u32 mode) {
 		let d = VisBuffer(depth, data);
-		atomic_max(this.tex[pos], d.encode());
+		this.tex.atomic_max(pos, d.encode());
 		this.dbg.write(pos, depth, mode);
 	}
 
@@ -72,7 +72,7 @@ public struct VisBufferTex {
 	}
 
 	public VisBuffer decode(u32x2 p) {
-		return VisBuffer(this.tex[p]);
+		return VisBuffer(this.tex.load(p));
 	}
 
 	public VisBufferData data(f32x2 uv) {

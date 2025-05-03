@@ -11,6 +11,10 @@ public struct Sampler<U : Uniformity = Uniform> {
 	}
 
 	public SamplerState get() {
-		return Samplers[U.wrap_index(this.index)];
+		if (U.is_uniform()) {
+			return Samplers[this.index];
+		} else {
+			return Samplers[NonUniformResourceIndex(this.index)];
+		}
 	}
 }

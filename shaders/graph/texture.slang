@@ -34,7 +34,15 @@ public struct Tex<T : ITexelElement, S : __ITextureShape, U : Uniformity = Unifo
 	}
 
 	_Texture<T, S, 0, 0, 0, 0, 0, 0, 0> get() {
-		return Textures[U.wrap_index(this.index)].as<_Texture<T, S, 0, 0, 0, 0, 0, 0, 0>>();
+		if (U.is_uniform()) {
+			return Textures[this.index].as<_Texture<T, S, 0, 0, 0, 0, 0, 0, 0>>();
+		} else {
+			return Textures[NonUniformResourceIndex(this.index)].as<_Texture<T, S, 0, 0, 0, 0, 0, 0, 0>>();
+		}
+	}
+
+	public T load(vector<u32, S.dimensions> pixel, u32 mip = 0) {
+		return this.get().Load(__makeVector(pixel, mip));
 	}
 
 	public T sample<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv) {
@@ -74,10 +82,6 @@ __generic<T : ITexelElement, U : Uniformity = Uniform> public typealias OTex2D =
 __generic<T : ITexelElement, U : Uniformity = Uniform> public typealias OTex3D = OTex<T, D3, U>;
 
 __generic<T : ITexelElement, U : Uniformity> public extension Tex1D<T, U> {
-	public T load(u32 pixel, u32 mip = 0) {
-		return this.get().Load(i32x2(pixel, mip));
-	}
-
 	public u32 size(u32 mip = 0) {
 		u32 w, _;
 		this.get().GetDimensions(mip, w, _);
@@ -85,10 +89,6 @@ __generic<T : ITexelElement, U : Uniformity> public extension Tex1D<T, U> {
 	}
 }
 __generic<T : ITexelElement, U : Uniformity> public extension Tex2D<T, U> {
-	public T load(u32x2 pixel, u32 mip = 0) {
-		return this.get().Load(i32x3(pixel, mip));
-	}
-
 	public u32x2 size(u32 mip = 0) {
 		u32 w, h, _;
 		this.get().GetDimensions(mip, w, h, _);
@@ -102,10 +102,6 @@ __generic<T : ITexelElement, U : Uniformity> public extension Tex2D<T, U> {
 	}
 }
 __generic<T : ITexelElement, U : Uniformity> public extension Tex3D<T, U> {
-	public T load(u32x3 pixel, u32 mip = 0) {
-		return this.get().Load(i32x4(pixel, mip));
-	}
-
 	public u32x3 size(u32 mip = 0) {
 		u32 w, h, d, _;
 		this.get().GetDimensions(mip, w, h, d, _);
@@ -114,17 +110,7 @@ __generic<T : ITexelElement, U : Uniformity> public extension Tex3D<T, U> {
 }
 
 __generic<T : ITexelElement, S : __ITextureShape, U : Uniformity = Uniform> public extension Optional<Tex<T, S, U>> {
-	public T sample<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, T default = T(T.Element(0))) {
-		if (this.hasValue) {
-			return this.value.sample(sampler, uv);
-		} else {
-			return default;
-		}
-	}
-}
-
-__generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex1D<T, U>> {
-	public T load(u32 pixel, T default = T(T.Element(0)), u32 mip = 0) {
+	public T load(vector<u32, S.dimensions> pixel, T default = T(T.Element(0)), u32 mip = 0) {
 		if (this.hasValue) {
 			return this.value.load(pixel, mip);
 		} else {
@@ -132,6 +118,24 @@ __generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex1D<T, 
 		}
 	}
 
+	public T sample<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, T default = T(T.Element(0))) {
+		if (this.hasValue) {
+			return this.value.sample(sampler, uv);
+		} else {
+			return default;
+		}
+	}
+
+	public T sample_mip<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, f32 mip, T default = T(T.Element(0))) {
+		if (this.hasValue) {
+			return this.value.sample_mip(sampler, uv, mip);
+		} else {
+			return default;
+		}
+	}
+}
+
+__generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex1D<T, U>> {
 	public u32 size(u32 mip = 0) {
 		if (this.hasValue) {
 			return this.value.size(mip);
@@ -141,14 +145,6 @@ __generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex1D<T, 
 	}
 }
 __generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex2D<T, U>> {
-	public T load(u32x2 pixel, T default = T(T.Element(0)), u32 mip = 0) {
-		if (this.hasValue) {
-			return this.value.load(pixel, mip);
-		} else {
-			return default;
-		}
-	}
-
 	public u32x2 size(u32 mip = 0) {
 		if (this.hasValue) {
 			return this.value.size(mip);
@@ -166,14 +162,6 @@ __generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex2D<T, 
 	}
 }
 __generic<T : ITexelElement, U : Uniformity> public extension Optional<Tex3D<T, U>> {
-	public T load(u32x3 pixel, T default = T(T.Element(0)), u32 mip = 0) {
-		if (this.hasValue) {
-			return this.value.load(pixel, mip);
-		} else {
-			return default;
-		}
-	}
-
 	public u32x3 size(u32 mip = 0) {
 		if (this.hasValue) {
 			return this.value.size(mip);
@@ -190,27 +178,44 @@ public struct STex<T : ITexelElement, S : __ITextureShape, F : TextureFormat, U 
 	u32 index;
 
 	_Texture<T, S, 0, 0, 0, 1, 0, 0, F.Format> get() {
-		return STextures[U.wrap_index(this.index)].as<_Texture<T, S, 0, 0, 0, 1, 0, 0, F.Format>>();
-	}
-
-	public __subscript(vector<u32, S.dimensions> pixel)->Ref<T> {
-		get {
-			return this.get()[pixel];
+		if (U.is_uniform()) {
+			return STextures[this.index].as<_Texture<T, S, 0, 0, 0, 1, 0, 0, F.Format>>();
+		} else {
+			return STextures[NonUniformResourceIndex(this.index)].as<_Texture<T, S, 0, 0, 0, 1, 0, 0, F.Format>>();
 		}
 	}
 
-	public T load(vector<u32, S.dimensions> pixel, constexpr Scope sc = DEFAULT_SCOPE) {
+	public T load(vector<u32, S.dimensions> pixel, constexpr Optional<Scope> sc = none) {
 		let img = this.get();
-		return spirv_asm {
-			result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
-		};
+		if (let sc = sc) {
+			return spirv_asm {
+				result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
+			};
+		} else {
+			return img[pixel];
+		}
 	}
 
-	public void store(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE) {
+	public void store(vector<u32, S.dimensions> pixel, T value, constexpr Optional<Scope> sc = none) {
 		let img = this.get();
-		spirv_asm {
-			OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
-		};
+		if (let sc = sc) {
+			spirv_asm {
+				OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
+			};
+		} else {
+			img[pixel] = value;
+		}
+	}
+}
+__generic<T : __BuiltinArithmeticType, S : __ITextureShape, F : TextureFormat, U : Uniformity> public extension STex<T, S, F, U> where T : ITexelElement {
+	public T atomic_add(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
+							constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+		return ::atomic_add(this.get()[pixel], value, sc, loc, se);
+	}
+
+	public T atomic_max(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
+						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+		return ::atomic_max(this.get()[pixel], value, sc, loc, se);
 	}
 }
 

@@ -16,11 +16,6 @@ use notify_debouncer_full::{
 	Debouncer,
 	FileIdMap,
 };
-use rspirv::{
-	binary::Assemble,
-	dr::{load_words, Builder, Operand},
-	spirv::{AddressingModel, Capability, ExecutionModel, MemoryModel},
-};
 
 use crate::{
 	device::{shader::compile::ShaderBuilder, Device},
@@ -314,48 +309,7 @@ struct PipelineCompiler {
 impl PipelineCompiler {
 	fn get_shader(&mut self, info: ShaderInfo) -> Result<(Vec<u32>, vk::ShaderStageFlags), String> {
 		let (module, entry) = info.shader.rsplit_once('.').unwrap();
-		let spirv = self.builder.load_module(module, entry, info.spec)?;
-
-		let mut builder = Builder::new_from_module(
-			load_words(&spirv).map_err(|e| format!("invalid spirv in {}: {e:?}", info.shader))?,
-		);
-		builder.extension("SPV_KHR_vulkan_memory_model");
-		builder.capability(Capability::VulkanMemoryModel);
-		builder.extension("SPV_KHR_physical_storage_buffer");
-		builder.capability(Capability::PhysicalStorageBufferAddresses);
-		builder.extension("SPV_EXT_shader_image_int64");
-		builder.capability(Capability::Int64ImageEXT);
-		builder.memory_model(AddressingModel::PhysicalStorageBuffer64, MemoryModel::Vulkan);
-		let module = builder.module();
-
-		let stage = module.entry_points[0]
-			.operands
-			.iter()
-			.find_map(|x| match x {
-				Operand::ExecutionModel(m) => Some(match m {
-					ExecutionModel::Vertex => vk::ShaderStageFlags::VERTEX,
-					ExecutionModel::TessellationControl => vk::ShaderStageFlags::TESSELLATION_CONTROL,
-					ExecutionModel::TessellationEvaluation => vk::ShaderStageFlags::TESSELLATION_EVALUATION,
-					ExecutionModel::Geometry => vk::ShaderStageFlags::GEOMETRY,
-					ExecutionModel::Fragment => vk::ShaderStageFlags::FRAGMENT,
-					ExecutionModel::GLCompute => vk::ShaderStageFlags::COMPUTE,
-					ExecutionModel::Kernel => panic!("why do you have an opencl shader"),
-					ExecutionModel::TaskNV => vk::ShaderStageFlags::TASK_NV,
-					ExecutionModel::MeshNV => vk::ShaderStageFlags::MESH_NV,
-					ExecutionModel::RayGenerationKHR => vk::ShaderStageFlags::RAYGEN_KHR,
-					ExecutionModel::IntersectionKHR => vk::ShaderStageFlags::INTERSECTION_KHR,
-					ExecutionModel::AnyHitKHR => vk::ShaderStageFlags::ANY_HIT_KHR,
-					ExecutionModel::ClosestHitKHR => vk::ShaderStageFlags::CLOSEST_HIT_KHR,
-					ExecutionModel::MissKHR => vk::ShaderStageFlags::MISS_KHR,
-					ExecutionModel::CallableKHR => vk::ShaderStageFlags::CALLABLE_KHR,
-					ExecutionModel::TaskEXT => vk::ShaderStageFlags::TASK_EXT,
-					ExecutionModel::MeshEXT => vk::ShaderStageFlags::MESH_EXT,
-				}),
-				_ => None,
-			})
-			.unwrap();
-
-		Ok((module.assemble(), stage))
+		self.builder.load_module(module, entry, info.spec)
 	}
 
 	#[track_caller]

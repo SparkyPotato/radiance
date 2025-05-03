@@ -1017,7 +1017,7 @@ impl Session {
         let module =
             unsafe { vtable_call!(self.0, loadModule(module_name.as_ptr(), &mut diagnostics)) };
 
-        if !diagnostics.is_null() {
+        if module.is_null() {
             Err(Error::Blob(Blob(diagnostics)))
         } else {
             Ok(Module(module))

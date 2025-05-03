@@ -80,18 +80,18 @@ __generic<T> public extension vector<T, 4> {
 }
 
 public interface Uniformity {
-	static u32 wrap_index(u32 index);
+	static bool is_uniform();
 }
 public struct Uniform : Uniformity {
 	[ForceInline]
-	public static u32 wrap_index(u32 index) {
-		return index;
+	public static bool is_uniform() {
+		return true;
 	}
 }
 public struct NonUniform : Uniformity {
 	[ForceInline]
-	public static u32 wrap_index(u32 index) {
-		return NonUniformResourceIndex(index);
+	public static bool is_uniform() {
+		return false;
 	}
 }
 

@@ -28,17 +28,16 @@ f32x3 li(inout Rng rng, Ray ray) {
 	p.b = f32x3(1.f);
 	p.prev_hit_norm = f32x3(0.f);
 
+	p.ray.trace(RAY_FLAG_FORCE_OPAQUE, 0, p);
+	if (!p.hit)
+		return p.L;
+
 	for (int bounces = 0; bounces < 10; bounces++) {
 		p.ray.trace(RAY_FLAG_FORCE_OPAQUE, 0, p);
-		if (!p.hit)
+		let q = max(0.05f, 1.f - luminance_rec2020(p.b));
+		if (p.rng.sample() < q || !p.hit)
 			break;
-
-		if (bounces > 1) {
-			let q = max(0.05f, 1.f - luminance_rec2020(p.b));
-			if (p.rng.sample() < q)
-				break;
-			p.b /= 1.f - q;
-		}
+		p.b /= 1.f - q;
 	}
 
 	return p.L;
@@ -56,9 +55,9 @@ void main() {
 
 	let n = Constants.samples;
 	if (n == 0) {
-		Constants.output[pix] = ret;
+		Constants.output.store(pix, ret);
 	} else {
-		let out = &Constants.output[pix];
-		*out = lerp(*out, ret, 1.f / (f32(n) + 1.f));
+		let old = Constants.output.load(pix);
+		Constants.output.store(pix, lerp(old, ret, 1.f / (f32(n) + 1.f)));
 	}
 }

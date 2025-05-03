@@ -31,7 +31,7 @@ void store(u32x2 p, u32 mip, f32 v) {
 	if (mip == 5) {
 		Constants.out[mip].store(p, v, Scope.Queue);
 	} else {
-		Constants.out[mip][p] = v;
+		Constants.out[mip].store(p, v);
 	}
 }
 

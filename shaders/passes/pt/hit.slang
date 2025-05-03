@@ -128,17 +128,18 @@ struct Hit {
 		let white = f32x4(1.f);
 		let blue = f32x4(0.f, 0.f, 1.f, 1.f);
 
-		this.params.base_color = rec709_to_rec2020((bc.sample(s, thit.uv, white) * mat->base_color_factor).xyz);
-		let met_rough = mr.sample(s, thit.uv, white);
+		this.params.base_color =
+			rec709_to_rec2020((bc.sample_mip(s, thit.uv, 0.0, white) * mat->base_color_factor).xyz);
+		let met_rough = mr.sample_mip(s, thit.uv, 0.0, white);
 		let rough = met_rough.y * mat->roughness_factor;
 		this.params.metallic = met_rough.z * mat->metallic_factor;
 		this.params.roughness = rough * rough;
-		this.emissive = rec709_to_rec2020(em.sample(s, thit.uv, white).xyz * mat->emissive_factor);
+		this.emissive = rec709_to_rec2020(em.sample_mip(s, thit.uv, 0.0, white).xyz * mat->emissive_factor);
 
 		this.params.ggx_energy_compensation_lut = Constants.ggx_energy_compensation_lut;
 		this.params.lut_sampler = Constants.sampler;
 
-		// let norm_world = this.from_shading(nm.sample(s, thit.uv, blue).xyz);
+		// let norm_world = this.from_shading(nm.sample_mip(s, thit.uv, 0.0, blue).xyz);
 		// this.from_shading_basis._m02_m12_m22 = norm_world;
 		// this.to_shading_basis._m20_m21_m22 = norm_world;
 	}
@@ -189,7 +190,7 @@ LightSample sample_emissive(inout Rng rng, Hit hit, u32 i) {
 	let mat = instance->material;
 	let em = mat->emissive.get();
 	let emf = mat->emissive_factor;
-	let L = rec709_to_rec2020(em.sample(Constants.sampler, thit.uv, f32x4(1.f)).xyz * emf);
+	let L = rec709_to_rec2020(em.sample_mip(Constants.sampler, thit.uv, 0.0, f32x4(1.f)).xyz * emf);
 
 	let r = thit.position - hit.position;
 	let t2 = dot(r, r);

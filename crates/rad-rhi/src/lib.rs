@@ -10,6 +10,7 @@ impl Module for RhiModule {
 	fn init(engine: &mut EngineBuilder) {
 		engine.global(
 			Device::builder()
+				.instance_extensions(&[ext::swapchain_colorspace::NAME])
 				.device_extensions(&[
 					ext::mesh_shader::NAME,
 					ext::shader_image_atomic_int64::NAME,
