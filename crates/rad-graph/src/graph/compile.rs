@@ -29,7 +29,6 @@ use crate::{
 	sync::{
 		as_next_access,
 		as_previous_access,
-		get_access_info,
 		is_write_access,
 		AccessInfo,
 		GlobalBarrierAccess,
@@ -622,7 +621,7 @@ impl<'graph> SyncBuilder<'graph> {
 			&mut cross_queue.wait_barriers,
 			image,
 			Subresource::default(),
-			AccessInfo::default(),
+			UsageType::Present.into_prev_access(true),
 			as_next,
 		);
 		// Fire off the pass once the image is available.
@@ -639,7 +638,7 @@ impl<'graph> SyncBuilder<'graph> {
 			image,
 			Subresource::default(),
 			as_prev,
-			get_access_info(UsageType::Present),
+			UsageType::Present.into_next_access(as_prev),
 		);
 		// Fire off present once finished.
 		cross_queue.signal.push(SyncStage {

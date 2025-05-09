@@ -196,9 +196,8 @@ LightSample sample_emissive(inout Rng rng, Hit hit, u32 i) {
 	let t2 = dot(r, r);
 	let t = length(r);
 	let wi = r / t;
-	// let d = abs(dot(hit.g_normal, hit.to_shading(-wi)));
-	// let pdf = (d != 0.f) ? (dot(wi, wi) / (thit.area * f32(tri_count) * d)) : 0.f;
-	let pdf = 1.f / (thit.area * f32(tri_count));
+	let d = abs(dot(thit.g_normal, -wi));
+	let pdf = (d != 0.f) ? (dot(wi, wi) / (thit.area * f32(tri_count) * d)) : 0.f;
 
 	return { L / t2, wi, t, pdf, false };
 }

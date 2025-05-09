@@ -100,14 +100,17 @@ f32x3 sobel(f32x2 uv, f32x3 col, u32 instance) {
 	let size = Constants.read.size() - 1;
 	for (int i = 0; i < samples.getCount(); i++) {
 		var d = 1.f;
+		var ins = instance;
 		if (let p = Constants.read.decode(clamp(pos + samples[i], 0, size))) {
 			d = p.depth;
+			ins = p.meshlet.instance;
 		}
 		let depth = log2(Constants.camera[0].near / d + 1.f);
-		grad_x += sobel_x[i] * depth;
-		grad_y += sobel_y[i] * depth;
+		grad_x += sobel_x[i] * (depth + select(ins == instance, 0.f, 0.3f));
+		grad_y += sobel_y[i] * (depth + select(ins == instance, 0.f, 0.3f));
 	}
 	let ma = max(abs(grad_x), abs(grad_y)) * 2.f;
+
 	if (is_instance_highlighted(instance)) {
 		return lerp(col, f32x3(1.f, 0.6f, 0.f), saturate(ma * 4.f));
 	} else {

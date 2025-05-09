@@ -272,7 +272,7 @@ public bool occ_cull_aabb(ScreenAabb aabb, f32x2 screen, Tex2D<f32> hzb, Sampler
 	let hzb_size = 1 << firstbithigh(u32x2(screen) - 1);
 
 	let min_texel = u32x2(max(aabb.min.xy, 0.f));
-	let max_texel = u32x2(min(aabb.max.xy, screen - 1.f));
+	let max_texel = u32x2(min(aabb.max.xy, hzb_size - 1.f));
 	let size = max_texel - min_texel + 1;
 	let max_size = max(size.x, size.y);
 

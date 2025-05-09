@@ -809,14 +809,45 @@ impl BvhBuilder {
 		onode as _
 	}
 
-	fn mark_reachable(&self, out: &[BvhNode], reachable: &mut [bool], node: u32) {
+	fn verify_bvh(&self, out: &[BvhNode], meshlets: &Meshlets, reachable: &mut [bool], node: u32) {
 		let node = &out[node as usize];
 		for i in 0..8 {
+			let sphere = node.lod_bounds[i];
+			let error = node.parent_errors[i];
 			if node.child_counts[i] == u8::MAX {
-				self.mark_reachable(out, reachable, node.child_offsets[i]);
+				let child = &out[node.child_offsets[i] as usize];
+				for i in 0..8 {
+					if child.child_counts[i] == 0 {
+						break;
+					}
+					assert!(
+						child.parent_errors[i] <= error,
+						"bvh error not monotonic: ({} >= {})",
+						error,
+						child.parent_errors[i],
+					);
+					let sphere_error = (sphere.center - child.lod_bounds[i].center).magnitude()
+						- (sphere.radius - child.lod_bounds[i].radius);
+					assert!(sphere_error <= 0.0001, "bvh spheres not monotonic: ({sphere_error})",);
+				}
+				self.verify_bvh(out, meshlets, reachable, node.child_offsets[i]);
 			} else {
 				for m in 0..node.child_counts[i] as u32 {
-					reachable[(m + node.child_offsets[i]) as usize] = true;
+					let mid = (node.child_offsets[i] + m) as usize;
+					let meshlet = &meshlets.meshlets[mid];
+					assert!(
+						meshlet.error <= error,
+						"meshlet error not monotonic: ({} >= {})",
+						error,
+						meshlet.error,
+					);
+					let sphere_error = (sphere.center - meshlet.lod_bounds.center).magnitude()
+						- (sphere.radius - meshlet.lod_bounds.radius);
+					assert!(
+						sphere_error <= 0.0001,
+						"meshlet spheres not monotonic: ({sphere_error})",
+					);
+					reachable[mid] = true;
 				}
 			}
 		}
@@ -859,7 +890,7 @@ impl BvhBuilder {
 		}
 
 		let mut reachable = vec![false; meshlets.meshlets.len()];
-		self.mark_reachable(&out, &mut reachable, 0);
+		self.verify_bvh(&out, meshlets, &mut reachable, 0);
 		assert!(reachable.iter().all(|&x| x), "all meshlets must be reachable");
 
 		(out, max_depth)
