@@ -58,19 +58,19 @@ impl ExposureCalc {
 
 	pub fn bin_to_exposure(bin: f32) -> f32 {
 		let log = (bin - 1.0) / 254.0;
-		log * (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE) + Self::MIN_EXPOSURE
+		log.mul_add(Self::MAX_EXPOSURE - Self::MIN_EXPOSURE, Self::MIN_EXPOSURE)
 	}
 
 	pub fn exposure_to_bin(exp: f32) -> f32 {
-		(exp - Self::MIN_EXPOSURE) / (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE) * 254.0 + 1.0
+		((exp - Self::MIN_EXPOSURE) / (Self::MAX_EXPOSURE - Self::MIN_EXPOSURE)).mul_add(254.0, 1.0)
 	}
 
 	pub fn exposure_to_lum(exp: f32) -> f32 { (exp - 3.0).exp2() }
 
 	pub fn exposure_compensation(exp: f32) -> f32 {
-		let lum = Self::exposure_to_lum(2.0 * exp + 10.0);
+		let lum = Self::exposure_to_lum(exp.mul_add(2.0, 10.0));
 		let key = 1.03 - 2.0 / (2.0 + (lum + 1.0).log10());
-		6.0 * key - 2.5
+		key.mul_add(6.0, -2.5)
 	}
 
 	pub fn new(device: &Device) -> Result<Self> {
