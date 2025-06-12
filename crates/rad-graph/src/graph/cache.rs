@@ -12,7 +12,7 @@ use rustc_hash::FxHashMap;
 
 use crate::{
 	device::Device,
-	graph::{VirtualResource, FRAMES_IN_FLIGHT},
+	graph::{deleter::Deleter, Deletable, VirtualResource, FRAMES_IN_FLIGHT},
 	resource::{Resource, ToNamed},
 	Result,
 };
@@ -63,17 +63,15 @@ impl<T: Resource> ResourceList<T> {
 
 	pub unsafe fn reset(&mut self, device: &Device) {
 		// Everything before the cursor was just used.
-		let mut first_destroyable = self.cursor;
-
 		for resource in self.resources[self.cursor..].iter_mut() {
 			// Everything after this has not been used for at least `DESTROY_LAG` generations.
 			resource.unused += 1;
 			if resource.unused >= DESTROY_LAG {
 				break;
 			}
-			first_destroyable += 1;
+			self.cursor += 1;
 		}
-		for resource in self.resources.drain(first_destroyable..) {
+		for resource in self.resources.drain(self.cursor..) {
 			resource.inner.destroy(device);
 		}
 		self.cursor = 0;
@@ -220,7 +218,7 @@ pub struct PersistentCache<T: Resource> {
 	resources: FxHashMap<NonZeroU64, PersistentResource<T>>,
 }
 
-impl<T: Resource> PersistentCache<T> {
+impl<T: Resource + Deletable> PersistentCache<T> {
 	/// Create an empty cache.
 	pub fn new() -> Self {
 		Self {
@@ -232,7 +230,8 @@ impl<T: Resource> PersistentCache<T> {
 
 	/// Get the resource with the given descriptor. Is valid until [`Self::reset`] is called.
 	pub fn get(
-		&mut self, device: &Device, key: NonZeroU64, desc: T::UnnamedDesc, next_layout: vk::ImageLayout,
+		&mut self, device: &Device, deleter: &mut Deleter, key: NonZeroU64, desc: T::UnnamedDesc,
+		next_layout: vk::ImageLayout,
 	) -> Result<(T::Handle, bool, vk::ImageLayout)> {
 		match self.resources.entry(key) {
 			Entry::Vacant(v) => {
@@ -267,9 +266,7 @@ impl<T: Resource> PersistentCache<T> {
 							unused: 0,
 						},
 					);
-					unsafe {
-						old.inner.destroy(device);
-					}
+					deleter.push(old.inner);
 					r.age = 0;
 					r.desc = desc;
 					r.layout = next_layout;

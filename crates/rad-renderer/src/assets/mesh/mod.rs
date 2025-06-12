@@ -191,7 +191,7 @@ impl AssetView for RaytracingMeshView {
 					0,
 				);
 				device.device().end_command_buffer(cmd).unwrap();
-				let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[], vk::Fence::null())?;
+				let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[])?;
 				sync.wait(device)?;
 				pool.reset(device)?;
 				scratch.destroy(device);
@@ -238,7 +238,7 @@ impl AssetView for RaytracingMeshView {
 						.mode(vk::CopyAccelerationStructureModeKHR::COMPACT),
 				);
 				device.device().end_command_buffer(cmd).unwrap();
-				let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[], vk::Fence::null())?;
+				let sync = device.submit::<Compute>(QueueWait::default(), &[cmd], &[])?;
 				sync.wait(device)?;
 				pool.destroy(device);
 				old.destroy(device);

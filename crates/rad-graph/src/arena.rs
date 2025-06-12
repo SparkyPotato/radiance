@@ -204,36 +204,34 @@ unsafe impl Allocator for Arena {
 	fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
 		// SAFETY: Uh.
 		unsafe {
-			let inner = self.inner.get();
+			let inner = &mut *self.inner.get();
 
-			let (ptr, offset) = if unlikely(layout.size() > (*(*inner).curr_block.as_ptr()).data.len()) {
+			let (ptr, offset) = if unlikely(layout.size() > (&*inner.curr_block.as_ptr()).data.len()) {
 				// Allocate a dedicated block for this, since it's too big for our current block size.
 				let ptr = addr_of_mut!((*self.extend(layout.size())?.as_ptr()).data).cast();
 				(ptr, layout.size())
 			} else {
 				let mut offset = self.aligned_offset(layout.align());
-				if unlikely(offset + layout.size() > (*(*inner).curr_block.as_ptr()).data.len()) {
+				if unlikely(offset + layout.size() > (&*inner.curr_block.as_ptr()).data.len()) {
 					// There's not enough space in the current block, so go to the next one.
 					if let Some(next) = (*(*inner).curr_block.as_ptr()).header.next {
 						// There's a next block, so we can use it.
-						(*inner).curr_block = next;
+						inner.curr_block = next;
 					} else {
 						// There's no next block, so we need to allocate a new one.
-						self.extend((*(*inner).curr_block.as_ptr()).data.len())?;
+						self.extend((&*inner.curr_block.as_ptr()).data.len())?;
 					}
 
 					offset = self.aligned_offset(layout.align());
 				}
 
-				let target = addr_of_mut!((*(*inner).curr_block.as_ptr()).data)
-					.cast::<u8>()
-					.add(offset);
+				let target = addr_of_mut!((*inner.curr_block.as_ptr()).data).cast::<u8>().add(offset);
 				(target, offset + layout.size())
 			};
 
-			(*inner).alloc_count += 1;
-			(*inner).last_alloc = ptr.to_raw_parts().0.addr();
-			(*(*inner).curr_block.as_ptr()).header.offset = offset;
+			inner.alloc_count += 1;
+			inner.last_alloc = ptr.to_raw_parts().0.addr();
+			(*inner.curr_block.as_ptr()).header.offset = offset;
 
 			Ok(NonNull::new_unchecked(std::ptr::from_raw_parts_mut(
 				ptr as _,
@@ -247,12 +245,12 @@ unsafe impl Allocator for Arena {
 	unsafe fn grow(
 		&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout,
 	) -> Result<NonNull<[u8]>, AllocError> {
-		let inner = self.inner.get();
+		let inner = &mut *self.inner.get();
 		if likely(ptr.addr().get() == (*inner).last_alloc) {
 			// Reuse the last allocation if possible.
 			let offset = ptr.as_ptr().offset_from((*(*inner).curr_block.as_ptr()).data.as_ptr());
 			let new_offset = offset as usize + new_layout.size();
-			if likely(new_offset <= (*(*inner).curr_block.as_ptr()).data.len()) {
+			if likely(new_offset <= (&*inner.curr_block.as_ptr()).data.len()) {
 				(*(*inner).curr_block.as_ptr()).header.offset = new_offset;
 				return Ok(NonNull::new_unchecked(std::ptr::from_raw_parts_mut(
 					ptr.as_ptr() as _,
@@ -263,7 +261,7 @@ unsafe impl Allocator for Arena {
 
 		let new_ptr = self.allocate(new_layout)?;
 		std::ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_ptr() as *mut _, old_layout.size());
-		(*inner).alloc_count -= 1;
+		inner.alloc_count -= 1;
 		Ok(new_ptr)
 	}
 }

@@ -56,12 +56,12 @@ impl ShaderBuilder {
 				.targets(&[TargetDescBuilder::default()
 					.format(CompileTarget::SPIRV)
 					.profile(slang.find_profile("sm_6_6"))
-					.force_glsl_scalar_buffer_layout(true)
-					.compiler_option_entries(&mut [
-						CompilerOptionEntry::new(CompilerOptionName::EMIT_SPIRV_DIRECTLY, 1),
-						// CompilerOptionEntry::new(CompilerOptionName::DEBUG_INFORMATION, 2),
-						CompilerOptionEntry::new(CompilerOptionName::OPTIMIZATION, 2),
-					])])
+					.force_glsl_scalar_buffer_layout(true)])
+				.compiler_option_entries(&mut [
+					CompilerOptionEntry::new(CompilerOptionName::EMIT_SPIRV_DIRECTLY, 1),
+					// CompilerOptionEntry::new(CompilerOptionName::DEBUG_INFORMATION, 2),
+					CompilerOptionEntry::new(CompilerOptionName::OPTIMIZATION, 2),
+				])
 				.file_system(fs)
 				.search_paths(&[c"./".as_ptr() as _])
 				.default_matrix_layout_mode(MatrixLayoutMode::COLUMN_MAJOR),

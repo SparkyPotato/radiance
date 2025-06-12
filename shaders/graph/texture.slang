@@ -126,7 +126,8 @@ __generic<T : ITexelElement, S : __ITextureShape, U : Uniformity = Uniform> publ
 		}
 	}
 
-	public T sample_mip<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, f32 mip, T default = T(T.Element(0))) {
+	public T sample_mip<SU : Uniformity>(Sampler<SU> sampler, vector<f32, S.dimensions> uv, f32 mip,
+										 T default = T(T.Element(0))) {
 		if (this.hasValue) {
 			return this.value.sample_mip(sampler, uv, mip);
 		} else {
@@ -189,7 +190,10 @@ public struct STex<T : ITexelElement, S : __ITextureShape, F : TextureFormat, U 
 		let img = this.get();
 		if (let sc = sc) {
 			return spirv_asm {
-				result:$$T = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
+				OpExtension "SPV_KHR_vulkan_memory_model";
+	            OpCapability VulkanMemoryModelKHR;
+				%shrimpled:__sampledType(T) = OpImageRead $img $pixel NonPrivateTexel | MakeTexelVisible $sc;
+				__truncate $$T result __sampledType(T) %shrimpled;
 			};
 		} else {
 			return img[pixel];
@@ -200,16 +204,20 @@ public struct STex<T : ITexelElement, S : __ITextureShape, F : TextureFormat, U 
 		let img = this.get();
 		if (let sc = sc) {
 			spirv_asm {
-				OpImageWrite $img $pixel $value NonPrivateTexel | MakeTexelAvailable $sc;
+				OpExtension "SPV_KHR_vulkan_memory_model";
+	            OpCapability VulkanMemoryModelKHR;
+				OpImageWrite $img $pixel __convertTexel(value) NonPrivateTexel | MakeTexelAvailable $sc;
 			};
 		} else {
 			img[pixel] = value;
 		}
 	}
 }
-__generic<T : __BuiltinArithmeticType, S : __ITextureShape, F : TextureFormat, U : Uniformity> public extension STex<T, S, F, U> where T : ITexelElement {
+__generic<T : __BuiltinArithmeticType, S : __ITextureShape, F : TextureFormat, U : Uniformity> public extension
+	STex<T, S, F, U>
+	where T : ITexelElement {
 	public T atomic_add(vector<u32, S.dimensions> pixel, T value, constexpr Scope sc = DEFAULT_SCOPE,
-							constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+						constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
 		return ::atomic_add(this.get()[pixel], value, sc, loc, se);
 	}
 

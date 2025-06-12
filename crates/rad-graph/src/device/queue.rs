@@ -407,7 +407,7 @@ impl QueueData {
 
 	pub fn submit<T: QueueType>(
 		&self, qs: &Queues<Self>, device: &Device, wait: QueueWait, bufs: &[vk::CommandBuffer],
-		signal: &[SyncStage<vk::Semaphore>], fence: vk::Fence,
+		signal: &[SyncStage<vk::Semaphore>],
 	) -> Result<SyncPoint<T>> {
 		let s = span!(Level::TRACE, "gpu submit");
 		let _e = s.enter();
@@ -444,7 +444,7 @@ impl QueueData {
 					.wait_semaphore_infos(&wait)
 					.command_buffer_infos(&infos)
 					.signal_semaphore_infos(&signal)],
-				fence,
+				vk::Fence::null(),
 			)?;
 
 			Ok(SyncPoint(v + 1, PhantomData))

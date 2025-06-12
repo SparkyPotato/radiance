@@ -58,11 +58,12 @@ egui = { version = "0.30.0" }
 egui_plot = { version = "0.30.0" }
 egui-winit = { version = "0.30.0" }
 gltf = { version = "1.4.1", features = ["KHR_materials_emissive_strength", "KHR_lights_punctual"] }
-hashbrown = { version = "0.14.5", features = ["nightly"] }
+hashbrown = { version = "0.15.3", features = ["nightly"] }
 metis = "0.2.1"
 meshopt = { git = "https://github.com/SparkyPotato/meshopt-rs" }
 notify-debouncer-full = "0.4.0"
 parking_lot = { version = "0.12.1", features = ["hardware-lock-elision"] }
+petgraph = { version = "0.8.1", features = ["rayon"] }
 proc-macro2 = "1.0.92"
 rand = "0.8.5"
 range-alloc = "0.1.3"

@@ -87,12 +87,12 @@ pub struct Window {
 	old_swapchain: OldSwapchain,
 	swapchain: vk::SwapchainKHR,
 	images: Vec<vk::Image>,
-	semas: [(vk::Semaphore, vk::Semaphore); 2],
+	sync: [(vk::Semaphore, vk::Semaphore, vk::Fence); 3],
 	curr_frame: usize,
 	format: vk::Format,
 	size: vk::Extent2D,
 	remake_requested: bool,
-	vsync: bool,
+	pub vsync: bool,
 	hdr_requested: bool,
 	hdr_supported: bool,
 }
@@ -126,9 +126,10 @@ impl Window {
 				sync: SyncPoint::default(),
 			},
 			images: Vec::new(),
-			semas: [
-				(semaphore(device)?, semaphore(device)?),
-				(semaphore(device)?, semaphore(device)?),
+			sync: [
+				(semaphore(device)?, semaphore(device)?, fence(device)?),
+				(semaphore(device)?, semaphore(device)?, fence(device)?),
+				(semaphore(device)?, semaphore(device)?, fence(device)?),
 			],
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
@@ -153,15 +154,6 @@ impl Window {
 		}
 	}
 
-	pub fn vsync_enabled(&self) -> bool { self.vsync }
-
-	pub fn set_vsync(&mut self, vsync: bool) {
-		if self.vsync != vsync {
-			self.vsync = vsync;
-			self.remake_requested = true;
-		}
-	}
-
 	fn acquire(&mut self) -> Result<(SwapchainImage, u32)> {
 		unsafe {
 			let s = tracing::trace_span!("acquire");
@@ -172,8 +164,11 @@ impl Window {
 				self.remake_requested = false;
 			}
 
-			self.curr_frame ^= 1;
-			let (available, rendered) = self.semas[self.curr_frame];
+			self.curr_frame = (self.curr_frame + 1) % 3;
+			let device: &Device = Engine::get().global();
+			let (available, rendered, fence) = self.sync[self.curr_frame];
+			device.device().wait_for_fences(&[fence], true, u64::MAX)?;
+			device.device().reset_fences(&[fence])?;
 			let (id, _) =
 				match self
 					.swapchain_ext
@@ -203,13 +198,21 @@ impl Window {
 			let _e = s.enter();
 
 			let device: &Device = Engine::get().global();
-			let (_, rendered) = self.semas[self.curr_frame];
+			let (_, rendered, fence) = self.sync[self.curr_frame];
 			self.swapchain_ext.queue_present(
 				*device.queue::<Graphics>(),
 				&vk::PresentInfoKHR::default()
 					.wait_semaphores(&[rendered])
 					.swapchains(&[self.swapchain])
-					.image_indices(&[id]),
+					.image_indices(&[id])
+					.push_next(
+						&mut vk::SwapchainPresentModeInfoEXT::default().present_modes(&[if self.vsync {
+							vk::PresentModeKHR::FIFO
+						} else {
+							vk::PresentModeKHR::IMMEDIATE
+						}]),
+					)
+					.push_next(&mut vk::SwapchainPresentFenceInfoEXT::default().fences(&[fence])),
 			)?;
 
 			Ok(())
@@ -255,6 +258,8 @@ impl Window {
 				height: size.height,
 			};
 
+			let mut modes = vk::SwapchainPresentModesCreateInfoEXT::default()
+				.present_modes(&[vk::PresentModeKHR::FIFO, vk::PresentModeKHR::IMMEDIATE]);
 			let info = vk::SwapchainCreateInfoKHR::default()
 				.surface(self.surface)
 				.min_image_count(3.clamp(
@@ -278,7 +283,8 @@ impl Window {
 					vk::PresentModeKHR::IMMEDIATE
 				})
 				.old_swapchain(self.old_swapchain.swapchain)
-				.clipped(true);
+				.clipped(true)
+				.push_next(&mut modes);
 			self.swapchain = match device.queue_families() {
 				Queues::Multiple {
 					graphics,
@@ -322,9 +328,10 @@ impl Drop for Window {
 			self.swapchain_ext.destroy_swapchain(self.old_swapchain.swapchain, None);
 			self.swapchain_ext.destroy_swapchain(self.swapchain, None);
 			device.surface_ext().destroy_surface(self.surface, None);
-			for (available, rendered) in self.semas {
+			for (available, rendered, fence) in self.sync {
 				device.device().destroy_semaphore(available, None);
 				device.device().destroy_semaphore(rendered, None);
+				device.device().destroy_fence(fence, None);
 			}
 		}
 	}
@@ -335,6 +342,18 @@ pub fn semaphore(device: &Device) -> Result<vk::Semaphore> {
 		device
 			.device()
 			.create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
+			.map_err(Into::into)
+	}
+}
+
+fn fence(device: &Device) -> Result<vk::Fence> {
+	unsafe {
+		device
+			.device()
+			.create_fence(
+				&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+				None,
+			)
 			.map_err(Into::into)
 	}
 }

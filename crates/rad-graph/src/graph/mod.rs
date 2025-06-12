@@ -13,7 +13,6 @@ use tracing::{span, Level};
 
 pub use crate::graph::{
 	cache::Persist,
-	frame_data::{Deletable, Resource},
 	virtual_resource::{
 		BufferDesc,
 		BufferLoc,
@@ -37,6 +36,7 @@ use crate::{
 	graph::{
 		cache::{PersistentCache, ResourceCache, UniqueCache},
 		compile::{CompiledFrame, DataState, ResourceMap},
+		deleter::{Deletable, Deleter},
 		frame_data::{FrameData, Submitter},
 		virtual_resource::{ResourceLifetime, VirtualResourceData},
 	},
@@ -46,6 +46,7 @@ use crate::{
 
 mod cache;
 mod compile;
+mod deleter;
 mod frame_data;
 mod virtual_resource;
 
@@ -54,6 +55,7 @@ pub const FRAMES_IN_FLIGHT: usize = 2;
 /// The render graph.
 pub struct RenderGraph {
 	frame_data: [FrameData; FRAMES_IN_FLIGHT],
+	deleter: Deleter,
 	caches: Caches,
 	curr_frame: usize,
 	resource_base_id: usize,
@@ -85,6 +87,7 @@ impl RenderGraph {
 
 		Ok(Self {
 			frame_data,
+			deleter: Deleter::new(),
 			caches,
 			curr_frame: 0,
 			resource_base_id: 0,
@@ -106,6 +109,7 @@ impl RenderGraph {
 	pub fn destroy(self, device: &Device) {
 		unsafe {
 			let _ = device.device().device_wait_idle();
+			self.deleter.destroy(device);
 			for frame_data in self.frame_data {
 				frame_data.destroy(device);
 			}
@@ -165,7 +169,7 @@ impl<'pass, 'graph> Frame<'pass, 'graph> {
 }
 
 impl Frame<'_, '_> {
-	pub fn delete(&mut self, res: impl Deletable) { self.graph.frame_data[self.graph.curr_frame].delete(res); }
+	pub fn delete(&mut self, res: impl Deletable) { self.graph.deleter.push(res); }
 
 	/// Run the frame.
 	pub fn run(self) -> Result<()> {
@@ -177,6 +181,7 @@ impl Frame<'_, '_> {
 		// SAFETY: data is reset when the frame is constructed.
 		unsafe {
 			self.graph.frame_data[self.graph.curr_frame].reset(device)?;
+			self.graph.deleter.next(device);
 			self.graph.caches.upload_buffers[self.graph.curr_frame].reset(device);
 			self.graph.caches.buffers.reset(device);
 			self.graph.caches.persistent_buffers.reset(device);
@@ -212,7 +217,7 @@ impl Frame<'_, '_> {
 					unsafe {
 						if let Some(debug) = device.debug_utils_ext() {
 							debug.cmd_begin_debug_utils_label(
-								submitter.pass(device)?,
+								submitter.before_pass(device)?,
 								&vk::DebugUtilsLabelEXT::default()
 									.label_name(std::ffi::CStr::from_bytes_with_nul_unchecked(&name)),
 							);
@@ -222,22 +227,18 @@ impl Frame<'_, '_> {
 				FrameEvent::RegionEnd => unsafe {
 					region_stack.pop();
 					if let Some(debug) = device.debug_utils_ext() {
-						debug.cmd_end_debug_utils_label(submitter.pass(device)?);
+						debug.cmd_end_debug_utils_label(submitter.before_pass(device)?);
 					}
 				},
-				FrameEvent::Pass(pass) => {
-					let buf = submitter.pass(device)?;
-
-					(pass.callback)(PassContext {
-						arena,
-						device,
-						buf,
-						base_id: graph.resource_base_id,
-						pass: i as u32,
-						resource_map: &mut resource_map,
-						caches: &mut graph.caches,
-					});
-				},
+				FrameEvent::Pass(pass) => (pass.callback)(PassContext {
+					arena,
+					device,
+					buf: submitter.before_pass(device)?,
+					base_id: graph.resource_base_id,
+					pass: i as u32,
+					resource_map: &mut resource_map,
+					caches: &mut graph.caches,
+				}),
 			}
 		}
 

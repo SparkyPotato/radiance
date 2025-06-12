@@ -116,9 +116,7 @@ impl DebugWindow {
 			let mut hdr = window.hdr_enabled();
 			ui.add_enabled(window.hdr_supported(), Checkbox::new(&mut hdr, "hdr output"));
 			let _ = window.set_hdr(hdr);
-			let mut vsync = window.vsync_enabled();
-			ui.add(Checkbox::new(&mut vsync, "vsync"));
-			let _ = window.set_vsync(vsync);
+			ui.add(Checkbox::new(&mut window.vsync, "vsync"));
 
 			match self.render_mode {
 				RenderMode::Path => {

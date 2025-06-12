@@ -125,7 +125,12 @@ impl Device {
 
 	pub fn allocator(&self) -> MutexGuard<'_, Allocator> { self.inner.allocator.lock().unwrap() }
 
-	pub fn descriptor_set(&self) -> vk::DescriptorSet { self.inner.descriptors.set() }
+	pub fn bind_descriptor_set(&self, buf: vk::CommandBuffer, point: vk::PipelineBindPoint) {
+		unsafe {
+			self.device()
+				.cmd_bind_descriptor_sets(buf, point, self.layout(), 0, &[self.inner.descriptors.set()], &[]);
+		}
+	}
 
 	pub fn image_id(&self, image: vk::ImageView) -> descriptor::ImageId {
 		self.inner.descriptors.get_image(&self.inner.device, image)
@@ -156,12 +161,12 @@ impl Device {
 	pub fn current_sync_point<TY: QueueType>(&self) -> SyncPoint<TY> { self.inner.queues.get::<TY>().current() }
 
 	pub fn submit<TY: QueueType>(
-		&self, wait: QueueWait, bufs: &[vk::CommandBuffer], signal: &[SyncStage<vk::Semaphore>], fence: vk::Fence,
+		&self, wait: QueueWait, bufs: &[vk::CommandBuffer], signal: &[SyncStage<vk::Semaphore>],
 	) -> Result<SyncPoint<TY>> {
 		self.inner
 			.queues
 			.get::<TY>()
-			.submit(&self.inner.queues, self, wait, bufs, signal, fence)
+			.submit(&self.inner.queues, self, wait, bufs, signal)
 	}
 }
 

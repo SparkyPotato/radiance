@@ -5,7 +5,11 @@ use std::{
 	sync::{Arc, Mutex},
 };
 
-use ash::{ext, khr, vk, vk::TaggedStructure};
+use ash::{
+	ext,
+	khr,
+	vk::{self, TaggedStructure},
+};
 use gpu_allocator::{
 	vulkan::{Allocator, AllocatorCreateDesc},
 	AllocationSizes,
@@ -170,18 +174,45 @@ impl<'a> DeviceBuilder<'a> {
 		}
 	}
 
-	fn get_surface_extensions(handle: Option<RawWindowHandle>) -> Result<[&'static CStr; 2]> {
+	fn get_surface_extensions(handle: Option<RawWindowHandle>) -> Result<[&'static CStr; 4]> {
 		Ok(match handle {
 			Some(handle) => match handle {
-				RawWindowHandle::Win32(_) => [khr::surface::NAME, khr::win32_surface::NAME],
-				RawWindowHandle::Wayland(_) => [khr::surface::NAME, khr::wayland_surface::NAME],
-				RawWindowHandle::Xlib(_) => [khr::surface::NAME, khr::xlib_surface::NAME],
-				RawWindowHandle::Xcb(_) => [khr::surface::NAME, khr::xcb_surface::NAME],
-				RawWindowHandle::AndroidNdk(_) => [khr::surface::NAME, khr::android_surface::NAME],
+				RawWindowHandle::Win32(_) => [
+					khr::surface::NAME,
+					ext::surface_maintenance1::NAME,
+					khr::get_surface_capabilities2::NAME,
+					khr::win32_surface::NAME,
+				],
+				RawWindowHandle::Wayland(_) => [
+					khr::surface::NAME,
+					ext::surface_maintenance1::NAME,
+					khr::get_surface_capabilities2::NAME,
+					khr::wayland_surface::NAME,
+				],
+				RawWindowHandle::Xlib(_) => [
+					khr::surface::NAME,
+					ext::surface_maintenance1::NAME,
+					khr::get_surface_capabilities2::NAME,
+					khr::xlib_surface::NAME,
+				],
+				RawWindowHandle::Xcb(_) => [
+					khr::surface::NAME,
+					ext::surface_maintenance1::NAME,
+					khr::get_surface_capabilities2::NAME,
+					khr::xcb_surface::NAME,
+				],
+				RawWindowHandle::AndroidNdk(_) => [
+					khr::surface::NAME,
+					ext::surface_maintenance1::NAME,
+					khr::get_surface_capabilities2::NAME,
+					khr::android_surface::NAME,
+				],
 				_ => return Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT.into()),
 			},
 			None => [
 				khr::surface::NAME,
+				ext::surface_maintenance1::NAME,
+				khr::get_surface_capabilities2::NAME,
 				if cfg!(target_os = "android") {
 					khr::android_surface::NAME
 				} else if cfg!(target_os = "windows") {
@@ -304,6 +335,8 @@ impl<'a> DeviceBuilder<'a> {
 			let mut rt_features = vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::default();
 			let mut rq_features = vk::PhysicalDeviceRayQueryFeaturesKHR::default();
 			let mut maint5_features = vk::PhysicalDeviceMaintenance5FeaturesKHR::default();
+			let mut swapchain_maintenance1_features =
+				vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::default().swapchain_maintenance1(true);
 			{
 				let mut next = features.p_next as *mut VkStructHeader;
 				let mut found_12 = false;
@@ -357,6 +390,7 @@ impl<'a> DeviceBuilder<'a> {
 				} else {
 					features
 				};
+				features = features.push_next(&mut swapchain_maintenance1_features)
 			}
 
 			let mut next = features.p_next as *mut VkStructHeader;
@@ -467,6 +501,7 @@ impl<'a> DeviceBuilder<'a> {
 		let mut extensions = extensions.to_vec();
 		extensions.extend([
 			khr::swapchain::NAME,
+			ext::swapchain_maintenance1::NAME,
 			khr::acceleration_structure::NAME,
 			khr::ray_query::NAME,
 			khr::ray_tracing_pipeline::NAME,

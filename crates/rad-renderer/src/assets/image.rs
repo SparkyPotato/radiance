@@ -224,7 +224,7 @@ impl ImageAssetView {
 				})]),
 			);
 			device.device().end_command_buffer(cmd).unwrap();
-			let sync = device.submit::<Transfer>(QueueWait::default(), &[cmd], &[], vk::Fence::null())?;
+			let sync = device.submit::<Transfer>(QueueWait::default(), &[cmd], &[])?;
 			sync.wait(device)?;
 			pool.destroy(device);
 			staging.destroy(device);
