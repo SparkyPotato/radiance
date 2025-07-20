@@ -47,6 +47,7 @@ fn main() {
         .define("SLANG_ENABLE_EXAMPLES", "0")
         .define("SLANG_SLANG_LLVM_FLAVOR", "DISABLE")
         .define("SLANG_ENABLE_RELEASE_LTO", "0")
+        .define("SLANG_DISABLE_EXCEPTIONS", "1")
         .define("LZ4_BUILD_CLI", "0")
         .build_target("slang")
         .generator("Ninja")

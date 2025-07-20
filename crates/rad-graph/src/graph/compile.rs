@@ -1,14 +1,20 @@
 use std::{alloc::Allocator, hash::BuildHasherDefault, hint::unreachable_unchecked, ops::BitOr, ptr::NonNull};
 
 use ash::vk;
-use tracing::{span, Level};
+use tracing::{Level, span};
 
 use crate::{
+	Result,
 	arena::{Arena, IteratorAlloc},
 	device::{Device, QueueWaitOwned, SyncStage},
 	graph::{
+		ArenaMap,
+		BufferLoc,
+		Frame,
+		FrameEvent,
+		ImageDesc,
+		RenderGraph,
 		virtual_resource::{
-			compatible_formats,
 			BufferData,
 			BufferUsageOwned,
 			GpuData,
@@ -17,25 +23,19 @@ use crate::{
 			ResourceLifetime,
 			VirtualResourceData,
 			VirtualResourceType,
+			compatible_formats,
 		},
-		ArenaMap,
-		BufferLoc,
-		Frame,
-		FrameEvent,
-		ImageDesc,
-		RenderGraph,
 	},
 	resource::{BufferHandle, BufferType, Subresource},
 	sync::{
-		as_next_access,
-		as_previous_access,
-		is_write_access,
 		AccessInfo,
 		GlobalBarrierAccess,
 		ImageBarrierAccess,
 		UsageType,
+		as_next_access,
+		as_previous_access,
+		is_write_access,
 	},
-	Result,
 };
 
 pub(super) struct CompiledFrame<'pass, 'graph> {
@@ -808,7 +808,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 				// We're a read, let's look ahead and merge any other reads into us.
 				let mut last_read_pass = next_pass;
 				let mut subresource = usage.subresource();
-				while let Some((&pass, usage)) = usages.peek() {
+				while let Some(&(&pass, ref usage)) = usages.peek() {
 					let as_next = usage.as_next(prev_access);
 					// TODO: don't care about image layouts for buffers
 					if usage.is_write() || as_next.image_layout != next_prev_access.image_layout {

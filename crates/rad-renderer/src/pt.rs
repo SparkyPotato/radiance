@@ -1,30 +1,30 @@
 use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
+	Result,
 	device::{
-		descriptor::{ImageId, SamplerId, StorageImageId},
 		Device,
 		RtPipelineDesc,
 		RtShaderGroup,
 		SamplerDesc,
 		ShaderInfo,
+		descriptor::{ImageId, SamplerId, StorageImageId},
 	},
 	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Persist, Res},
 	resource::{GpuPtr, ImageView},
 	sync::Shader,
 	util::compute::RtPass,
-	Result,
 };
-use rand::{thread_rng, RngCore};
+use rand::{RngCore, thread_rng};
 use vek::{Vec2, Vec3};
 
 use crate::{
 	assets::image::{ImageAsset, ImageAssetView},
 	scene::{
-		camera::{CameraScene, GpuCamera},
-		light::{GpuLight, LightScene},
-		rt_scene::{GpuRtInstance, RtScene},
 		WorldRenderer,
+		camera::{CameraScene, GpuCamera},
+		light::{GpuLightScene, GpuLightTreeNode, LightScene},
+		rt_scene::{GpuRtInstance, RtScene},
 	},
 	sky::{GpuSkySampler, SkySampler},
 };
@@ -48,7 +48,7 @@ pub struct RenderInfo {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	instances: GpuPtr<GpuRtInstance>,
-	lights: GpuPtr<GpuLight>,
+	lights: GpuLightScene,
 	camera: GpuPtr<GpuCamera>,
 	as_: GpuPtr<u8>,
 	sampler: SamplerId,
@@ -56,9 +56,7 @@ struct PushConstants {
 	ggx_e_lut: ImageId,
 	seed: u32,
 	samples: u32,
-	light_count: u32,
 	sky: GpuSkySampler,
-	_pad: u32,
 }
 
 impl PathTracer {
@@ -128,7 +126,7 @@ impl PathTracer {
 		pass.reference(rt.instances, read);
 		pass.reference(rt.as_, read);
 		pass.reference(camera.buf, read);
-		pass.reference(lights.buf, read);
+		lights.reference(&mut pass, Shader::RayTracing);
 		info.sky.reference(&mut pass, Shader::RayTracing);
 
 		let out = pass.resource(
@@ -163,8 +161,7 @@ impl PathTracer {
 			let out = pass.get(out);
 			let as_ = pass.get(rt.as_).ptr().offset(rt.as_offset);
 			let instances = pass.get(rt.instances).ptr();
-			let light_count = lights.count;
-			let lights = pass.get(lights.buf).ptr();
+			let lights = lights.get(&mut pass);
 			let camera = pass.get(camera.buf).ptr();
 			let sky = info.sky.to_gpu(&mut pass);
 
@@ -180,9 +177,7 @@ impl PathTracer {
 					ggx_e_lut: self.ggx_e_lut.image_id(),
 					seed: thread_rng().next_u32(),
 					samples: self.samples,
-					light_count,
 					sky,
-					_pad: 0,
 				},
 				out.size.width,
 				out.size.height,

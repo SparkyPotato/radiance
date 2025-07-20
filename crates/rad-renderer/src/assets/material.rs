@@ -1,15 +1,16 @@
 use std::sync::RwLock;
 
+use ash::vk;
 use bincode::{Decode, Encode};
-use bytemuck::{Pod, Zeroable};
+use bytemuck::{Pod, Zeroable, cast_slice};
 use rad_core::{
+	Engine,
 	asset::{
-		aref::{ARef, AssetId, LARef},
 		AssetView,
 		BincodeAsset,
+		aref::{ARef, AssetId, LARef},
 	},
 	uuid,
-	Engine,
 };
 use rad_graph::{
 	device::descriptor::ImageId,
@@ -54,6 +55,7 @@ pub struct GpuMaterial {
 	normal: Option<ImageId>,
 	emissive: Option<ImageId>,
 	emissive_factor: Vec3<f32>,
+	average_emissive: Vec3<f32>,
 }
 
 pub struct MaterialView {
@@ -65,6 +67,7 @@ pub struct MaterialView {
 	pub normal: Option<LARef<ImageAssetView>>,
 	pub emissive: Option<LARef<ImageAssetView>>,
 	pub emissive_factor: Vec3<f32>,
+	pub average_emissive: Vec3<f32>,
 }
 
 impl MaterialView {
@@ -156,7 +159,31 @@ impl MaterialBuffers {
 		let base_color = mat.base_color.map(|id| ARef::loaded(id)).transpose().unwrap();
 		let metallic_roughness = mat.metallic_roughness.map(|id| ARef::loaded(id)).transpose().unwrap();
 		let normal = mat.normal.map(|id| ARef::loaded(id)).transpose().unwrap();
-		let emissive = mat.emissive.map(|id| ARef::loaded(id)).transpose().unwrap();
+		let emissive = mat.emissive.map(|id| {
+			let data: ImageAsset = Engine::get().load_asset(id).unwrap();
+			let avg = if data.format == vk::Format::R8G8B8A8_UNORM.as_raw()
+				|| data.format == vk::Format::R8G8B8A8_SRGB.as_raw()
+			{
+				let pixels: &[Vec4<u8>] = cast_slice(data.data.as_slice());
+				let avg = pixels
+					.iter()
+					.map(|&x| x.xyz().map(|c| c as f32 / 255.0))
+					.sum::<Vec3<f32>>()
+					/ pixels.len() as f32;
+				if data.format == vk::Format::R8G8B8A8_SRGB.as_raw() {
+					avg.map(|c| c.powf(2.2))
+				} else {
+					avg
+				}
+			} else {
+				panic!("bad emissive")
+			};
+			(avg, ARef::<ImageAssetView>::loaded(id).unwrap())
+		});
+
+		let average_emissive =
+			emissive.as_ref().map(|&(avg, _)| avg).unwrap_or(Vec3::broadcast(1.0)) * mat.emissive_factor;
+		let emissive_id = emissive.as_ref().map(|(_, i)| i.image_id());
 
 		unsafe {
 			b.data()
@@ -170,8 +197,9 @@ impl MaterialBuffers {
 					metallic_factor: mat.metallic_factor,
 					roughness_factor: mat.roughness_factor,
 					normal: Self::id(&normal),
-					emissive: Self::id(&emissive),
+					emissive: emissive_id,
 					emissive_factor: mat.emissive_factor,
+					average_emissive,
 				});
 		}
 
@@ -182,8 +210,9 @@ impl MaterialBuffers {
 			base_color,
 			metallic_roughness,
 			normal,
-			emissive,
+			emissive: emissive.map(|(_, i)| i),
 			emissive_factor: mat.emissive_factor,
+			average_emissive,
 		}
 	}
 

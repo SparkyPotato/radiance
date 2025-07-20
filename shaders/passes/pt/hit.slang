@@ -2,6 +2,7 @@ import graph;
 import graph.util.color;
 import graph.util.rng;
 import asset;
+import asset.light;
 import passes.bsdf;
 import common;
 
@@ -98,7 +99,8 @@ struct Tbn {
 	}
 }
 
-struct Hit {
+struct Hit : SamplerInterface {
+	u32 instance;
 	f32x3 position;
 	f32x3 g_normal;
 	f32x3 emissive;
@@ -110,6 +112,7 @@ struct Hit {
 
 	__init(BuiltInTriangleIntersectionAttributes attrs) {
 		let thit = WorldTriHit(InstanceIndex(), PrimitiveIndex(), attrs.barycentrics);
+		this.instance = InstanceIndex();
 		this.position = thit.position;
 		this.g_normal = thit.g_normal;
 		this.area = thit.area;
@@ -155,79 +158,50 @@ struct Hit {
 	f32x3 from_shading(f32x3 x) {
 		return mul(this.from_shading_basis, x);
 	}
-}
 
-struct LightSample {
-	f32x3 L;
-	f32x3 wi_world;
-	f32 t;
-	f32 pdf;
-	bool punctual;
-}
+	LightSample sample_emissive(inout Rng rng, u32 i) {
+		let instance = &Constants.instances[i];
+		let tri_count = instance->raw_tri_count;
+		let tri = min(u32(rng.sample() * tri_count), tri_count - 1);
 
-f32 solid_angle_pdf(f32 theta) {
-	return 1.f / (2.f * PI * (1.f - cos(theta)));
-}
-
-[ForceInline]
-LightSample sample_emissive(inout Rng rng, Hit hit, u32 i) {
-	let instance = &Constants.instances[i];
-	let tri_count = instance->raw_tri_count;
-	let tri = min(u32(rng.sample() * tri_count), tri_count - 1);
-
-	let b = rng.sample2();
-	f32 u;
-	f32 v;
-	if (b.x < b.y) {
-		u = b.x / 2.f;
-		v = b.y - u;
-	} else {
-		v = b.y / 2.f;
-		u = b.x - v;
-	}
-	let thit = WorldTriHit(i, tri, f32x2(u, v));
-
-	let mat = instance->material;
-	let em = mat->emissive.get();
-	let emf = mat->emissive_factor;
-	let L = rec709_to_rec2020(em.sample_mip(Constants.sampler, thit.uv, 0.0, f32x4(1.f)).xyz * emf);
-
-	let r = thit.position - hit.position;
-	let t2 = dot(r, r);
-	let t = length(r);
-	let wi = r / t;
-	let d = abs(dot(thit.g_normal, -wi));
-	let pdf = (d != 0.f) ? (dot(wi, wi) / (thit.area * f32(tri_count) * d)) : 0.f;
-
-	return { L / t2, wi, t, pdf, false };
-}
-
-// TODO: shrample light (light tree) and triangles (by solid angle or area) better.
-LightSample sample_light(inout Rng rng, Hit hit, Light light) {
-	switch (light.ty) {
-		case LightType.Point: {
-			let pos = light.pos_or_dir;
-			let dir = pos - hit.position;
-			let t2 = dot(dir, dir);
-			let L = rec709_to_rec2020(light.radiance / t2);
-			let t = sqrt(t2);
-			let wi = dir / t;
-			return { L, wi, t, 1.f, true };
+		let b = rng.sample2();
+		f32 u;
+		f32 v;
+		if (b.x < b.y) {
+			u = b.x / 2.f;
+			v = b.y - u;
+		} else {
+			v = b.y / 2.f;
+			u = b.x - v;
 		}
-		case LightType.Directional: {
-			// TODO: sample disk and figure out atmosphere transmittance correctly.
-			let dir = -light.pos_or_dir;
-			let L = rec709_to_rec2020(light.radiance * Constants.sky.sun_transmittance(hit.position, dir));
-			let disk_pdf = solid_angle_pdf(radians(0.5f));
-			return { L / disk_pdf, dir, 1e10f, 1.f, true };
-		}
-		case LightType.Emissive: {
-			let i = asuint(light.radiance.x);
-			return sample_emissive(rng, hit, i);
-		}
+		let thit = WorldTriHit(i, tri, f32x2(u, v));
+
+		let mat = instance->material;
+		let em = mat->emissive.get();
+		let emf = mat->emissive_factor;
+		let L = rec709_to_rec2020(em.sample_mip(Constants.sampler, thit.uv, 0.0, f32x4(1.f)).xyz * emf);
+
+		let r = thit.position - this.position;
+		let t2 = dot(r, r);
+		let t = length(r);
+		let wi = r / t;
+		let d = abs(dot(thit.g_normal, -wi));
+		let pdf = (d != 0.f) ? (dot(wi, wi) / (thit.area * f32(tri_count) * d)) : 0.f;
+
+		return { L / t2, wi, t, pdf, false };
 	}
 
-	return { f32x3(0.f), f32x3(0.f), 0.f, 0.f, false };
+	f32x3 base_color() {
+		return this.params.base_color;
+	}
+
+	f32x3 pos() {
+		return this.position;
+	}
+
+	f32x3 normal() {
+		return this.g_normal;
+	}
 }
 
 LightSample sample_sky(inout Rng rng, Hit hit) {
@@ -237,19 +211,10 @@ LightSample sample_sky(inout Rng rng, Hit hit) {
 	return { L, dir, 1e10f, wi.z / PI, false };
 }
 
+// TODO: sample sky
 LightSample sample_one_light(inout Rng rng, Hit hit) {
-	let n = f32(Constants.light_count + 1);
-	let l = min(u32(rng.sample() * n), u32(n - 1.f));
-
-	LightSample ls;
-	if (l == Constants.light_count) {
-		ls = sample_sky(rng, hit);
-	} else {
-		ls = sample_light(rng, hit, Constants.lights[l]);
-	}
-
-	ls.pdf *= light_sample_pdf();
-	return ls;
+	return {};
+	//	return Constants.lights.sample(rng, hit);
 }
 
 Ray shadow_ray(Hit hit, LightSample ls) {
@@ -278,19 +243,35 @@ LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	return { L, ray };
 }
 
+extension HitPayload : SamplerInfo {
+	f32x3 base_color() {
+		return this.prev_hit_base_color;
+	}
+
+	f32x3 pos() {
+		return this.ray.origin;
+	}
+
+	f32x3 normal() {
+		return this.prev_hit_norm;
+	}
+}
+
 [shader("closesthit")]
 void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	let hit = Hit(attrs);
-	p.prev_hit_norm = hit.from_shading(f32x3(0.f, 0.f, 1.f));
 
 	let le = hit.emissive;
 	f32 w = 1.f;
 	if (!p.specular) {
 		// MIS for area light.
-		let p_light = light_sample_pdf() / (hit.area * f32(hit.tri_count));
+		let p_object = Constants.lights.pdf_of_emissive(hit.instance, p);
+		let p_light = p_object / (hit.area * f32(hit.tri_count));
 		w = pow_heuristic_1(p.p_bounce, p_light);
 	}
 	p.L += p.b * w * le;
+	p.prev_hit_base_color = hit.base_color();
+	p.prev_hit_norm = hit.from_shading(f32x3(0.f, 0.f, 1.f));
 	// TODO: disable MIS if the ray hits a light without a bsdf?
 
 	let wo = hit.to_shading(-p.ray.dir);
