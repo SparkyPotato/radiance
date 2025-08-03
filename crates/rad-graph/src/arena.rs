@@ -128,7 +128,7 @@ impl Arena {
 	pub fn reset(&mut self) {
 		let count = self.inner.get_mut().alloc_count;
 		if count != 0 {
-			panic!("tried to reset Arena with living allocations ({})", count);
+			panic!("tried to reset Arena with living allocations ({count})");
 		}
 		unsafe {
 			self.reset_all_blocks();
@@ -139,12 +139,12 @@ impl Arena {
 	///
 	/// # Safety
 	/// Same as `Allocator::deallocate`.
-	pub unsafe fn deallocate(&self, _: NonNull<u8>) {
+	pub unsafe fn deallocate(&self, _: NonNull<u8>) { unsafe {
 		let inner = self.inner.get();
 		(*inner).alloc_count -= 1;
-	}
+	}}
 
-	unsafe fn reset_all_blocks(&self) {
+	unsafe fn reset_all_blocks(&self) { unsafe {
 		let inner = self.inner.get();
 		let mut block = Some((*inner).head);
 		while let Some(b) = block {
@@ -153,7 +153,7 @@ impl Arena {
 			block = (*b).header.next;
 		}
 		(*inner).curr_block = (*inner).head;
-	}
+	}}
 
 	fn block_layout(size: usize) -> Layout {
 		unsafe {
@@ -214,7 +214,7 @@ unsafe impl Allocator for Arena {
 				let mut offset = self.aligned_offset(layout.align());
 				if unlikely(offset + layout.size() > (&*inner.curr_block.as_ptr()).data.len()) {
 					// There's not enough space in the current block, so go to the next one.
-					if let Some(next) = (*(*inner).curr_block.as_ptr()).header.next {
+					if let Some(next) = (*inner.curr_block.as_ptr()).header.next {
 						// There's a next block, so we can use it.
 						inner.curr_block = next;
 					} else {
@@ -240,18 +240,18 @@ unsafe impl Allocator for Arena {
 		}
 	}
 
-	unsafe fn deallocate(&self, ptr: NonNull<u8>, _: Layout) { self.deallocate(ptr); }
+	unsafe fn deallocate(&self, ptr: NonNull<u8>, _: Layout) { unsafe { self.deallocate(ptr); }}
 
 	unsafe fn grow(
 		&self, ptr: NonNull<u8>, old_layout: Layout, new_layout: Layout,
-	) -> Result<NonNull<[u8]>, AllocError> {
+	) -> Result<NonNull<[u8]>, AllocError> { unsafe {
 		let inner = &mut *self.inner.get();
-		if likely(ptr.addr().get() == (*inner).last_alloc) {
+		if likely(ptr.addr().get() == inner.last_alloc) {
 			// Reuse the last allocation if possible.
-			let offset = ptr.as_ptr().offset_from((*(*inner).curr_block.as_ptr()).data.as_ptr());
+			let offset = ptr.as_ptr().offset_from((*inner.curr_block.as_ptr()).data.as_ptr());
 			let new_offset = offset as usize + new_layout.size();
 			if likely(new_offset <= (&*inner.curr_block.as_ptr()).data.len()) {
-				(*(*inner).curr_block.as_ptr()).header.offset = new_offset;
+				(*inner.curr_block.as_ptr()).header.offset = new_offset;
 				return Ok(NonNull::new_unchecked(std::ptr::from_raw_parts_mut(
 					ptr.as_ptr() as _,
 					new_layout.size(),
@@ -263,7 +263,7 @@ unsafe impl Allocator for Arena {
 		std::ptr::copy_nonoverlapping(ptr.as_ptr(), new_ptr.as_ptr() as *mut _, old_layout.size());
 		inner.alloc_count -= 1;
 		Ok(new_ptr)
-	}
+	}}
 }
 
 impl Drop for Arena {

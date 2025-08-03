@@ -168,7 +168,7 @@ impl Decoder<'_> {
         })?;
         // Validate the string is utf8.
         let result = str::from_utf8(&slice[..first_null_byte])
-            .map_err(|e| Error::DecodeStringFailed(self.offset, format!("{}", e)))?;
+            .map_err(|e| Error::DecodeStringFailed(self.offset, format!("{e}")))?;
         // Round up consumed words to include null byte(s).
         let consumed_words = (first_null_byte / WORD_NUM_BYTES) + 1;
         self.offset += consumed_words * WORD_NUM_BYTES;

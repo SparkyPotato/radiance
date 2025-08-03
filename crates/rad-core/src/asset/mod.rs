@@ -61,14 +61,14 @@ impl<T: BincodeAsset> Asset for T {
 pub fn map_enc_err(e: EncodeError) -> io::Error {
 	match e {
 		EncodeError::Io { inner, .. } => inner,
-		x => io::Error::new(io::ErrorKind::Other, format!("bincode error: {x:?}")),
+		x => io::Error::other(format!("bincode error: {x:?}")),
 	}
 }
 
 pub fn map_dec_err(e: DecodeError) -> io::Error {
 	match e {
 		DecodeError::Io { inner, .. } => inner,
-		x => io::Error::new(io::ErrorKind::Other, format!("bincode error: {x:?}")),
+		x => io::Error::other(format!("bincode error: {x:?}")),
 	}
 }
 
@@ -115,6 +115,12 @@ pub struct AssetRegistry {
 	assets: FxHashMap<Uuid, ErasedAssetLoad>,
 	view_caches: FxHashMap<TypeId, Box<dyn Any + Send + Sync>>,
 	kitchens: FxHashMap<Uuid, Kitchen>,
+}
+
+impl Default for AssetRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AssetRegistry {

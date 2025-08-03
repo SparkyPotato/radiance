@@ -1,6 +1,7 @@
 use std::{
 	cell::UnsafeCell,
-	ffi::CStr,
+	ffi::{CStr, c_void},
+	io::Write,
 	mem::ManuallyDrop,
 	sync::{Arc, Mutex},
 };
@@ -11,27 +12,28 @@ use ash::{
 	vk::{self, TaggedStructure},
 };
 use gpu_allocator::{
-	vulkan::{Allocator, AllocatorCreateDesc},
 	AllocationSizes,
 	AllocatorDebugSettings,
+	vulkan::{Allocator, AllocatorCreateDesc},
 };
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
-use tracing::{info, trace, warn};
+use tracing::{error, info, trace, warn};
 
 use crate::{
+	Error,
+	Result,
 	device::{
-		descriptor::Descriptors,
-		sampler::Samplers,
-		shader::ShaderRuntime,
 		Device,
 		DeviceInner,
 		QueueData,
 		Queues,
+		descriptor::Descriptors,
+		sampler::Samplers,
+		shader::ShaderRuntime,
 	},
-	Error,
-	Result,
 };
 
+#[derive(Default)]
 pub struct DeviceBuilder<'a> {
 	pub layers: &'a [&'static CStr],
 	pub instance_extensions: &'a [&'static CStr],
@@ -40,17 +42,6 @@ pub struct DeviceBuilder<'a> {
 	pub features: vk::PhysicalDeviceFeatures2<'a>,
 }
 
-impl Default for DeviceBuilder<'_> {
-	fn default() -> Self {
-		Self {
-			layers: &[],
-			instance_extensions: &[],
-			device_extensions: &[],
-			window: None,
-			features: vk::PhysicalDeviceFeatures2::default(),
-		}
-	}
-}
 
 impl<'a> DeviceBuilder<'a> {
 	pub fn layers(mut self, layers: &'a [&'static CStr]) -> Self {
@@ -94,7 +85,7 @@ impl<'a> DeviceBuilder<'a> {
 			self.layers,
 			self.instance_extensions,
 		)?;
-		let instance = Self::create_instance(&entry, &layers, &extensions)?;
+		let (instance, debug_utils_messenger) = Self::create_instance(&entry, &layers, &extensions)?;
 
 		let surface_ext = khr::surface::Instance::new(&entry, &instance);
 		let surface = window
@@ -132,6 +123,7 @@ impl<'a> DeviceBuilder<'a> {
 				instance,
 				as_ext,
 				debug_utils_ext,
+				debug_utils_messenger,
 				surface_ext,
 				physical_device,
 				queues,
@@ -152,7 +144,7 @@ impl<'a> DeviceBuilder<'a> {
 	fn load_entry() -> Result<ash::Entry> {
 		match unsafe { ash::Entry::load() } {
 			Ok(entry) => Ok(entry),
-			Err(err) => Err(format!("Failed to load Vulkan: {}", err).into()),
+			Err(err) => Err(format!("Failed to load Vulkan: {err}").into()),
 		}
 	}
 
@@ -228,75 +220,115 @@ impl<'a> DeviceBuilder<'a> {
 
 	fn create_instance(
 		entry: &ash::Entry, layers: &[&'static CStr], extensions: &[&'static CStr],
-	) -> Result<ash::Instance> {
-		let instance = unsafe {
-			entry.create_instance(
+	) -> Result<(ash::Instance, Option<vk::DebugUtilsMessengerEXT>)> {
+		unsafe {
+			let instance = entry.create_instance(
 				&vk::InstanceCreateInfo::default()
 					.application_info(
 						&vk::ApplicationInfo::default()
-							.application_name(CStr::from_bytes_with_nul(b"radiance\0").unwrap())
-							.engine_name(CStr::from_bytes_with_nul(b"radiance\0").unwrap())
+							.application_name(c"radiance")
+							.engine_name(c"radiance")
 							.api_version(vk::make_api_version(0, 1, 3, 0)),
 					)
-					.enabled_layer_names(&layers.into_iter().map(|x| x.as_ptr()).collect::<Vec<_>>())
-					.enabled_extension_names(&extensions.into_iter().map(|x| x.as_ptr()).collect::<Vec<_>>()),
+					.enabled_layer_names(&layers.iter().map(|x| x.as_ptr()).collect::<Vec<_>>())
+					.enabled_extension_names(&extensions.iter().map(|x| x.as_ptr()).collect::<Vec<_>>()),
 				None,
-			)?
-		};
+			)?;
 
-		Ok(instance)
+			unsafe extern "system" fn debug_messenger(
+				severity: vk::DebugUtilsMessageSeverityFlagsEXT, _: vk::DebugUtilsMessageTypeFlagsEXT,
+				cb: *const vk::DebugUtilsMessengerCallbackDataEXT, _: *mut c_void,
+			) -> u32 {
+				unsafe {
+					let cb = &*cb;
+					match severity {
+						vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => warn!(
+							"[{}][{}] {}",
+							cb.message_id_number,
+							CStr::from_ptr(cb.p_message_id_name).to_str().unwrap(),
+							CStr::from_ptr(cb.p_message).to_str().unwrap(),
+						),
+						_ => error!(
+							"[{}][{}] {}",
+							cb.message_id_number,
+							CStr::from_ptr(cb.p_message_id_name).to_str().unwrap(),
+							CStr::from_ptr(cb.p_message).to_str().unwrap(),
+						),
+					}
+				}
+				let _ = std::io::stdout().flush();
+				0
+			}
+
+			let messenger = ext::debug_utils::Instance::new(entry, &instance)
+				.create_debug_utils_messenger(
+					&vk::DebugUtilsMessengerCreateInfoEXT::default()
+						.message_severity(
+							vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
+								| vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
+						)
+						.message_type(vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION)
+						.pfn_user_callback(Some(debug_messenger)),
+					None,
+				)
+				.ok();
+
+			Ok((instance, messenger))
+		}
 	}
 
 	unsafe fn create_surface_inner(
 		entry: &ash::Entry, instance: &ash::Instance, window: RawWindowHandle, display: RawDisplayHandle,
 	) -> Result<vk::SurfaceKHR> {
-		match (window, display) {
-			(RawWindowHandle::Win32(handle), _) => {
-				let surface_fn = khr::win32_surface::Instance::new(entry, instance);
-				surface_fn.create_win32_surface(
-					&vk::Win32SurfaceCreateInfoKHR::default()
-						.hinstance(handle.hinstance.map_or(0, |x| x.get()))
-						.hwnd(handle.hwnd.get()),
-					None,
-				)
-			},
-			(RawWindowHandle::Wayland(window), RawDisplayHandle::Wayland(display)) => {
-				let surface_fn = khr::wayland_surface::Instance::new(entry, instance);
-				surface_fn.create_wayland_surface(
-					&vk::WaylandSurfaceCreateInfoKHR::default()
-						.display(display.display.as_ptr())
-						.surface(window.surface.as_ptr()),
-					None,
-				)
-			},
-			(RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display)) => {
-				let surface_fn = khr::xlib_surface::Instance::new(entry, instance);
-				surface_fn.create_xlib_surface(
-					&vk::XlibSurfaceCreateInfoKHR::default()
-						.dpy(display.display.map_or(std::ptr::null_mut(), |x| x.as_ptr()))
-						.window(window.window),
-					None,
-				)
-			},
-			(RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display)) => {
-				let surface_fn = khr::xcb_surface::Instance::new(entry, instance);
-				surface_fn.create_xcb_surface(
-					&vk::XcbSurfaceCreateInfoKHR::default()
-						.connection(display.connection.map_or(std::ptr::null_mut(), |x| x.as_ptr()))
-						.window(window.window.get()),
-					None,
-				)
-			},
-			(RawWindowHandle::AndroidNdk(handle), _) => {
-				let surface_fn = khr::android_surface::Instance::new(entry, instance);
-				surface_fn.create_android_surface(
-					&vk::AndroidSurfaceCreateInfoKHR::default().window(handle.a_native_window.as_ptr()),
-					None,
-				)
-			},
-			_ => Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT),
+		unsafe {
+			match (window, display) {
+				(RawWindowHandle::Win32(handle), _) => {
+					let surface_fn = khr::win32_surface::Instance::new(entry, instance);
+					surface_fn.create_win32_surface(
+						&vk::Win32SurfaceCreateInfoKHR::default()
+							.hinstance(handle.hinstance.map_or(0, |x| x.get()))
+							.hwnd(handle.hwnd.get()),
+						None,
+					)
+				},
+				(RawWindowHandle::Wayland(window), RawDisplayHandle::Wayland(display)) => {
+					let surface_fn = khr::wayland_surface::Instance::new(entry, instance);
+					surface_fn.create_wayland_surface(
+						&vk::WaylandSurfaceCreateInfoKHR::default()
+							.display(display.display.as_ptr())
+							.surface(window.surface.as_ptr()),
+						None,
+					)
+				},
+				(RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display)) => {
+					let surface_fn = khr::xlib_surface::Instance::new(entry, instance);
+					surface_fn.create_xlib_surface(
+						&vk::XlibSurfaceCreateInfoKHR::default()
+							.dpy(display.display.map_or(std::ptr::null_mut(), |x| x.as_ptr()))
+							.window(window.window),
+						None,
+					)
+				},
+				(RawWindowHandle::Xcb(window), RawDisplayHandle::Xcb(display)) => {
+					let surface_fn = khr::xcb_surface::Instance::new(entry, instance);
+					surface_fn.create_xcb_surface(
+						&vk::XcbSurfaceCreateInfoKHR::default()
+							.connection(display.connection.map_or(std::ptr::null_mut(), |x| x.as_ptr()))
+							.window(window.window.get()),
+						None,
+					)
+				},
+				(RawWindowHandle::AndroidNdk(handle), _) => {
+					let surface_fn = khr::android_surface::Instance::new(entry, instance);
+					surface_fn.create_android_surface(
+						&vk::AndroidSurfaceCreateInfoKHR::default().window(handle.a_native_window.as_ptr()),
+						None,
+					)
+				},
+				_ => Err(vk::Result::ERROR_EXTENSION_NOT_PRESENT),
+			}
+			.map_err(Into::into)
 		}
-		.map_err(Into::into)
 	}
 
 	fn create_device(
@@ -326,7 +358,7 @@ impl<'a> DeviceBuilder<'a> {
 				next: *mut VkStructHeader,
 			}
 
-			let mut features = features.clone();
+			let mut features = features;
 
 			// Push the features if they don't already exist.
 			let mut features12 = vk::PhysicalDeviceVulkan12Features::default();
@@ -556,15 +588,14 @@ impl<'a> DeviceBuilder<'a> {
 
 		for (i, family) in queue_families.iter().enumerate() {
 			if family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
-				if let Some((surface_ext, surface)) = surface {
-					if !unsafe {
+				if let Some((surface_ext, surface)) = surface
+					&& !unsafe {
 						surface_ext
 							.get_physical_device_surface_support(device, i as u32, surface)
 							.ok()?
 					} {
 						return None;
 					}
-				}
 				graphics = Some(i as u32);
 			} else if family.queue_flags.contains(vk::QueueFlags::COMPUTE) {
 				compute = Some(i as u32);
@@ -593,12 +624,12 @@ impl Device {
 	/// `window` and `display` must outlive the returned `SurfaceKHR`.
 	pub unsafe fn create_surface(
 		&self, window: &dyn HasWindowHandle, display: &dyn HasDisplayHandle,
-	) -> Result<vk::SurfaceKHR> {
+	) -> Result<vk::SurfaceKHR> { unsafe {
 		DeviceBuilder::create_surface_inner(
 			&self.inner.entry,
 			&self.inner.instance,
 			window.window_handle().unwrap().as_raw(),
 			display.display_handle().unwrap().as_raw(),
 		)
-	}
+	}}
 }

@@ -66,40 +66,34 @@ impl fmt::Display for State {
         match *self {
             State::Complete => write!(f, "completed parsing"),
             State::ConsumerStopRequested => write!(f, "stop parsing requested by consumer"),
-            State::ConsumerError(ref err) => write!(f, "consumer error: {}", err),
-            State::HeaderIncomplete(ref err) => write!(f, "incomplete module header: {}", err),
+            State::ConsumerError(ref err) => write!(f, "consumer error: {err}"),
+            State::HeaderIncomplete(ref err) => write!(f, "incomplete module header: {err}"),
             State::HeaderIncorrect => write!(f, "incorrect module header"),
             State::EndiannessUnsupported => write!(f, "unsupported endianness"),
             State::WordCountZero(offset, index) => write!(
                 f,
-                "zero word count found for instruction #{} at offset {}",
-                index, offset
+                "zero word count found for instruction #{index} at offset {offset}"
             ),
             State::OpcodeUnknown(offset, index, opcode) => write!(
                 f,
-                "unknown opcode ({}) for instruction #{} at offset {}",
-                opcode, index, offset
+                "unknown opcode ({opcode}) for instruction #{index} at offset {offset}"
             ),
             State::OperandExpected(offset, index) => write!(
                 f,
-                "expected more operands for instruction #{} at offset {}",
-                index, offset
+                "expected more operands for instruction #{index} at offset {offset}"
             ),
             State::OperandExceeded(offset, index) => write!(
                 f,
-                "found extra operands for instruction #{} at offset {}",
-                index, offset
+                "found extra operands for instruction #{index} at offset {offset}"
             ),
-            State::OperandError(ref err) => write!(f, "operand decoding error: {}", err),
+            State::OperandError(ref err) => write!(f, "operand decoding error: {err}"),
             State::TypeUnsupported(offset, index) => write!(
                 f,
-                "unsupported type for instruction #{} at offset {}",
-                index, offset
+                "unsupported type for instruction #{index} at offset {offset}"
             ),
             State::SpecConstantOpIntegerIncorrect(offset, index) => write!(
                 f,
-                "incorrect SpecConstantOp number for instruction #{} at offset {}",
-                index, offset
+                "incorrect SpecConstantOp number for instruction #{index} at offset {offset}"
             ),
         }
     }

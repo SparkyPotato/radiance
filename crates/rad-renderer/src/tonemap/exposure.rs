@@ -213,5 +213,5 @@ impl ExposureCalc {
 		)
 	}
 
-	pub unsafe fn destroy(self) { self.histogram.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.histogram.destroy(); }}
 }

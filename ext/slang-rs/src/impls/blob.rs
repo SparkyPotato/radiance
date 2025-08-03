@@ -102,7 +102,7 @@ impl BlobImpl for StaticBlobImpl {
 
     #[inline]
     fn get_bytes(&self) -> &[u8] {
-        &self.value
+        self.value
     }
 }
 

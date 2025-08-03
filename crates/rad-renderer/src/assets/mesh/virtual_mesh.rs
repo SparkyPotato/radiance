@@ -701,7 +701,7 @@ impl BvhBuilder {
 			self.nodes.push(TempNode {
 				group: u32::MAX,
 				aabb: aabb_default(),
-				children: nodes.iter().copied().collect(),
+				children: nodes.to_vec(),
 			});
 			i as _
 		} else {
@@ -714,7 +714,7 @@ impl BvhBuilder {
 			// After distributing `min_child_size` to all children, we have distributed
 			// `min_child_size * 8` nodes (== `max_child_size`).
 			// The remaining nodes are then distributed left to right.
-			let max_child_size = 1 << (count.ilog2() / 3) * 3;
+			let max_child_size = 1 << ((count.ilog2() / 3) * 3);
 			let min_child_size = max_child_size >> 3;
 			let max_extra_per_node = max_child_size - min_child_size;
 			let mut extra = count - max_child_size; // 8 * min_child_size
@@ -946,7 +946,7 @@ impl AssetView for VirtualMeshView {
 				ty: BufferType::Gpu,
 			},
 		)
-		.map_err(|x| io::Error::new(io::ErrorKind::Other, format!("failed to create mesh buffer: {:?}", x)))?;
+		.map_err(|x| io::Error::other(format!("failed to create mesh buffer: {x:?}")))?;
 		let mut writer = SliceWriter::new(unsafe { buffer.data().as_mut() });
 
 		for node in m.bvh {

@@ -70,7 +70,7 @@ impl HzbGen {
 			"zero atomic",
 			BufferDesc::gpu(std::mem::size_of::<u32>() as _),
 			0,
-			&[0, 0, 0, 0],
+			[0, 0, 0, 0],
 		);
 
 		let mut pass = frame.pass("run");

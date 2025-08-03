@@ -157,7 +157,7 @@ impl Renderer {
 		self.debug_window.render(frame.device(), window, ctx, stats, pt);
 	}
 
-	pub unsafe fn destroy(self) {
+	pub unsafe fn destroy(self) { unsafe {
 		self.sky.destroy();
 		self.visbuffer.destroy();
 		self.pt.destroy();
@@ -165,5 +165,5 @@ impl Renderer {
 		self.agx.destroy();
 		self.tony_mcmapface.destroy();
 		self.debug.destroy();
-	}
+	}}
 }

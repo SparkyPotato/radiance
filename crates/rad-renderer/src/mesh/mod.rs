@@ -194,12 +194,12 @@ impl Passes {
 		);
 	}
 
-	unsafe fn destroy(self) {
+	unsafe fn destroy(self) { unsafe {
 		self.early_hw.destroy();
 		self.early_sw.destroy();
 		self.late_hw.destroy();
 		self.late_sw.destroy();
-	}
+	}}
 }
 
 impl VisBuffer {
@@ -236,13 +236,11 @@ impl VisBuffer {
 			} else {
 				&["passes.mesh.debug", "passes.mesh.late"]
 			}
-		} else {
-			if early {
-				&["passes.mesh.early"]
-			} else {
-				&["passes.mesh.late"]
-			}
-		}
+		} else if early {
+  				&["passes.mesh.early"]
+  			} else {
+  				&["passes.mesh.late"]
+  			}
 	}
 
 	fn hw(device: &Device, early: bool, debug: bool) -> Result<RenderPass<PushConstants>> {
@@ -354,7 +352,7 @@ impl VisBuffer {
 		}
 	}
 
-	pub unsafe fn destroy(self) {
+	pub unsafe fn destroy(self) { unsafe {
 		self.early_instance_cull.destroy();
 		self.late_instance_cull.destroy();
 		self.early_bvh_cull.destroy();
@@ -364,5 +362,5 @@ impl VisBuffer {
 		self.hzb_gen.destroy();
 		self.no_debug.destroy();
 		self.debug.destroy();
-	}
+	}}
 }

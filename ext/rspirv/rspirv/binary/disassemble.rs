@@ -30,7 +30,7 @@ impl Disassemble for dr::Operand {
     fn disassemble(&self) -> String {
         match *self {
             dr::Operand::IdMemorySemantics(v) | dr::Operand::IdScope(v) | dr::Operand::IdRef(v) => {
-                format!("%{}", v)
+                format!("%{v}")
             }
             dr::Operand::ImageOperands(v) => v.disassemble(),
             dr::Operand::FPFastMathMode(v) => v.disassemble(),
@@ -40,7 +40,7 @@ impl Disassemble for dr::Operand {
             dr::Operand::MemorySemantics(v) => v.disassemble(),
             dr::Operand::MemoryAccess(v) => v.disassemble(),
             dr::Operand::KernelProfilingInfo(v) => v.disassemble(),
-            _ => format!("{}", self),
+            _ => format!("{self}"),
         }
     }
 }
@@ -63,12 +63,12 @@ where
         "{rid}Op{opcode}{rtype}{space}{operands}",
         rid = inst
             .result_id
-            .map_or(String::new(), |w| format!("%{} = ", w)),
+            .map_or(String::new(), |w| format!("%{w} = ")),
         opcode = inst.class.opname,
         // extra space both before and after the result type
         rtype = inst
             .result_type
-            .map_or(String::new(), |w| format!("  %{}{}", w, space)),
+            .map_or(String::new(), |w| format!("  %{w}{space}")),
         space = space,
         operands = disas_operands(&inst.operands)
     )

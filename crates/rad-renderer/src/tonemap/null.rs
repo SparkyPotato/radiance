@@ -60,5 +60,5 @@ impl NullTonemap {
 		out
 	}
 
-	pub unsafe fn destroy(self) { self.pass.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.pass.destroy(); }}
 }

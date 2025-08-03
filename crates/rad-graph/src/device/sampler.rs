@@ -79,9 +79,9 @@ impl Samplers {
 		id
 	}
 
-	pub(super) unsafe fn cleanup(&mut self, device: &ash::Device) {
+	pub(super) unsafe fn cleanup(&mut self, device: &ash::Device) { unsafe {
 		for (_, (sampler, _)) in self.caches.drain() {
 			device.destroy_sampler(sampler, None);
 		}
-	}
+	}}
 }

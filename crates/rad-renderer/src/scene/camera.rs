@@ -104,7 +104,7 @@ fn find_primary_view(
 		warn!("no primary view found, using default camera");
 	}
 
-	if let Some(_) = iter.next() {
+	if iter.next().is_some() {
 		warn!("multiple primary views found, using the first one");
 	}
 }

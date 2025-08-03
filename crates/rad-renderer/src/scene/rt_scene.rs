@@ -260,6 +260,12 @@ pub struct RtSceneData {
 }
 impl Resource for RtSceneData {}
 
+impl Default for RtSceneData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RtSceneData {
 	pub fn new() -> Self {
 		let dev = Engine::get().global();

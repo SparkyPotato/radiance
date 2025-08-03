@@ -37,7 +37,7 @@ impl<T: NoUninit> ComputePass<T> {
 		pass.dispatch_indirect(buf, offset);
 	}
 
-	pub unsafe fn destroy(self) { self.pipeline.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.pipeline.destroy(); }}
 }
 
 pub struct RtPass<T> {
@@ -69,5 +69,5 @@ impl<T: NoUninit> RtPass<T> {
 		self.pipeline.trace_rays_indirect(pass.buf, buf + offset as u64);
 	}
 
-	pub unsafe fn destroy(self) { self.pipeline.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.pipeline.destroy(); }}
 }

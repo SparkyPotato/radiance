@@ -23,7 +23,7 @@ use crate::{
 	scene::{
 		WorldRenderer,
 		camera::{CameraScene, GpuCamera},
-		light::{GpuLightScene, GpuLightTreeNode, LightScene},
+		light::{GpuLightScene, LightScene},
 		rt_scene::{GpuRtInstance, RtScene},
 	},
 	sky::{GpuSkySampler, SkySampler},
@@ -94,7 +94,7 @@ impl PathTracer {
 							any_hit: None,
 						},
 					],
-					recursion_depth: 1,
+					recursion_depth: 2,
 				},
 			)?,
 			sampler: device.sampler(SamplerDesc::default()),
@@ -145,11 +145,10 @@ impl PathTracer {
 			ImageUsage::read_write_2d(Shader::RayTracing),
 		);
 
-		if let Some(c) = self.cached {
-			if c != info.size {
+		if let Some(c) = self.cached
+			&& c != info.size {
 				self.samples = 0;
 			}
-		}
 		self.cached = Some(info.size);
 
 		let s = self.samples;
@@ -190,5 +189,5 @@ impl PathTracer {
 		(out, s)
 	}
 
-	pub unsafe fn destroy(self) { self.pass.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.pass.destroy(); }}
 }

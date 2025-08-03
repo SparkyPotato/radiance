@@ -358,7 +358,7 @@ impl MemoryBlock {
 
 			unsafe { device.allocate_memory(&alloc_info, None) }.map_err(|e| match e {
 				vk::Result::ERROR_OUT_OF_DEVICE_MEMORY => AllocationError::OutOfMemory,
-				e => AllocationError::Internal(format!("Unexpected error in vkAllocateMemory: {:?}", e)),
+				e => AllocationError::Internal(format!("Unexpected error in vkAllocateMemory: {e:?}")),
 			})?
 		};
 
@@ -724,7 +724,7 @@ impl Allocator {
 			);
 			if self.debug_settings.log_stack_traces {
 				let backtrace = Backtrace::force_capture();
-				debug!("Allocation stack trace: {}", backtrace);
+				debug!("Allocation stack trace: {backtrace}");
 			}
 		}
 
@@ -752,7 +752,9 @@ impl Allocator {
 
 		// Do not try to create a block if the heap is smaller than the required size (avoids validation warnings).
 		let memory_type = &mut self.memory_types[memory_type_index as usize];
-		let allocation = if size > self.memory_heaps[memory_type.heap_index].size {
+		
+
+		if size > self.memory_heaps[memory_type.heap_index].size {
 			Err(AllocationError::OutOfMemory)
 		} else {
 			memory_type.allocate(
@@ -762,18 +764,16 @@ impl Allocator {
 				backtrace.clone(),
 				&self.allocation_sizes,
 			)
-		};
-
-		allocation
+		}
 	}
 
 	pub fn free(&mut self, allocation: Allocation) -> Result<()> {
 		if self.debug_settings.log_frees {
 			let name = allocation.name.as_deref().unwrap_or("<null>");
-			debug!("Freeing `{}`.", name);
+			debug!("Freeing `{name}`.");
 			if self.debug_settings.log_stack_traces {
 				let backtrace = Backtrace::force_capture();
-				debug!("Free stack trace: {}", backtrace);
+				debug!("Free stack trace: {backtrace}");
 			}
 		}
 

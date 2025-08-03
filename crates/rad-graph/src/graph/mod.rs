@@ -150,7 +150,7 @@ pub struct Frame<'pass, 'graph> {
 impl<'pass, 'graph> Frame<'pass, 'graph> {
 	pub fn graph(&self) -> &RenderGraph { self.graph }
 
-	pub fn device(&self) -> &'graph Device { &self.device }
+	pub fn device(&self) -> &'graph Device { self.device }
 
 	pub fn arena(&self) -> &'graph Arena { self.passes.allocator() }
 

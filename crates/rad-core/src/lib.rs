@@ -42,11 +42,17 @@ impl Engine {
 		self.assets.cook_asset(id)
 	}
 
-	pub unsafe fn destroy() { std::ptr::drop_in_place(&ENGINE as *const _ as *mut OnceLock<Engine>); }
+	pub unsafe fn destroy() { unsafe { std::ptr::drop_in_place(&ENGINE as *const _ as *mut OnceLock<Engine>); }}
 }
 
 pub struct EngineBuilder {
 	inner: Engine,
+}
+
+impl Default for EngineBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EngineBuilder {

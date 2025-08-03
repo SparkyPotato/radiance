@@ -16,14 +16,14 @@ pub enum Resource {
 }
 
 impl Resource {
-	pub unsafe fn destroy(self, device: &Device) {
+	pub unsafe fn destroy(self, device: &Device) { unsafe {
 		match self {
 			Resource::Buffer(x) => x.destroy(device),
 			Resource::Image(x) => x.destroy(device),
 			Resource::ImageView(x) => x.destroy(device),
 			Resource::AS(x) => x.destroy(device),
 		}
-	}
+	}}
 }
 
 impl Deletable for Buffer {
@@ -51,6 +51,12 @@ pub struct Deleter {
 	curr: usize,
 }
 
+impl Default for Deleter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Deleter {
 	pub fn new() -> Self {
 		Self {
@@ -68,11 +74,11 @@ impl Deleter {
 		}
 	}
 
-	pub unsafe fn destroy(self, device: &Device) {
+	pub unsafe fn destroy(self, device: &Device) { unsafe {
 		for queue in self.queues {
 			for resource in queue {
 				resource.destroy(device);
 			}
 		}
-	}
+	}}
 }

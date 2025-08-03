@@ -138,6 +138,49 @@ impl AssetView for RaytracingMeshView {
 		let s = trace_span!("load raytracing mesh", name = name);
 		let _e = s.enter();
 
+		let (aabb, norm_sum) = m.vertices.iter().map(|x| (x.position, x.normal)).fold(
+			(
+				Aabb {
+					min: Vec3::broadcast(f32::INFINITY),
+					max: Vec3::broadcast(f32::NEG_INFINITY),
+				},
+				Vec3::zero(),
+			),
+			|a, b| {
+				(
+					Aabb {
+						min: Vec3::partial_min(a.0.min, b.0),
+						max: Vec3::partial_max(a.0.max, b.0),
+					},
+					a.1 + b.1,
+				)
+			},
+		);
+		let (normal_cone, area) = m.indices.chunks_exact(3).fold(
+			(
+				NormalCone {
+					axis: Vec3::zero(),
+					theta_o: 0.0,
+					theta_e: 0.0,
+				},
+				0.0,
+			),
+			|(cone, area), tri| {
+				let v1 = m.vertices[tri[0] as usize].position;
+				let v2 = m.vertices[tri[1] as usize].position;
+				let v3 = m.vertices[tri[2] as usize].position;
+				let normal = (v2 - v1).cross(v3 - v1);
+				let len = normal.magnitude();
+				let area = area + len / 2.0;
+				let c = NormalCone {
+					axis: if len < 0.0001 { Vec3::zero() } else { normal / len },
+					theta_o: 0.0,
+					theta_e: PI / 2.0,
+				};
+				(cone.merge(c), area)
+			},
+		);
+
 		let buffer = {
 			let s = trace_span!("load");
 			let _e = s.enter();
@@ -180,7 +223,7 @@ impl AssetView for RaytracingMeshView {
 								device_address: buffer.ptr::<u8>().addr(),
 							})
 							.vertex_stride(std::mem::size_of::<GpuVertex>() as _)
-							.max_vertex(m.indices.len() as u32 - 1)
+							.max_vertex(m.vertices.len() as u32 - 1)
 							.index_type(vk::IndexType::UINT32)
 							.index_data(vk::DeviceOrHostAddressConstKHR {
 								device_address: buffer.ptr::<u8>().addr()
@@ -307,49 +350,6 @@ impl AssetView for RaytracingMeshView {
 				old.destroy(device);
 				as_
 			};
-
-			let (aabb, norm_sum) = m.vertices.iter().map(|x| (x.position, x.normal)).fold(
-				(
-					Aabb {
-						min: Vec3::broadcast(f32::INFINITY),
-						max: Vec3::broadcast(f32::NEG_INFINITY),
-					},
-					Vec3::zero(),
-				),
-				|a, b| {
-					(
-						Aabb {
-							min: Vec3::partial_min(a.0.min, b.0),
-							max: Vec3::partial_max(a.0.max, b.0),
-						},
-						a.1 + b.1,
-					)
-				},
-			);
-			let (normal_cone, area) = m.indices.chunks_exact(3).fold(
-				(
-					NormalCone {
-						axis: Vec3::zero(),
-						theta_o: 0.0,
-						theta_e: 0.0,
-					},
-					0.0,
-				),
-				|(cone, area), tri| {
-					let v1 = m.vertices[tri[0] as usize].position;
-					let v2 = m.vertices[tri[1] as usize].position;
-					let v3 = m.vertices[tri[2] as usize].position;
-					let normal = (v2 - v1).cross(v3 - v1);
-					let len = normal.magnitude();
-					let area = area + len / 2.0;
-					let c = NormalCone {
-						axis: if len < 0.0001 { Vec3::zero() } else { normal / len },
-						theta_o: 0.0,
-						theta_e: PI / 2.0,
-					};
-					(cone.merge(c), area)
-				},
-			);
 
 			Ok(Self {
 				buffer,

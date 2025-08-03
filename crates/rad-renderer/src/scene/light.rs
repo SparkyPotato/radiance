@@ -213,10 +213,10 @@ fn build_bvh(nodes: &mut Vec<BuildLight>, indices: &mut [u32]) -> u32 {
 		let merged = indices
 			.iter()
 			.map(|&i| nodes[i as usize])
-			.reduce(|a, b| merge_lights(a, b))
+			.reduce(merge_lights)
 			.unwrap();
 		let p_40 = (count as f32 * 0.4) as usize;
-		let mut p_60 = (count as f32 * 0.6) as usize;
+		let p_60 = (count as f32 * 0.6) as usize;
 		let mut cost = f32::INFINITY;
 		let mut axis = 0;
 		let mut split = 0;
@@ -228,12 +228,12 @@ fn build_bvh(nodes: &mut Vec<BuildLight>, indices: &mut [u32]) -> u32 {
 				let left_merged = left
 					.iter()
 					.map(|&i| nodes[i as usize])
-					.reduce(|a, b| merge_lights(a, b))
+					.reduce(merge_lights)
 					.unwrap();
 				let right_merged = right
 					.iter()
 					.map(|&i| nodes[i as usize])
-					.reduce(|a, b| merge_lights(a, b))
+					.reduce(merge_lights)
 					.unwrap();
 				let c = saoh(merged, left_merged, right_merged, ax as _);
 				if c < cost {
@@ -402,7 +402,7 @@ fn emissive_paths(out: &mut Vec<u32>, bvh: &[GpuLightTreeNode], node: u32, depth
 }
 
 fn sync_lights(
-	mut r: ResMut<LightSceneData>, mut cmd: Commands, punctual: Query<(Entity, &Transform, &LightComponent)>,
+	mut r: ResMut<LightSceneData>, cmd: Commands, punctual: Query<(Entity, &Transform, &LightComponent)>,
 	emissive: Query<(Entity, &Transform, &KnownRtInstances)>,
 ) {
 	let mut lights = Vec::new();
@@ -456,7 +456,7 @@ fn sync_lights(
 	let r = &mut *r;
 
 	r.light_tree.clear();
-	if lights.len() == 0 {
+	if lights.is_empty() {
 		r.light_tree.push(GpuLightTreeNode {
 			left: GpuSgLight::default(),
 			right: GpuSgLight::default(),

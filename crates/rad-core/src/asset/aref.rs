@@ -72,6 +72,12 @@ impl<T> Display for AssetId<T> {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{}", self.0) }
 }
 
+impl<T> Default for AssetId<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T> AssetId<T> {
 	pub fn new() -> Self { Self(UntypedAssetId(Uuid::new_v4()), PhantomData) }
 
@@ -127,6 +133,12 @@ impl<T: AssetView> Deref for LARef<T> {
 pub struct AssetCache<T: AssetView> {
 	context: T::Ctx,
 	loaded: RwLock<FxHashMap<AssetId<<T::Base as Asset>::Root>, Arc<ARefData<T>>>>,
+}
+
+impl<T: AssetView> Default for AssetCache<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: AssetView> AssetCache<T> {

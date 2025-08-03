@@ -28,8 +28,8 @@ pub enum Error {
 impl Display for Error {
 	fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
 		match self {
-			Error::Message(msg) => write!(f, "{}", msg),
-			Error::Vulkan(res) => write!(f, "Vulkan error: {}", res),
+			Error::Message(msg) => write!(f, "{msg}"),
+			Error::Vulkan(res) => write!(f, "Vulkan error: {res}"),
 		}
 	}
 }
@@ -47,7 +47,7 @@ impl From<ash::vk::Result> for Error {
 }
 
 impl From<Error> for io::Error {
-	fn from(err: Error) -> Self { io::Error::new(io::ErrorKind::Other, err.to_string()) }
+	fn from(err: Error) -> Self { io::Error::other(err.to_string()) }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

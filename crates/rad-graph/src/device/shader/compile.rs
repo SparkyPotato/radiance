@@ -155,7 +155,7 @@ impl ShaderBuilder {
 		let ret = module.assemble();
 
 		let path = if spec.is_empty() {
-			format!("{}.{}.spv", name, entry)
+			format!("{name}.{entry}.spv")
 		} else {
 			format!("{}.{}+{}.spv", name, entry, spec.join(","))
 		};

@@ -92,7 +92,7 @@ impl<T: App> rad_window::App for UiApp<T> {
 			.as_mut()
 			.unwrap()
 			.handle_platform_output(window, output.platform_output);
-		let tris = ctx.tessellate(output.shapes, pixels_per_point(&ctx, window));
+		let tris = ctx.tessellate(output.shapes, pixels_per_point(ctx, window));
 
 		self.renderer.run(
 			&mut frame,

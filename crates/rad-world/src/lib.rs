@@ -83,6 +83,12 @@ pub struct World {
 	inner: bevy_ecs::world::World,
 }
 
+impl Default for World {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl World {
 	pub fn new() -> Self {
 		Self {

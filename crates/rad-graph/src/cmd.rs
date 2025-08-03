@@ -30,14 +30,14 @@ impl CommandPool {
 	///
 	/// # Safety
 	/// All command buffers previously allocated by a call to [`Self::next`] must not be used anymore.
-	pub unsafe fn reset(&mut self, device: &Device) -> Result<()> {
+	pub unsafe fn reset(&mut self, device: &Device) -> Result<()> { unsafe {
 		device
 			.device()
 			.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())?;
 		self.buf_cursor = 0; // We can now hand out the first buffer again.
 
 		Ok(())
-	}
+	}}
 
 	pub fn next(&mut self, device: &Device) -> Result<vk::CommandBuffer> {
 		if let Some(buf) = self.bufs.get(self.buf_cursor) {
@@ -60,5 +60,5 @@ impl CommandPool {
 
 	/// # Safety
 	/// This invalidates all command buffers allocated from this pool, and must also be synchronized correctly.
-	pub unsafe fn destroy(self, device: &Device) { device.device().destroy_command_pool(self.pool, None); }
+	pub unsafe fn destroy(self, device: &Device) { unsafe { device.device().destroy_command_pool(self.pool, None); }}
 }

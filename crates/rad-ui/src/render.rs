@@ -192,27 +192,24 @@ impl Renderer {
 
 		unsafe {
 			for tris in tris.iter() {
-				match &tris.primitive {
-					Primitive::Mesh(m) => match m.texture_id {
-						TextureId::User(x) if (x & (1 << 63)) == 0 => {
-							let res = Res::<ImageView>::from_raw(x as _);
-							let desc = pass.desc(res);
-							pass.reference::<ImageView>(
-								res,
-								ImageUsage::format_sampled_2d(
-									if desc.format == vk::Format::R8G8B8A8_SRGB {
-										vk::Format::R8G8B8A8_UNORM
-									} else {
-										desc.format
-									},
-									Shader::Fragment,
-								),
-							)
-						},
-						_ => {},
-					},
-					_ => {},
-				}
+				if let Primitive::Mesh(m) = &tris.primitive { match m.texture_id {
+    						TextureId::User(x) if (x & (1 << 63)) == 0 => {
+    							let res = Res::<ImageView>::from_raw(x as _);
+    							let desc = pass.desc(res);
+    							pass.reference::<ImageView>(
+    								res,
+    								ImageUsage::format_sampled_2d(
+    									if desc.format == vk::Format::R8G8B8A8_SRGB {
+    										vk::Format::R8G8B8A8_UNORM
+    									} else {
+    										desc.format
+    									},
+    									Shader::Fragment,
+    								),
+    							)
+    						},
+    						_ => {},
+    					} }
 			}
 		}
 
@@ -245,10 +242,10 @@ impl Renderer {
 
 	/// # Safety
 	/// Appropriate synchronization must be performed.
-	pub unsafe fn destroy(self) {
+	pub unsafe fn destroy(self) { unsafe {
 		self.sdr.destroy();
 		self.hdr.destroy();
-	}
+	}}
 
 	fn execute(&self, mut pass: PassContext, io: PassIO<'_>, tris: &[ClippedPrimitive], screen: &ScreenDescriptor) {
 		Self::generate_buffers(&mut pass, io.vertex, io.index, tris);

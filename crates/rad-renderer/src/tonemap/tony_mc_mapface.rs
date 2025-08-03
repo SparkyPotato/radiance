@@ -102,5 +102,5 @@ impl TonyMcMapfaceTonemap {
 	}
 
 	// TODO: delete LUT
-	pub unsafe fn destroy(self) { self.pass.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.pass.destroy(); }}
 }

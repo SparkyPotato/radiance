@@ -51,7 +51,7 @@ impl<T: NoUninit> RenderPass<T> {
 		pass
 	}
 
-	pub unsafe fn destroy(self) { self.pipeline.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.pipeline.destroy(); }}
 }
 
 pub struct FullscreenPass<T> {
@@ -114,5 +114,5 @@ impl<T: NoUninit> FullscreenPass<T> {
 		pass.draw(3, 1, 0, 0);
 	}
 
-	pub unsafe fn destroy(self) { self.inner.destroy(); }
+	pub unsafe fn destroy(self) { unsafe { self.inner.destroy(); }}
 }

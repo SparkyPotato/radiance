@@ -245,10 +245,10 @@ impl Resource for Buffer {
 		}
 	}
 
-	unsafe fn destroy(self, device: &Device) {
+	unsafe fn destroy(self, device: &Device) { unsafe {
 		let _ = device.allocator().free(self.alloc);
 		device.device().destroy_buffer(self.inner, None);
-	}
+	}}
 }
 
 /// A description for an image.
@@ -395,10 +395,10 @@ impl Resource for Image {
 		}
 	}
 
-	unsafe fn destroy(self, device: &Device) {
+	unsafe fn destroy(self, device: &Device) { unsafe {
 		let _ = device.allocator().free(self.alloc);
 		device.device().destroy_image(self.inner, None);
-	}
+	}}
 }
 
 /// The usage of an image view.
@@ -652,8 +652,8 @@ impl Resource for AS {
 		}
 	}
 
-	unsafe fn destroy(self, device: &Device) {
+	unsafe fn destroy(self, device: &Device) { unsafe {
 		device.as_ext().destroy_acceleration_structure(self.inner, None);
 		self.buffer.destroy(device);
-	}
+	}}
 }

@@ -15,6 +15,12 @@ pub struct Tick {
 	inner: Schedule,
 }
 
+impl Default for Tick {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Tick {
 	pub fn new() -> Self {
 		let mut inner = Schedule::default();

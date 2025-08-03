@@ -231,9 +231,9 @@ impl SkyLuts {
 		}
 	}
 
-	pub unsafe fn destroy(self) {
+	pub unsafe fn destroy(self) { unsafe {
 		self.transmittance.destroy();
 		self.scattering.destroy();
 		self.eval.destroy();
-	}
+	}}
 }

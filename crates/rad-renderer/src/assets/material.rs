@@ -156,9 +156,9 @@ impl MaterialBuffers {
 
 		// TODO: should we multithread these?
 		// TODO: unwrap bad
-		let base_color = mat.base_color.map(|id| ARef::loaded(id)).transpose().unwrap();
-		let metallic_roughness = mat.metallic_roughness.map(|id| ARef::loaded(id)).transpose().unwrap();
-		let normal = mat.normal.map(|id| ARef::loaded(id)).transpose().unwrap();
+		let base_color = mat.base_color.map(ARef::loaded).transpose().unwrap();
+		let metallic_roughness = mat.metallic_roughness.map(ARef::loaded).transpose().unwrap();
+		let normal = mat.normal.map(ARef::loaded).transpose().unwrap();
 		let emissive = mat.emissive.map(|id| {
 			let data: ImageAsset = Engine::get().load_asset(id).unwrap();
 			let avg = if data.format == vk::Format::R8G8B8A8_UNORM.as_raw()

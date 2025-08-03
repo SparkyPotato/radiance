@@ -80,7 +80,7 @@ impl GltfImporter {
 			Err(e) => return Some(Err(io::Error::other(e))),
 		};
 
-		Some(Self::new(base, gltf, blob).map_err(|e| io::Error::other(e)))
+		Some(Self::new(base, gltf, blob).map_err(io::Error::other))
 	}
 
 	pub fn import(self, progress: impl Fn(f32) + Send + Sync) -> Result<(), io::Error> {
@@ -459,7 +459,7 @@ impl GltfImporter {
 				Ok::<_, io::Error>(Mesh {
 					vertices,
 					indices,
-					material: materials[prim.material().index().unwrap_or(materials.len() - 1)].clone(),
+					material: materials[prim.material().index().unwrap_or(materials.len() - 1)],
 				})
 			})
 			.collect::<Result<Vec<_>, _>>()?;

@@ -233,11 +233,11 @@ impl GraphicsPipeline {
 		}
 	}
 
-	pub unsafe fn destroy(self) {
+	pub unsafe fn destroy(self) { unsafe {
 		self.1
 			.device()
 			.destroy_pipeline(vk::Pipeline::from_raw(self.0.swap(0, Ordering::Relaxed)), None);
-	}
+	}}
 }
 
 impl ComputePipeline {
@@ -251,11 +251,11 @@ impl ComputePipeline {
 		}
 	}
 
-	pub unsafe fn destroy(self) {
+	pub unsafe fn destroy(self) { unsafe {
 		self.1
 			.device()
 			.destroy_pipeline(vk::Pipeline::from_raw(self.0.swap(0, Ordering::Relaxed)), None);
-	}
+	}}
 }
 
 impl RtPipeline {
@@ -287,12 +287,12 @@ impl RtPipeline {
 		}
 	}
 
-	pub unsafe fn destroy(self) {
+	pub unsafe fn destroy(self) { unsafe {
 		let mut m = self.0.lock().unwrap();
 		self.1.device().destroy_pipeline(m.pipeline, None);
 		m.pipeline = vk::Pipeline::null();
 		std::mem::take(&mut m.sbt).destroy(&self.1);
-	}
+	}}
 }
 
 enum PipelineData {
@@ -319,12 +319,12 @@ impl PipelineCompiler {
 			let mut infos = Vec::with_capacity(desc.shaders.len());
 			let mut shaders = Vec::with_capacity(desc.shaders.len());
 			for &s in desc.shaders.iter() {
-				let (code, stage) = self.get_shader(s).map_err(|x| Err(x))?;
+				let (code, stage) = self.get_shader(s).map_err(Err)?;
 				codes.push(code);
 				shaders.push(vk::PipelineShaderStageCreateInfo::default().stage(stage).name(c"main"));
 			}
 			for code in codes.iter() {
-				infos.push(vk::ShaderModuleCreateInfo::default().code(&code));
+				infos.push(vk::ShaderModuleCreateInfo::default().code(code));
 			}
 			for (shader, info) in shaders.iter_mut().zip(infos.iter_mut()) {
 				*shader = shader.push_next(info);
@@ -375,7 +375,7 @@ impl PipelineCompiler {
 	#[track_caller]
 	fn compile_compute(&mut self, shader: ShaderInfo) -> Result<vk::Pipeline, Result<Error, String>> {
 		unsafe {
-			let (code, stage) = self.get_shader(shader).map_err(|x| Err(x))?;
+			let (code, stage) = self.get_shader(shader).map_err(Err)?;
 			self.device
 				.device()
 				.create_compute_pipelines(
@@ -402,12 +402,12 @@ impl PipelineCompiler {
 			let mut infos = Vec::with_capacity(desc.shaders.len());
 			let mut shaders = Vec::with_capacity(desc.shaders.len());
 			for &s in desc.shaders.iter() {
-				let (code, stage) = self.get_shader(s).map_err(|x| Err(x))?;
+				let (code, stage) = self.get_shader(s).map_err(Err)?;
 				codes.push(code);
 				shaders.push(vk::PipelineShaderStageCreateInfo::default().stage(stage).name(c"main"));
 			}
 			for code in codes.iter() {
-				infos.push(vk::ShaderModuleCreateInfo::default().code(&code));
+				infos.push(vk::ShaderModuleCreateInfo::default().code(code));
 			}
 			for (shader, info) in shaders.iter_mut().zip(infos.iter_mut()) {
 				*shader = shader.push_next(info);
@@ -537,7 +537,7 @@ impl PipelineCompiler {
 					ty: BufferType::Gpu,
 				},
 			)
-			.map_err(|e| Ok(e.into()))?;
+			.map_err(|e| Ok(e))?;
 			rgen.device_address = sbt.ptr::<()>().addr();
 			hit.device_address = rgen.device_address + rgen.size;
 			miss.device_address = hit.device_address + hit.size;

@@ -337,19 +337,19 @@ impl<A: Allocator> QueueWaitOwned<A> {
 	pub fn merge(&mut self, other: Self) {
 		match &mut self.graphics {
 			Some(g) => {
-				other.graphics.map(|x| g.merge(x));
+				if let Some(x) = other.graphics { g.merge(x) }
 			},
 			None => self.graphics = other.graphics,
 		}
 		match &mut self.compute {
 			Some(g) => {
-				other.compute.map(|x| g.merge(x));
+				if let Some(x) = other.compute { g.merge(x) }
 			},
 			None => self.compute = other.compute,
 		}
 		match &mut self.transfer {
 			Some(g) => {
-				other.transfer.map(|x| g.merge(x));
+				if let Some(x) = other.transfer { g.merge(x) }
 			},
 			None => self.transfer = other.transfer,
 		}
@@ -418,7 +418,7 @@ impl QueueData {
 			.map(|x| x.info(qs))
 			.chain(wait.compute.into_iter().map(|x| x.info(qs)))
 			.chain(wait.transfer.into_iter().map(|x| x.info(qs)))
-			.chain(wait.binary_semaphores.into_iter().map(|x| x.info()))
+			.chain(wait.binary_semaphores.iter().map(|x| x.info()))
 			.collect();
 		let infos: Vec<_> = bufs
 			.iter()
@@ -431,7 +431,7 @@ impl QueueData {
 				.value(v + 1)
 				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
 		)
-		.chain(signal.into_iter().map(|x| x.info()))
+		.chain(signal.iter().map(|x| x.info()))
 		.collect();
 
 		unsafe {

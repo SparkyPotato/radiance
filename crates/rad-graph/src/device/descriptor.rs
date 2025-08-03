@@ -15,7 +15,7 @@ pub struct ImageId(NonZeroU32);
 impl ImageId {
 	pub fn get(&self) -> u32 { self.0.get() }
 
-	pub unsafe fn from_raw(raw: u32) -> Self { Self(NonZeroU32::new_unchecked(raw)) }
+	pub unsafe fn from_raw(raw: u32) -> Self { unsafe { Self(NonZeroU32::new_unchecked(raw)) }}
 }
 /// An ID representing a storage image, for use by a shader.
 ///
@@ -233,11 +233,11 @@ impl Descriptors {
 		}
 	}
 
-	pub(super) unsafe fn cleanup(&mut self, device: &ash::Device) {
+	pub(super) unsafe fn cleanup(&mut self, device: &ash::Device) { unsafe {
 		device.destroy_pipeline_layout(self.layout, None);
 		device.destroy_descriptor_set_layout(self.set_layout, None);
 		device.destroy_descriptor_pool(self.pool, None);
-	}
+	}}
 }
 
 struct FreeIndices {

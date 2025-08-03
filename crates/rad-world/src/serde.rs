@@ -146,7 +146,7 @@ impl Decode for CompenentDecoder {
 		let id = uuid_to_ty(uuid).ok_or_else(|| DecodeError::Io {
 			inner: io::Error::new(
 				io::ErrorKind::InvalidData,
-				format!("unknown component UUID (`{}`) not registered", uuid),
+				format!("unknown component UUID (`{uuid}`) not registered"),
 			),
 			additional: 0,
 		})?;

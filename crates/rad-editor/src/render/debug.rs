@@ -115,7 +115,7 @@ impl DebugWindow {
 
 			let mut hdr = window.hdr_enabled();
 			ui.add_enabled(window.hdr_supported(), Checkbox::new(&mut hdr, "hdr output"));
-			let _ = window.set_hdr(hdr);
+			window.set_hdr(hdr);
 			ui.add(Checkbox::new(&mut window.vsync, "vsync"));
 
 			match self.render_mode {
@@ -165,15 +165,12 @@ impl DebugWindow {
 						_ => unreachable!(),
 					};
 
-					match &mut self.debug_vis {
-						DebugVis::Overdraw(s) => {
-							ui.horizontal(|ui| {
-								ui.add(DragValue::new(&mut self.scale).speed(0.01).range(0.0..=1.0));
-							});
-							*s = self.scale;
-						},
-						_ => {},
-					}
+					if let DebugVis::Overdraw(s) = &mut self.debug_vis {
+     							ui.horizontal(|ui| {
+     								ui.add(DragValue::new(&mut self.scale).speed(0.01).range(0.0..=1.0));
+     							});
+     							*s = self.scale;
+     						}
 				},
 			}
 
@@ -194,7 +191,7 @@ impl DebugWindow {
 			}
 
 			if let Some((exp, samples)) = pt {
-				ui.label(format!("samples: {}", samples));
+				ui.label(format!("samples: {samples}"));
 
 				ui.label(format!("exposure: {:.2}", exp.exposure));
 

@@ -61,7 +61,7 @@ impl<T: Resource> ResourceList<T> {
 		Ok(ret)
 	}
 
-	pub unsafe fn reset(&mut self, device: &Device) {
+	pub unsafe fn reset(&mut self, device: &Device) { unsafe {
 		// Everything before the cursor was just used.
 		for resource in self.resources[self.cursor..].iter_mut() {
 			// Everything after this has not been used for at least `DESTROY_LAG` generations.
@@ -75,7 +75,7 @@ impl<T: Resource> ResourceList<T> {
 			resource.inner.destroy(device);
 		}
 		self.cursor = 0;
-	}
+	}}
 
 	pub fn destroy(self, device: &Device) {
 		for resource in self.resources {
@@ -90,6 +90,12 @@ pub struct ResourceCache<T: Resource> {
 	resources: FxHashMap<T::UnnamedDesc, ResourceList<T>>,
 }
 
+impl<T: Resource> Default for ResourceCache<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Resource> ResourceCache<T> {
 	/// Create an empty cache.
 	pub fn new() -> Self {
@@ -102,11 +108,11 @@ impl<T: Resource> ResourceCache<T> {
 	///
 	/// # Safety
 	/// All resources returned by [`Self::get`] must not be used after this call.
-	pub unsafe fn reset(&mut self, device: &Device) {
+	pub unsafe fn reset(&mut self, device: &Device) { unsafe {
 		for (_, list) in self.resources.iter_mut() {
 			list.reset(device);
 		}
-	}
+	}}
 
 	/// Get an unused resource with the given descriptor. Is valid until [`Self::reset`] is called.
 	pub fn get(&mut self, device: &Device, desc: T::UnnamedDesc) -> Result<(T::Handle, bool)> {
@@ -123,6 +129,12 @@ impl<T: Resource> ResourceCache<T> {
 
 pub struct UniqueCache<T: Resource> {
 	resources: FxHashMap<T::UnnamedDesc, TrackedResource<T>>,
+}
+
+impl<T: Resource> Default for UniqueCache<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Resource> UniqueCache<T> {
@@ -157,7 +169,7 @@ impl<T: Resource> UniqueCache<T> {
 	///
 	/// # Safety
 	/// All resources returned by [`Self::get`] must not be used after this call.
-	pub unsafe fn reset(&mut self, device: &Device) {
+	pub unsafe fn reset(&mut self, device: &Device) { unsafe {
 		self.resources.retain(|_, res| {
 			res.unused += 1;
 			if res.unused >= DESTROY_LAG {
@@ -167,7 +179,7 @@ impl<T: Resource> UniqueCache<T> {
 				true
 			}
 		})
-	}
+	}}
 
 	pub fn destroy(self, device: &Device) {
 		for (_, res) in self.resources {
@@ -205,6 +217,12 @@ impl<T: VirtualResource> Debug for Persist<T> {
 }
 
 static COUNTER: AtomicU64 = AtomicU64::new(1);
+impl<T: VirtualResource> Default for Persist<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: VirtualResource> Persist<T> {
 	pub fn new() -> Self {
 		Self {
@@ -216,6 +234,12 @@ impl<T: VirtualResource> Persist<T> {
 
 pub struct PersistentCache<T: Resource> {
 	resources: FxHashMap<NonZeroU64, PersistentResource<T>>,
+}
+
+impl<T: Resource + Deletable> Default for PersistentCache<T> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<T: Resource + Deletable> PersistentCache<T> {
@@ -280,7 +304,7 @@ impl<T: Resource + Deletable> PersistentCache<T> {
 	///
 	/// # Safety
 	/// All resources returned by [`Self::get`] must not be used after this call.
-	pub unsafe fn reset(&mut self, device: &Device) {
+	pub unsafe fn reset(&mut self, device: &Device) { unsafe {
 		self.resources.retain(|_, r| {
 			r.resource.unused += 1;
 			if r.resource.unused >= DESTROY_LAG {
@@ -290,7 +314,7 @@ impl<T: Resource + Deletable> PersistentCache<T> {
 				true
 			}
 		})
-	}
+	}}
 
 	pub fn destroy(self, device: &Device) {
 		for (_, r) in self.resources {

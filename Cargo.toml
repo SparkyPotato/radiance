@@ -4,8 +4,8 @@ members = [
 
 	"ext/gpu-allocator",
 
-	"ext/nvtt/nvtt",
-	"ext/nvtt/nvtt-sys",
+	# "ext/nvtt/nvtt",
+	# "ext/nvtt/nvtt-sys",
 
 	"ext/rspirv/spirv", 
 	"ext/rspirv/rspirv", 
@@ -51,7 +51,7 @@ vek = { path = "ext/vek", features = ["bytemuck", "serde"] }
 ash = "0.38.0"
 bevy_ecs = { version = "0.15.0", features = ["bevy_reflect", "multi_threaded", "serialize", "trace"] }
 bevy_reflect = "0.15.0"
-bincode = { version = "2.0.0-rc.3", features = ["serde"] }
+bincode = { version = "=2.0.0-rc.3", features = ["serde"] }
 bytemuck = { version = "1.15.0", features = ["derive"] }
 crossbeam-channel = "0.5.13"
 egui = { version = "0.30.0" }

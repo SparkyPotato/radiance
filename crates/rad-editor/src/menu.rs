@@ -30,10 +30,9 @@ impl Menu {
 			});
 		});
 
-		if new || open {
-			if let Some(path) = FileDialog::new().pick_folder() {
+		if (new || open)
+			&& let Some(path) = FileDialog::new().pick_folder() {
 				fs.open(path);
 			}
-		}
 	}
 }

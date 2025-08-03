@@ -36,8 +36,7 @@ impl AssetTray {
 	pub fn render(&mut self, ctx: &Context, world: &mut WorldContext) {
 		self.image_previewer.render(ctx);
 
-		self.open =
-			self.open ^ ctx.input_mut(|x| x.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Space)));
+		self.open ^= ctx.input_mut(|x| x.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::Space)));
 
 		if self.open {
 			TopBottomPanel::bottom("asset tray")
@@ -60,15 +59,14 @@ impl AssetTray {
 
 					let dropped = ctx.input_mut(|x| std::mem::take(&mut x.raw.dropped_files));
 					for file in dropped {
-						if let Some(x) = GltfImporter::initialize(&file.path.unwrap()) {
-							if let Err(e) = x.and_then(|x| {
+						if let Some(x) = GltfImporter::initialize(&file.path.unwrap())
+							&& let Err(e) = x.and_then(|x| {
 								x.import(|x| {
 									info!("import: {:.2}%", x * 100.0);
 								})
 							}) {
 								error!("import error: {:?}", e);
 							}
-						}
 					}
 
 					ui.vertical(|ui| {
@@ -96,7 +94,7 @@ impl AssetTray {
 
 							if ui
 								.add(
-									Button::new(fs.root().as_ref().unwrap().iter().last().unwrap().to_string_lossy())
+									Button::new(fs.root().as_ref().unwrap().iter().next_back().unwrap().to_string_lossy())
 										.frame(false),
 								)
 								.clicked()
@@ -191,13 +189,12 @@ impl AssetTray {
 															if let Err(e) = world.open_mesh(header.id.typed()) {
 																error!("failed to open mesh: {:?}", e);
 															}
-														} else if is_image {
-															if let Err(e) =
+														} else if is_image
+															&& let Err(e) =
 																self.image_previewer.add_preview(header.id.typed())
 															{
 																error!("failed to add image preview: {:?}", e);
 															}
-														}
 													}
 												}
 												ui.label(n);

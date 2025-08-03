@@ -104,12 +104,12 @@ pub enum Resource<'graph> {
 }
 
 impl<'graph> Resource<'graph> {
-	pub unsafe fn data<T>(&mut self) -> (NonNull<T>, &mut DataState) {
+	pub unsafe fn data<T>(&mut self) -> (NonNull<T>, &mut DataState) { unsafe {
 		match self {
 			Resource::Data(ptr, state) => (ptr.cast(), state),
 			_ => unreachable_unchecked(),
 		}
-	}
+	}}
 
 	pub unsafe fn buffer(&self) -> &BufferData<'graph> {
 		match self {
@@ -254,13 +254,13 @@ impl<'graph> ResourceAliaser<'graph> {
 	}
 
 	fn try_merge_buffer(&mut self, data: &BufferData<'graph>, lifetime: ResourceLifetime) {
-		if Self::is_buffer_merge_candidate(&data) {
+		if Self::is_buffer_merge_candidate(data) {
 			for &i in self.buffers.iter() {
 				let res = &mut self.resources[i as usize];
 				let res = unsafe { res.buffer_mut() };
 				let res_lifetime = &mut self.lifetimes[i as usize];
 				// If the lifetimes aren't overlapping, merge.
-				if res_lifetime.independent(lifetime) && Self::is_buffer_merge_candidate(&res) {
+				if res_lifetime.independent(lifetime) && Self::is_buffer_merge_candidate(res) {
 					res.desc.size = res.desc.size.max(data.desc.size);
 					res.usages.extend(data.usages.iter().map(|(k, v)| (*k, v.clone())));
 					*res_lifetime = res_lifetime.union(lifetime);
@@ -278,7 +278,7 @@ impl<'graph> ResourceAliaser<'graph> {
 	}
 
 	fn try_merge_image(&mut self, data: &ImageData<'graph>, lifetime: ResourceLifetime) {
-		if Self::is_image_merge_candidate(&data) {
+		if Self::is_image_merge_candidate(data) {
 			for &i in self.images.get(&data.desc).into_iter().flatten() {
 				let res = &mut self.resources[i as usize];
 				let res = unsafe { res.image_mut() };
@@ -288,7 +288,7 @@ impl<'graph> ResourceAliaser<'graph> {
 					&& compatible_formats(
 						res.usages.first_key_value().unwrap().1.format,
 						data.usages.first_key_value().unwrap().1.format,
-					) && Self::is_image_merge_candidate(&res)
+					) && Self::is_image_merge_candidate(res)
 				{
 					res.usages.extend(data.usages.iter().map(|(k, v)| (*k, v.clone())));
 					*res_lifetime = res_lifetime.union(lifetime);
@@ -387,12 +387,10 @@ impl<'graph> ResourceAliaser<'graph> {
 				Resource::Image(data) => {
 					images.push(i as _);
 					if data.handle.0 == vk::Image::null() {
-						let flags = data
+						let flags = if data
 							.usages
 							.values()
-							.any(|u| u.format != vk::Format::UNDEFINED && u.format != data.desc.format)
-							.then_some(vk::ImageCreateFlags::MUTABLE_FORMAT)
-							.unwrap_or_default();
+							.any(|u| u.format != vk::Format::UNDEFINED && u.format != data.desc.format) { vk::ImageCreateFlags::MUTABLE_FORMAT } else { Default::default() };
 						let desc = crate::resource::ImageDescUnnamed {
 							flags,
 							format: data.desc.format,
@@ -572,7 +570,7 @@ struct SyncBuilder<'graph> {
 impl<'graph> SyncBuilder<'graph> {
 	fn new(arena: &'graph Arena, passes: &Vec<FrameEvent<'_, 'graph>, &'graph Arena>) -> Self {
 		Self {
-			sync: std::iter::repeat(InProgressSync {
+			sync: std::iter::repeat_n(InProgressSync {
 				queue: InProgressDependencyInfo::default(arena),
 				cross_queue: InProgressCrossQueueSync {
 					signal: Vec::new_in(arena),
@@ -580,8 +578,7 @@ impl<'graph> SyncBuilder<'graph> {
 					wait: QueueWaitOwned::default(arena),
 					wait_barriers: InProgressDependencyInfo::default(arena),
 				},
-			})
-			.take(passes.len() + 1)
+			}, passes.len() + 1)
 			.collect_in(arena),
 			last_pass: passes
 				.iter()
@@ -808,7 +805,7 @@ impl<'temp, 'pass, 'graph> Synchronizer<'temp, 'pass, 'graph> {
 				// We're a read, let's look ahead and merge any other reads into us.
 				let mut last_read_pass = next_pass;
 				let mut subresource = usage.subresource();
-				while let Some(&(&pass, ref usage)) = usages.peek() {
+				while let Some(&(&pass, usage)) = usages.peek() {
 					let as_next = usage.as_next(prev_access);
 					// TODO: don't care about image layouts for buffers
 					if usage.is_write() || as_next.image_layout != next_prev_access.image_layout {

@@ -231,8 +231,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		unsafe {
 			let size = self
 				.get(
-					attachments
-						.get(0)
+					attachments.first()
 						.or(depth)
 						.expect("need atleast one attachment, use `empty_render_pass` otherwise")
 						.image,
@@ -274,7 +273,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		RenderPass { pass: self }
 	}
 
-	unsafe fn post_begin_render_pass(&self, y_up: bool, size: vk::Extent2D) {
+	unsafe fn post_begin_render_pass(&self, y_up: bool, size: vk::Extent2D) { unsafe {
 		let width = size.width as f32;
 		let height = size.height as f32;
 		self.device.device().cmd_set_viewport(
@@ -303,7 +302,7 @@ impl<'frame, 'graph> PassContext<'frame, 'graph> {
 		self.device
 			.device()
 			.cmd_set_scissor(self.buf, 0, &[vk::Rect2D::default().extent(size)]);
-	}
+	}}
 }
 
 fn map_attachment(pass: &mut PassContext, x: &Attachment) -> vk::RenderingAttachmentInfo<'static> {

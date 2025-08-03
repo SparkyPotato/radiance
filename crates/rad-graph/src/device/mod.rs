@@ -36,13 +36,13 @@ pub use crate::device::{
 	},
 };
 use crate::{
+	Result,
 	device::{
 		descriptor::{Descriptors, SamplerId},
 		queue::QueueData,
 		sampler::Samplers,
 		shader::ShaderRuntime,
 	},
-	Result,
 };
 
 pub mod descriptor;
@@ -58,6 +58,7 @@ struct DeviceInner {
 	rt_ext: khr::ray_tracing_pipeline::Device,
 	surface_ext: khr::surface::Instance,
 	debug_utils_ext: Option<ext::debug_utils::Device>,
+	debug_utils_messenger: Option<vk::DebugUtilsMessengerEXT>,
 	queues: Queues<QueueData>,
 	allocator: ManuallyDrop<Mutex<Allocator>>,
 	shaders: UnsafeCell<Option<ShaderRuntime>>,
@@ -179,6 +180,7 @@ impl Drop for DeviceInner {
 			self.samplers.get_mut().unwrap().cleanup(&self.device);
 			self.descriptors.cleanup(&self.device);
 			self.queues.map_ref(|x| x.destroy(&self.device));
+			if let Some(x) = self.debug_utils_messenger { ext::debug_utils::Instance::new(&self.entry, &self.instance).destroy_debug_utils_messenger(x, None); }
 
 			self.device.destroy_device(None);
 			self.instance.destroy_instance(None);

@@ -417,33 +417,33 @@ pub enum VirtualResourceType<'graph> {
 }
 
 impl<'graph> VirtualResourceType<'graph> {
-	unsafe fn buffer_mut(&mut self) -> &mut BufferData<'graph> {
+	unsafe fn buffer_mut(&mut self) -> &mut BufferData<'graph> { unsafe {
 		match self {
 			VirtualResourceType::Buffer(data) => data,
 			_ => unreachable_unchecked(),
 		}
-	}
+	}}
 
-	unsafe fn buffer(&self) -> &BufferData<'graph> {
+	unsafe fn buffer(&self) -> &BufferData<'graph> { unsafe {
 		match self {
 			VirtualResourceType::Buffer(data) => data,
 			_ => unreachable_unchecked(),
 		}
-	}
+	}}
 
-	unsafe fn image_mut(&mut self) -> &mut ImageData<'graph> {
+	unsafe fn image_mut(&mut self) -> &mut ImageData<'graph> { unsafe {
 		match self {
 			VirtualResourceType::Image(data) => data,
 			_ => unreachable_unchecked(),
 		}
-	}
+	}}
 
-	unsafe fn image(&self) -> &ImageData<'graph> {
+	unsafe fn image(&self) -> &ImageData<'graph> { unsafe {
 		match self {
 			VirtualResourceType::Image(data) => data,
 			_ => unreachable_unchecked(),
 		}
-	}
+	}}
 }
 
 impl VirtualResource for BufferHandle {
@@ -463,18 +463,18 @@ impl VirtualResource for BufferHandle {
 		})
 	}
 
-	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
+	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc { unsafe {
 		let mut d = ty.ty.buffer().desc;
 		d.persist = None;
 		d
-	}
+	}}
 
-	unsafe fn from_res(_: u32, res: &mut Resource, _: &mut Caches, _: &Device) -> Self { res.buffer().handle }
+	unsafe fn from_res(_: u32, res: &mut Resource, _: &mut Caches, _: &Device) -> Self { unsafe { res.buffer().handle }}
 
-	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData<'a>, pass: u32, usage: BufferUsageOwned<&'a Arena>) {
+	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData<'a>, pass: u32, usage: BufferUsageOwned<&'a Arena>) { unsafe {
 		let b = res.ty.buffer_mut();
 		b.usages.insert(pass, usage);
-	}
+	}}
 }
 
 impl VirtualResourceDesc for BufferDesc {
@@ -511,13 +511,13 @@ impl VirtualResource for ImageView {
 		})
 	}
 
-	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc {
+	unsafe fn desc(ty: &VirtualResourceData) -> Self::Desc { unsafe {
 		let mut d = ty.ty.image().desc;
 		d.persist = None;
 		d
-	}
+	}}
 
-	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self {
+	unsafe fn from_res(pass: u32, res: &mut Resource, caches: &mut Caches, device: &Device) -> Self { unsafe {
 		let image = res.image();
 		let usage = image.usages.get(&pass).expect("Resource was never referenced in pass");
 
@@ -559,9 +559,9 @@ impl VirtualResource for ImageView {
 				size: image.desc.size,
 			}
 		}
-	}
+	}}
 
-	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData<'a>, pass: u32, usage: ImageUsageOwned<&'a Arena>) {
+	unsafe fn add_read_usage<'a>(res: &mut VirtualResourceData<'a>, pass: u32, usage: ImageUsageOwned<&'a Arena>) { unsafe {
 		let image = res.ty.image_mut();
 		debug_assert!(
 			compatible_formats(image.desc.format, usage.format),
@@ -570,7 +570,7 @@ impl VirtualResource for ImageView {
 			usage.format
 		);
 		image.usages.insert(pass, usage);
-	}
+	}}
 }
 
 impl VirtualResourceDesc for ImageDesc {
@@ -675,7 +675,7 @@ impl VirtualResourceDesc for Res<BufferHandle> {
 	) -> VirtualResourceType<'graph> {
 		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Buffer(BufferData {
-			desc: unsafe { resources[self.id - base_id].ty.buffer_mut().desc.clone() },
+			desc: unsafe { resources[self.id - base_id].ty.buffer_mut().desc },
 			handle: BufferHandle::default(),
 			uninit: true,
 			usages: iter::once((pass, write_usage)).collect_in(arena),
@@ -693,7 +693,7 @@ impl VirtualResourceDesc for Res<ImageView> {
 	) -> VirtualResourceType<'graph> {
 		let arena = *write_usage.usages.allocator();
 		VirtualResourceType::Image(ImageData {
-			desc: unsafe { resources[self.id - base_id].ty.image_mut().desc.clone() },
+			desc: unsafe { resources[self.id - base_id].ty.image_mut().desc },
 			handle: Default::default(),
 			uninit: true,
 			usages: iter::once((pass, write_usage)).collect_in(arena),

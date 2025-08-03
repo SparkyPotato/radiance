@@ -127,7 +127,7 @@ impl FsAssetSystem {
 		let Some(ref root) = r else {
 			return;
 		};
-		let w = WalkDir::new(&root);
+		let w = WalkDir::new(root);
 
 		let new = Self {
 			root: RwLock::new(r),
