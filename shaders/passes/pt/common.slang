@@ -3,13 +3,12 @@ module common;
 import graph;
 import graph.util.rng;
 import asset;
-import asset.light;
 import passes.bsdf;
 import passes.sky;
 
 public struct PushConstants {
 	public RtInstance<NonUniform>* instances;
-	public LightTree lights;
+	public Light* lights;
 	public Camera* camera;
 	public AS as;
 	public Sampler sampler;
@@ -17,6 +16,7 @@ public struct PushConstants {
 	public Tex2D<f32> ggx_energy_compensation_lut;
 	public Rng rng;
 	public u32 samples;
+	public u32 light_count;
 	public SkySampler sky;
 }
 
@@ -61,8 +61,11 @@ public struct HitPayload {
 	public f32 p_bounce;
 	public bool specular;
 	public f32x3 b;
-	public f32x3 prev_hit_base_color;
 	public f32x3 prev_hit_norm;
 	// chit/miss -> rgen
 	public bool hit;
+}
+
+public f32 light_sample_pdf() {
+	return 1.f / f32(Constants.light_count + 1);
 }

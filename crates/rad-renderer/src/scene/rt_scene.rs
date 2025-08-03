@@ -3,19 +3,17 @@ use std::sync::Mutex;
 use ash::vk;
 use bytemuck::NoUninit;
 use rad_core::{
-	Engine,
 	asset::aref::{ARef, LARef},
+	Engine,
 };
 use rad_graph::{
 	device::ShaderInfo,
 	graph::{BufferDesc, BufferUsage, BufferUsageType, ExternalBuffer, Frame, Res},
-	resource::{AS, ASDesc, BufferHandle, GpuPtr, Resource as _},
+	resource::{ASDesc, BufferHandle, GpuPtr, Resource as _, AS},
 	sync::Shader,
 	util::compute::ComputePass,
 };
 use rad_world::{
-	TickStage,
-	World,
 	bevy_ecs::{
 		batching::BatchingStrategy,
 		component::{Component, StorageType},
@@ -26,6 +24,8 @@ use rad_world::{
 	},
 	tick::Tick,
 	transform::Transform,
+	TickStage,
+	World,
 };
 use tracing::warn;
 
@@ -35,7 +35,7 @@ use crate::{
 		mesh::{GpuVertex, RaytracingMeshView},
 	},
 	components::mesh::MeshComponent,
-	scene::{GpuScene, GpuTransform, should_scene_sync},
+	scene::{should_scene_sync, GpuScene, GpuTransform},
 	util::ResizableBuffer,
 };
 

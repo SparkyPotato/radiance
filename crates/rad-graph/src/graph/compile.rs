@@ -1,20 +1,14 @@
 use std::{alloc::Allocator, hash::BuildHasherDefault, hint::unreachable_unchecked, ops::BitOr, ptr::NonNull};
 
 use ash::vk;
-use tracing::{Level, span};
+use tracing::{span, Level};
 
 use crate::{
-	Result,
 	arena::{Arena, IteratorAlloc},
 	device::{Device, QueueWaitOwned, SyncStage},
 	graph::{
-		ArenaMap,
-		BufferLoc,
-		Frame,
-		FrameEvent,
-		ImageDesc,
-		RenderGraph,
 		virtual_resource::{
+			compatible_formats,
 			BufferData,
 			BufferUsageOwned,
 			GpuData,
@@ -23,19 +17,25 @@ use crate::{
 			ResourceLifetime,
 			VirtualResourceData,
 			VirtualResourceType,
-			compatible_formats,
 		},
+		ArenaMap,
+		BufferLoc,
+		Frame,
+		FrameEvent,
+		ImageDesc,
+		RenderGraph,
 	},
 	resource::{BufferHandle, BufferType, Subresource},
 	sync::{
+		as_next_access,
+		as_previous_access,
+		is_write_access,
 		AccessInfo,
 		GlobalBarrierAccess,
 		ImageBarrierAccess,
 		UsageType,
-		as_next_access,
-		as_previous_access,
-		is_write_access,
 	},
+	Result,
 };
 
 pub(super) struct CompiledFrame<'pass, 'graph> {
@@ -104,12 +104,14 @@ pub enum Resource<'graph> {
 }
 
 impl<'graph> Resource<'graph> {
-	pub unsafe fn data<T>(&mut self) -> (NonNull<T>, &mut DataState) { unsafe {
-		match self {
-			Resource::Data(ptr, state) => (ptr.cast(), state),
-			_ => unreachable_unchecked(),
+	pub unsafe fn data<T>(&mut self) -> (NonNull<T>, &mut DataState) {
+		unsafe {
+			match self {
+				Resource::Data(ptr, state) => (ptr.cast(), state),
+				_ => unreachable_unchecked(),
+			}
 		}
-	}}
+	}
 
 	pub unsafe fn buffer(&self) -> &BufferData<'graph> {
 		match self {
@@ -390,7 +392,12 @@ impl<'graph> ResourceAliaser<'graph> {
 						let flags = if data
 							.usages
 							.values()
-							.any(|u| u.format != vk::Format::UNDEFINED && u.format != data.desc.format) { vk::ImageCreateFlags::MUTABLE_FORMAT } else { Default::default() };
+							.any(|u| u.format != vk::Format::UNDEFINED && u.format != data.desc.format)
+						{
+							vk::ImageCreateFlags::MUTABLE_FORMAT
+						} else {
+							Default::default()
+						};
 						let desc = crate::resource::ImageDescUnnamed {
 							flags,
 							format: data.desc.format,
@@ -570,15 +577,18 @@ struct SyncBuilder<'graph> {
 impl<'graph> SyncBuilder<'graph> {
 	fn new(arena: &'graph Arena, passes: &Vec<FrameEvent<'_, 'graph>, &'graph Arena>) -> Self {
 		Self {
-			sync: std::iter::repeat_n(InProgressSync {
-				queue: InProgressDependencyInfo::default(arena),
-				cross_queue: InProgressCrossQueueSync {
-					signal: Vec::new_in(arena),
-					signal_barriers: InProgressDependencyInfo::default(arena),
-					wait: QueueWaitOwned::default(arena),
-					wait_barriers: InProgressDependencyInfo::default(arena),
+			sync: std::iter::repeat_n(
+				InProgressSync {
+					queue: InProgressDependencyInfo::default(arena),
+					cross_queue: InProgressCrossQueueSync {
+						signal: Vec::new_in(arena),
+						signal_barriers: InProgressDependencyInfo::default(arena),
+						wait: QueueWaitOwned::default(arena),
+						wait_barriers: InProgressDependencyInfo::default(arena),
+					},
 				},
-			}, passes.len() + 1)
+				passes.len() + 1,
+			)
 			.collect_in(arena),
 			last_pass: passes
 				.iter()

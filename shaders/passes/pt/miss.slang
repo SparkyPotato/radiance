@@ -12,8 +12,7 @@ void main(inout HitPayload p) {
 	f32 w = 1.f;
 	if (!p.specular) {
 		// MIS for the sky light.
-		// let p_light = light_sample_pdf() * dot(p.ray.dir, p.prev_hit_norm) / PI;
-		let p_light = 0.f;
+		let p_light = light_sample_pdf() * dot(p.ray.dir, p.prev_hit_norm) / PI;
 		w = pow_heuristic_1(p.p_bounce, p_light);
 	}
 	p.L += p.b * w * le;

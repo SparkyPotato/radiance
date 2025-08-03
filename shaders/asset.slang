@@ -95,7 +95,6 @@ public struct Material<U : Uniformity = Uniform> {
 	public OTex2D<f32x4, U> normal;
 	public OTex2D<f32x4, U> emissive;
 	public f32x3 emissive_factor;
-	public f32x3 average_emissive;
 }
 
 public struct Instance<U : Uniformity = Uniform> {

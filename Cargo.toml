@@ -79,7 +79,7 @@ quote = "1.0.37"
 thread_local = "1.1.8"
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-tracy = { package = "tracy_full", version = "1.12.0", features = ["tracing", "enable"] }
+tracy = { package = "tracy_full", version = "1.10.0", features = ["tracing", "enable"] }
 uuid = { version = "1.11.0", features = ["bytemuck", "serde", "v4"] }
 walkdir = "2.5.0"
 winit = "0.30.5"

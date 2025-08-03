@@ -1,4 +1,4 @@
-use std::{f32::consts::PI, io, usize};
+use std::{io, usize};
 
 use ash::vk;
 use bincode::{Decode, Encode};
@@ -21,7 +21,7 @@ use rad_graph::{
 };
 use static_assertions::const_assert_eq;
 use tracing::trace_span;
-use vek::{Aabb, Mat3, Vec2, Vec3};
+use vek::{Vec2, Vec3};
 
 use crate::{
 	assets::material::{Material, MaterialView},
@@ -56,75 +56,12 @@ impl BincodeAsset for Mesh {
 	const UUID: Uuid = uuid!("63d17036-5d82-4d70-a15e-103e72559abe");
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct NormalCone {
-	pub axis: Vec3<f32>,
-	pub theta_o: f32,
-	pub theta_e: f32,
-}
-
-impl NormalCone {
-	pub fn merge(self, other: Self) -> Self {
-		if self.axis == Vec3::zero() {
-			return other;
-		}
-		if other.axis == Vec3::zero() {
-			return self;
-		}
-
-		let a = self;
-		let b = other;
-
-		let theta_e = a.theta_e.min(b.theta_e);
-		let theta_d = a.axis.dot(b.axis).clamp(-1.0, 1.0).acos();
-		if PI.min(theta_d + b.theta_o) <= a.theta_o {
-			return Self {
-				axis: a.axis,
-				theta_o: a.theta_o,
-				theta_e,
-			};
-		}
-		if PI.min(theta_d + a.theta_o) <= b.theta_o {
-			return Self {
-				axis: b.axis,
-				theta_o: b.theta_o,
-				theta_e,
-			};
-		}
-		let theta_o = (a.theta_o + b.theta_o + theta_d) / 2.0;
-		if theta_o >= PI {
-			return Self {
-				axis: a.axis,
-				theta_o: PI,
-				theta_e: PI / 2.0,
-			};
-		}
-
-		let theta_r = theta_o - a.theta_o;
-		let w_r = a.axis.cross(b.axis);
-		if w_r.magnitude_squared() < 0.00001 {
-			return Self {
-				axis: a.axis,
-				theta_o: PI,
-				theta_e: PI / 2.0,
-			};
-		}
-		let axis = Mat3::rotation_3d(theta_r, w_r) * a.axis;
-
-		Self { axis, theta_o, theta_e }
-	}
-}
-
 pub struct RaytracingMeshView {
 	pub buffer: Buffer,
 	pub as_: AS,
 	pub vertex_count: u32,
 	pub tri_count: u32,
 	pub material: LARef<MaterialView>,
-	pub aabb: Aabb<f32>,
-	pub normal_average: Vec3<f32>,
-	pub normal_cone: NormalCone,
-	pub area: f32,
 }
 
 impl AssetView for RaytracingMeshView {
@@ -137,49 +74,6 @@ impl AssetView for RaytracingMeshView {
 		let name = "raytracing mesh";
 		let s = trace_span!("load raytracing mesh", name = name);
 		let _e = s.enter();
-
-		let (aabb, norm_sum) = m.vertices.iter().map(|x| (x.position, x.normal)).fold(
-			(
-				Aabb {
-					min: Vec3::broadcast(f32::INFINITY),
-					max: Vec3::broadcast(f32::NEG_INFINITY),
-				},
-				Vec3::zero(),
-			),
-			|a, b| {
-				(
-					Aabb {
-						min: Vec3::partial_min(a.0.min, b.0),
-						max: Vec3::partial_max(a.0.max, b.0),
-					},
-					a.1 + b.1,
-				)
-			},
-		);
-		let (normal_cone, area) = m.indices.chunks_exact(3).fold(
-			(
-				NormalCone {
-					axis: Vec3::zero(),
-					theta_o: 0.0,
-					theta_e: 0.0,
-				},
-				0.0,
-			),
-			|(cone, area), tri| {
-				let v1 = m.vertices[tri[0] as usize].position;
-				let v2 = m.vertices[tri[1] as usize].position;
-				let v3 = m.vertices[tri[2] as usize].position;
-				let normal = (v2 - v1).cross(v3 - v1);
-				let len = normal.magnitude();
-				let area = area + len / 2.0;
-				let c = NormalCone {
-					axis: if len < 0.0001 { Vec3::zero() } else { normal / len },
-					theta_o: 0.0,
-					theta_e: PI / 2.0,
-				};
-				(cone.merge(c), area)
-			},
-		);
 
 		let buffer = {
 			let s = trace_span!("load");
@@ -357,10 +251,6 @@ impl AssetView for RaytracingMeshView {
 				vertex_count: m.vertices.len() as _,
 				tri_count,
 				material: ARef::loaded(m.material)?,
-				aabb,
-				normal_cone,
-				normal_average: norm_sum / m.vertices.len() as f32,
-				area,
 			})
 		}
 	}

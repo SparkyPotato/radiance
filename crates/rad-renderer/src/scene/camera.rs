@@ -4,8 +4,6 @@ use rad_graph::{
 	resource::BufferHandle,
 };
 use rad_world::{
-	TickStage,
-	World,
 	bevy_ecs::{
 		query::With,
 		schedule::IntoSystemConfigs,
@@ -13,12 +11,14 @@ use rad_world::{
 	},
 	tick::Tick,
 	transform::Transform,
+	TickStage,
+	World,
 };
 use tracing::warn;
 
 use crate::{
 	components::camera::{CameraComponent, PrimaryViewComponent},
-	scene::{GpuScene, GpuTransform, should_scene_sync},
+	scene::{should_scene_sync, GpuScene, GpuTransform},
 };
 
 #[repr(C)]
@@ -72,7 +72,9 @@ impl GpuScene for CameraScene {
 		let prev = data.prev;
 		let curr = data.curr;
 		let aspect = input.aspect;
-		pass.build(move |mut pass| pass.write(buf, 0, &[GpuCamera::new(aspect, curr), GpuCamera::new(aspect, prev)]));
+		pass.build(move |mut pass| {
+			pass.write(buf, 0, &[GpuCamera::new(aspect, curr), GpuCamera::new(aspect, prev)]);
+		});
 		Self { buf, prev, curr }
 	}
 }

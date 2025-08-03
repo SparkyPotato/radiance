@@ -1,6 +1,6 @@
 #![feature(allocator_api)]
 
-use rad_core::{EngineBuilder, Module, asset::aref::AssetId};
+use rad_core::{asset::aref::AssetId, EngineBuilder, Module};
 use rad_world::WorldBuilderExt;
 pub use vek;
 
