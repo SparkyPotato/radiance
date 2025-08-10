@@ -1,10 +1,10 @@
 use rad_core::Engine;
-use rad_graph::{graph::Frame, Result};
+use rad_graph::{Result, graph::Frame};
 use rad_renderer::{
 	debug::mesh::DebugMesh,
 	mesh::{self, VisBuffer},
 	pt::{self, PathTracer},
-	scene::{camera::CameraSceneInfo, WorldRenderer},
+	scene::{WorldRenderer, camera::CameraSceneInfo},
 	sky::SkyLuts,
 	tonemap::{
 		agx::{AgXLook, AgXTonemap},
@@ -20,7 +20,7 @@ use rad_ui::{
 	egui::{CentralPanel, Context, Image, PointerButton, Sense},
 	to_texture_id,
 };
-use rad_window::{winit::event::WindowEvent, Window};
+use rad_window::{Window, winit::event::WindowEvent};
 use tracing::trace_span;
 
 use crate::{
@@ -157,13 +157,15 @@ impl Renderer {
 		self.debug_window.render(frame.device(), window, ctx, stats, pt);
 	}
 
-	pub unsafe fn destroy(self) { unsafe {
-		self.sky.destroy();
-		self.visbuffer.destroy();
-		self.pt.destroy();
-		self.exposure.destroy();
-		self.agx.destroy();
-		self.tony_mcmapface.destroy();
-		self.debug.destroy();
-	}}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			self.sky.destroy();
+			self.visbuffer.destroy();
+			self.pt.destroy();
+			self.exposure.destroy();
+			self.agx.destroy();
+			self.tony_mcmapface.destroy();
+			self.debug.destroy();
+		}
+	}
 }

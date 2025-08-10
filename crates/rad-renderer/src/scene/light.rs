@@ -1,9 +1,9 @@
 use bytemuck::NoUninit;
-use rad_core::Engine;
+use rad_core::{Engine, asset::aref::LARef};
 use rad_graph::{
 	device::ShaderInfo,
-	graph::{BufferDesc, BufferUsage, ExternalBuffer, Frame, Res},
-	resource::{BufferHandle, GpuPtr},
+	graph::{BufferDesc, BufferUsage, ExternalBuffer, Frame},
+	resource::{self, Buffer, BufferType, GpuPtr, Resource as _},
 	sync::Shader,
 	util::compute::ComputePass,
 };
@@ -20,21 +20,18 @@ use rad_world::{
 	tick::Tick,
 	transform::Transform,
 };
+use rustc_hash::FxHashMap;
 use vek::Vec3;
 
 use crate::{
-	components::light::{LightComponent, LightType},
+	assets::mesh::{RaytracingMeshView, Vertex},
+	components::light::LightComponent,
 	scene::{GpuScene, rt_scene::KnownRtInstances, should_scene_sync},
-	util::ResizableBuffer,
+	sort::GpuSorter,
 };
 
 #[derive(Copy, Clone)]
-pub struct LightScene {
-	pub buf: Res<BufferHandle>,
-	pub count: u32,
-	pub sun_radiance: Vec3<f32>,
-	pub sun_dir: Vec3<f32>,
-}
+pub struct LightScene {}
 
 impl GpuScene for LightScene {
 	type In = ();
@@ -46,57 +43,76 @@ impl GpuScene for LightScene {
 	}
 
 	fn update<'pass>(frame: &mut Frame<'pass, '_>, data: &'pass mut LightSceneData, _: &Self::In) -> Self {
-		let buf = data
-			.buf
-			.reserve(
-				frame,
-				"resize light scene",
-				std::mem::size_of::<GpuLight>() as u64 * data.light_count as u64,
+		for mesh in data.mesh_build_queue.drain(..) {
+			let n = mesh.tri_count;
+			let buffer = Buffer::create(
+				frame.device(),
+				resource::BufferDesc {
+					name: "mesh light tree",
+					size: (32 * (n - 1)) as _,
+					ty: BufferType::Gpu,
+				},
 			)
 			.unwrap();
+			let handle = buffer.handle();
+			data.mesh_bvhs.insert(mesh.clone(), buffer);
 
-		let mut pass = frame.pass("update light scene");
-		let updates = pass.resource(
-			BufferDesc::upload(std::mem::size_of::<GpuLightUpdate>() as u64 * data.updates.len() as u64),
-			BufferUsage::read(Shader::Compute),
-		);
-		let buf = match buf {
-			Some(buf) => {
-				pass.reference(buf, BufferUsage::write(Shader::Compute));
-				buf
-			},
-			None => pass.resource(
-				ExternalBuffer::new(&data.buf.inner),
-				BufferUsage::write(Shader::Compute),
-			),
-		};
-		let count = data.light_count;
-		let sun_radiance = data.sun_radiance;
-		let sun_dir = data.sun_dir;
-		pass.build(move |mut pass| {
-			let count = data.updates.len() as u32;
-			pass.write_iter(updates, 0, data.updates.drain(..));
-			let lights = pass.get(buf).ptr();
-			let updates = pass.get(updates).ptr();
-			data.update.dispatch(
-				&mut pass,
-				&PushConstants {
-					lights,
-					updates,
-					count,
-					_pad: 0,
-				},
-				count.div_ceil(64),
-				1,
-				1,
-			);
-		});
-		Self {
-			buf,
-			count,
-			sun_radiance,
-			sun_dir,
+			frame.start_region("build mesh light tree");
+
+			let mut push = BvhPushConstants {
+				bvh_nodes: handle.ptr(),
+				atomic: GpuPtr::null(),
+				cluster_indices: GpuPtr::null(),
+				codes: GpuPtr::null(),
+				parent_ids: GpuPtr::null(),
+				vertices: mesh.vertices(),
+				indices: mesh.indices(),
+				root_bounds: [mesh.aabb.min, mesh.aabb.max],
+				tri_count: n,
+				_pad: 0,
+			};
+
+			let mut pass = frame.pass("sfc");
+			let mut buf = |size: u64| {
+				pass.resource(
+					BufferDesc::gpu(size * std::mem::size_of::<u32>() as u64),
+					BufferUsage::write(Shader::Compute),
+				)
+			};
+			let atomic = buf(1);
+			let cluster_indices = buf(n as u64);
+			let codes = buf(n as u64 * 2);
+			let parent_ids = buf(n as u64);
+			let sfc = &data.sfc;
+			pass.build(move |mut pass| {
+				push.atomic = pass.get(atomic).ptr();
+				push.cluster_indices = pass.get(cluster_indices).ptr();
+				push.codes = pass.get(codes).ptr();
+				push.parent_ids = pass.get(parent_ids).ptr();
+				sfc.dispatch(&mut pass, &push, n.div_ceil(128), 1, 1);
+			});
+
+			let (codes, cluster_indices) = data.sorter.sort(frame, codes, cluster_indices, n);
+
+			let mut pass = frame.pass("build");
+			pass.resource(ExternalBuffer { handle }, BufferUsage::write(Shader::Compute));
+			pass.reference(atomic, BufferUsage::read_write(Shader::Compute));
+			pass.reference(cluster_indices, BufferUsage::read_write(Shader::Compute));
+			pass.reference(codes, BufferUsage::read(Shader::Compute));
+			pass.reference(parent_ids, BufferUsage::read_write(Shader::Compute));
+			let build = &data.build;
+			pass.build(move |mut pass| {
+				push.atomic = pass.get(atomic).ptr();
+				push.cluster_indices = pass.get(cluster_indices).ptr();
+				push.codes = pass.get(codes).ptr();
+				push.parent_ids = pass.get(parent_ids).ptr();
+				build.dispatch(&mut pass, &push, n.div_ceil(32), 1, 1);
+			});
+
+			frame.end_region();
 		}
+
+		Self {}
 	}
 }
 
@@ -125,21 +141,26 @@ struct GpuLightUpdate {
 
 // TODO: global the pipeline.
 pub struct LightSceneData {
-	update: ComputePass<PushConstants>,
-	buf: ResizableBuffer,
-	updates: Vec<GpuLightUpdate>,
-	light_count: u32,
-	sun_radiance: Vec3<f32>,
-	sun_dir: Vec3<f32>,
+	sfc: ComputePass<BvhPushConstants>,
+	build: ComputePass<BvhPushConstants>,
+	sorter: GpuSorter,
+	mesh_bvhs: FxHashMap<LARef<RaytracingMeshView>, Buffer>,
+	mesh_build_queue: Vec<LARef<RaytracingMeshView>>,
 }
 impl Resource for LightSceneData {}
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
-struct PushConstants {
-	lights: GpuPtr<GpuLight>,
-	updates: GpuPtr<GpuLightUpdate>,
-	count: u32,
+struct BvhPushConstants {
+	bvh_nodes: GpuPtr<()>,
+	atomic: GpuPtr<u32>,
+	cluster_indices: GpuPtr<u32>,
+	codes: GpuPtr<u64>,
+	parent_ids: GpuPtr<u32>,
+	vertices: GpuPtr<Vertex>,
+	indices: GpuPtr<u32>,
+	root_bounds: [Vec3<f32>; 2],
+	tri_count: u32,
 	_pad: u32,
 }
 
@@ -147,57 +168,30 @@ impl LightSceneData {
 	fn new() -> Self {
 		let dev = Engine::get().global();
 		Self {
-			update: ComputePass::new(
+			sfc: ComputePass::new(
 				dev,
 				ShaderInfo {
-					shader: "asset.scene.update_light",
+					shader: "scene.light_bvh.hploc_sfc",
 					spec: &[],
 				},
 			)
 			.unwrap(),
-			buf: ResizableBuffer::new(dev, "light scene", std::mem::size_of::<GpuLight>() as u64 * 1000).unwrap(),
-			updates: Vec::new(),
-			light_count: 0,
-			sun_radiance: Vec3::zero(),
-			sun_dir: -Vec3::unit_z(),
-		}
-	}
-
-	fn push_light(&mut self, index: u32, t: &Transform, l: &LightComponent) {
-		self.updates.push(GpuLightUpdate {
-			index,
-			light: GpuLight {
-				ty: match l.ty {
-					LightType::Point => GpuLightType::Point,
-					LightType::Directional => GpuLightType::Directional,
+			build: ComputePass::with_wave_32(
+				dev,
+				ShaderInfo {
+					shader: "scene.light_bvh.hploc_build",
+					spec: &[],
 				},
-				radiance: l.radiance,
-				pos_or_dir: match l.ty {
-					LightType::Point => t.position,
-					LightType::Directional => t.rotation * -Vec3::unit_z(),
-				},
-			},
-		});
-
-		if matches!(l.ty, LightType::Directional) {
-			self.sun_radiance = l.radiance;
-			self.sun_dir = t.rotation * -Vec3::unit_z();
+			)
+			.unwrap(),
+			sorter: GpuSorter::new(dev).unwrap(),
+			mesh_bvhs: FxHashMap::default(),
+			mesh_build_queue: Vec::new(),
 		}
-	}
-
-	fn push_emissive(&mut self, index: u32, mesh_index: u32) {
-		self.updates.push(GpuLightUpdate {
-			index,
-			light: GpuLight {
-				ty: GpuLightType::Emissive,
-				radiance: Vec3::new(f32::from_bits(mesh_index), 0.0, 0.0),
-				pos_or_dir: Vec3::zero(),
-			},
-		});
 	}
 }
 
-struct KnownLight(Vec<u32>);
+struct KnownLight;
 impl Component for KnownLight {
 	const STORAGE_TYPE: StorageType = StorageType::Table;
 }
@@ -208,25 +202,14 @@ fn sync_lights(
 	unknown_punctual: Query<(Entity, &Transform, &LightComponent), Without<KnownLight>>,
 	unknown_emissive: Query<(Entity, &KnownRtInstances), Without<KnownLight>>,
 ) {
-	for (e, t, l) in unknown_punctual.iter() {
-		let index = r.light_count;
-		r.light_count += 1;
-		r.push_light(index, t, l);
-		cmd.entity(e).insert(KnownLight(vec![index]));
-	}
 	for (e, m) in unknown_emissive.iter() {
-		let m = m.0.iter().map(|(i, v)| (i, &v.material));
-		let mut inner = Vec::new();
-		for (&i, m) in m {
-			if m.emissive_factor == Vec3::zero() {
+		for (_, mesh) in m.0.iter() {
+			if mesh.material.emissive_factor == Vec3::zero() {
 				continue;
 			}
 
-			let index = r.light_count;
-			r.light_count += 1;
-			r.push_emissive(index, i);
-			inner.push(index);
+			r.mesh_build_queue.push(mesh.clone());
 		}
-		cmd.entity(e).insert(KnownLight(inner));
+		cmd.entity(e).insert(KnownLight);
 	}
 }

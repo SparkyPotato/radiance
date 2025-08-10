@@ -28,22 +28,28 @@ public static const Scope DEFAULT_SCOPE = Scope.Queue;
 public static const Sem DEFAULT_SEM = Sem.Relaxed;
 public static const Loc DEFAULT_LOC = Loc.None;
 
-__generic<T> public extension T* {
-	T load(constexpr Scope sc = DEFAULT_SCOPE) {
-		return spirv_asm {
-			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
-			result:$$T = OpLoad $this NonPrivatePointer | MakePointerAvailable | Aligned $sc $alignof(T);
-		};
-	}
+public T load<T>(T* ptr, u32 offset, constexpr Scope sc = DEFAULT_SCOPE) {
+	return load(ptr + offset, sc);
+}
 
-	void store(T value, constexpr Scope sc = DEFAULT_SCOPE) {
-		spirv_asm {
-			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
-			OpStore $this $value NonPrivatePointer | MakePointerVisible | Aligned $sc $alignof(T);
-		};
-	}
+public T load<T>(T* ptr, constexpr Scope sc = DEFAULT_SCOPE) {
+	return spirv_asm {
+		OpExtension "SPV_KHR_vulkan_memory_model";
+		OpCapability VulkanMemoryModelKHR;
+		result:$$T = OpLoad $ptr NonPrivatePointer | MakePointerAvailable | Aligned $sc $alignof(T);
+	};
+}
+
+public void store<T>(T* ptr, u32 offset, T value, constexpr Scope sc = DEFAULT_SCOPE) {
+	return store(ptr + offset, value, sc);
+}
+
+public void store<T>(T* ptr, T value, constexpr Scope sc = DEFAULT_SCOPE) {
+	spirv_asm {
+		OpExtension "SPV_KHR_vulkan_memory_model";
+		OpCapability VulkanMemoryModelKHR;
+		OpStore $ptr $value NonPrivatePointer | MakePointerVisible | Aligned $sc $alignof(T);
+	};
 }
 
 public T atomic_load<T : __BuiltinArithmeticType>(__ref T ptr, constexpr Scope sc = DEFAULT_SCOPE,
@@ -52,7 +58,7 @@ public T atomic_load<T : __BuiltinArithmeticType>(__ref T ptr, constexpr Scope s
 	if (__isUnsignedInt<T>() || __isInt<T>() || __isFloat<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			OpCapability Int64Atomics;
 			result:$$T = OpAtomicLoad &ptr $sc $sem;
 		};
@@ -68,13 +74,13 @@ public T atomic_add<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	if (__isFloat<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			result:$$T = OpAtomicFAddEXT &dest $sc $sem $value;
 		};
 	} else if (__isUnsignedInt<T>() || __isInt<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			OpCapability Int64Atomics;
 			result:$$T = OpAtomicIAdd &dest $sc $sem $value;
 		};
@@ -111,13 +117,13 @@ public T atomic_sub<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 		let neg = -value;
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			result:$$T = OpAtomicFAddEXT &dest $sc $sem $neg;
 		};
 	} else if (__isUnsignedInt<T>() || __isInt<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			OpCapability Int64Atomics;
 			result:$$T = OpAtomicISub &dest $sc $sem $value;
 		};
@@ -143,22 +149,51 @@ public T atomic_max<T : __BuiltinArithmeticType>(__ref T dest, T value, constexp
 	if (__isFloat<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			result:$$T = OpAtomicFMaxEXT &dest $sc $sem $value;
 		};
 	} else if (__isUnsignedInt<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			OpCapability Int64Atomics;
 			result:$$T = OpAtomicUMax &dest $sc $sem $value;
 		};
 	} else if (__isInt<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			OpCapability Int64Atomics;
 			result:$$T = OpAtomicSMax &dest $sc $sem $value
+		};
+	} else {
+		spirv_asm { "<invalid atomic_max>" };
+	}
+	return {};
+}
+
+public T atomic_min<T : __BuiltinArithmeticType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+												 constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	u32 sem = loc | se;
+	if (__isFloat<T>()) {
+		return spirv_asm {
+			OpExtension "SPV_KHR_vulkan_memory_model";
+			OpCapability VulkanMemoryModelKHR;
+			result:$$T = OpAtomicFMinEXT &dest $sc $sem $value;
+		};
+	} else if (__isUnsignedInt<T>()) {
+		return spirv_asm {
+			OpExtension "SPV_KHR_vulkan_memory_model";
+			OpCapability VulkanMemoryModelKHR;
+			OpCapability Int64Atomics;
+			result:$$T = OpAtomicUMin &dest $sc $sem $value;
+		};
+	} else if (__isInt<T>()) {
+		return spirv_asm {
+			OpExtension "SPV_KHR_vulkan_memory_model";
+			OpCapability VulkanMemoryModelKHR;
+			OpCapability Int64Atomics;
+			result:$$T = OpAtomicSMin &dest $sc $sem $value
 		};
 	} else {
 		spirv_asm { "<invalid atomic_max>" };
@@ -181,7 +216,7 @@ public T atomic_or<T : __BuiltinIntegerType>(__ref T dest, T value, constexpr Sc
 	if (__isUnsignedInt<T>() || __isInt<T>()) {
 		return spirv_asm {
 			OpExtension "SPV_KHR_vulkan_memory_model";
-            OpCapability VulkanMemoryModelKHR;
+			OpCapability VulkanMemoryModelKHR;
 			OpCapability Int64Atomics;
 			result:$$T = OpAtomicOr &dest $sc $sem $value;
 		};
@@ -200,11 +235,27 @@ public T wave_atomic_or<T : __BuiltinIntegerType>(__ref T dest, T value, constex
 	return WaveReadLaneFirst(ret);
 }
 
+public T atomic_exchange<T : __BuiltinIntegerType>(__ref T dest, T value, constexpr Scope sc = DEFAULT_SCOPE,
+												   constexpr Loc loc = DEFAULT_LOC, constexpr Sem se = DEFAULT_SEM) {
+	u32 sem = loc | se;
+	if (__isUnsignedInt<T>() || __isInt<T>()) {
+		return spirv_asm {
+			OpExtension "SPV_KHR_vulkan_memory_model";
+			OpCapability VulkanMemoryModelKHR;
+			OpCapability Int64Atomics;
+			result:$$T = OpAtomicExchange &dest $sc $sem $value;
+		};
+	} else {
+		spirv_asm { "<invalid atomic_or>" };
+	}
+	return {};
+}
+
 public void barrier(constexpr Scope sc, constexpr Loc loc, constexpr Sem se) {
 	u32 sem = loc | se;
 	spirv_asm {
 		OpExtension "SPV_KHR_vulkan_memory_model";
-        OpCapability VulkanMemoryModelKHR;
+		OpCapability VulkanMemoryModelKHR;
 		OpMemoryBarrier $sc $sem;
 	};
 }
@@ -220,6 +271,10 @@ public void sync_barrier(constexpr Scope esc, constexpr Scope sc, constexpr Loc 
 
 public void workgroup_sync_barrier() {
 	sync_barrier(Scope.Workgroup, Scope.Workgroup, Loc.Workgroup, Sem.AcqRel);
+}
+
+public void workgroup_wave_sync_barrier() {
+	sync_barrier(Scope.Subgroup, Scope.Workgroup, Loc.Workgroup, Sem.AcqRel);
 }
 
 public void mem_sync_barrier() {

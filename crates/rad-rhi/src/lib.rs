@@ -1,6 +1,6 @@
 use rad_core::{EngineBuilder, Module};
 use rad_graph::{
-	ash::{ext, nv, vk},
+	ash::{ext, vk},
 	device::Device,
 };
 
@@ -14,7 +14,6 @@ impl Module for RhiModule {
 				.device_extensions(&[
 					ext::mesh_shader::NAME,
 					ext::shader_image_atomic_int64::NAME,
-					nv::ray_tracing_validation::NAME,
 					c"VK_KHR_shader_relaxed_extended_instruction",
 				])
 				.features(
@@ -49,10 +48,6 @@ impl Module for RhiModule {
 						.push_next(
 							&mut vk::PhysicalDeviceShaderImageAtomicInt64FeaturesEXT::default()
 								.shader_image_int64_atomics(true),
-						)
-						.push_next(
-							&mut vk::PhysicalDeviceRayTracingValidationFeaturesNV::default()
-								.ray_tracing_validation(true),
 						),
 				)
 				.build()

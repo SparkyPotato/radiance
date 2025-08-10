@@ -88,12 +88,12 @@ impl Device {
 	}
 
 	#[track_caller]
-	pub fn compute_pipeline(&self, shader: ShaderInfo) -> Result<ComputePipeline> {
+	pub fn compute_pipeline(&self, shader: ShaderInfo, force_wave_32: bool) -> Result<ComputePipeline> {
 		unsafe {
 			(*self.inner.shaders.get())
 				.as_ref()
 				.unwrap()
-				.create_compute_pipeline(shader)
+				.create_compute_pipeline(shader, force_wave_32)
 		}
 	}
 
@@ -180,7 +180,9 @@ impl Drop for DeviceInner {
 			self.samplers.get_mut().unwrap().cleanup(&self.device);
 			self.descriptors.cleanup(&self.device);
 			self.queues.map_ref(|x| x.destroy(&self.device));
-			if let Some(x) = self.debug_utils_messenger { ext::debug_utils::Instance::new(&self.entry, &self.instance).destroy_debug_utils_messenger(x, None); }
+			if let Some(x) = self.debug_utils_messenger {
+				ext::debug_utils::Instance::new(&self.entry, &self.instance).destroy_debug_utils_messenger(x, None);
+			}
 
 			self.device.destroy_device(None);
 			self.instance.destroy_instance(None);

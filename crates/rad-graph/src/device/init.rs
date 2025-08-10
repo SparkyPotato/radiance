@@ -42,7 +42,6 @@ pub struct DeviceBuilder<'a> {
 	pub features: vk::PhysicalDeviceFeatures2<'a>,
 }
 
-
 impl<'a> DeviceBuilder<'a> {
 	pub fn layers(mut self, layers: &'a [&'static CStr]) -> Self {
 		self.layers = layers;
@@ -377,6 +376,7 @@ impl<'a> DeviceBuilder<'a> {
 				let mut found_rt = false;
 				let mut found_rq = false;
 				let mut found_maint5 = false;
+				let mut found_swapchain_maintenance1 = false;
 				while !next.is_null() {
 					unsafe {
 						match (*next).ty {
@@ -386,6 +386,9 @@ impl<'a> DeviceBuilder<'a> {
 							vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::STRUCTURE_TYPE => found_rt = true,
 							vk::PhysicalDeviceRayQueryFeaturesKHR::STRUCTURE_TYPE => found_rq = true,
 							vk::PhysicalDeviceMaintenance5FeaturesKHR::STRUCTURE_TYPE => found_maint5 = true,
+							vk::PhysicalDeviceSwapchainMaintenance1FeaturesEXT::STRUCTURE_TYPE => {
+								found_swapchain_maintenance1 = true
+							},
 							_ => {},
 						}
 						next = (*next).next;
@@ -422,7 +425,11 @@ impl<'a> DeviceBuilder<'a> {
 				} else {
 					features
 				};
-				features = features.push_next(&mut swapchain_maintenance1_features)
+				features = if !found_swapchain_maintenance1 {
+					features.push_next(&mut swapchain_maintenance1_features)
+				} else {
+					features
+				};
 			}
 
 			let mut next = features.p_next as *mut VkStructHeader;
@@ -450,6 +457,8 @@ impl<'a> DeviceBuilder<'a> {
 							let features13 = &mut *(next as *mut vk::PhysicalDeviceVulkan13Features);
 							features13.synchronization2 = true as _;
 							features13.maintenance4 = true as _;
+							features13.subgroup_size_control = true as _;
+							features13.compute_full_subgroups = true as _;
 						},
 						vk::PhysicalDeviceAccelerationStructureFeaturesKHR::STRUCTURE_TYPE => {
 							let as_features = &mut *(next as *mut vk::PhysicalDeviceAccelerationStructureFeaturesKHR);
@@ -594,8 +603,8 @@ impl<'a> DeviceBuilder<'a> {
 							.get_physical_device_surface_support(device, i as u32, surface)
 							.ok()?
 					} {
-						return None;
-					}
+					return None;
+				}
 				graphics = Some(i as u32);
 			} else if family.queue_flags.contains(vk::QueueFlags::COMPUTE) {
 				compute = Some(i as u32);
@@ -624,12 +633,14 @@ impl Device {
 	/// `window` and `display` must outlive the returned `SurfaceKHR`.
 	pub unsafe fn create_surface(
 		&self, window: &dyn HasWindowHandle, display: &dyn HasDisplayHandle,
-	) -> Result<vk::SurfaceKHR> { unsafe {
-		DeviceBuilder::create_surface_inner(
-			&self.inner.entry,
-			&self.inner.instance,
-			window.window_handle().unwrap().as_raw(),
-			display.display_handle().unwrap().as_raw(),
-		)
-	}}
+	) -> Result<vk::SurfaceKHR> {
+		unsafe {
+			DeviceBuilder::create_surface_inner(
+				&self.inner.entry,
+				&self.inner.instance,
+				window.window_handle().unwrap().as_raw(),
+				display.display_handle().unwrap().as_raw(),
+			)
+		}
+	}
 }

@@ -15,8 +15,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-	asset::{Asset, AssetView},
 	Engine,
+	asset::{Asset, AssetView},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Pod, Zeroable, Encode, Decode, Reflect)]
@@ -73,9 +73,7 @@ impl<T> Display for AssetId<T> {
 }
 
 impl<T> Default for AssetId<T> {
-    fn default() -> Self {
-        Self::new()
-    }
+	fn default() -> Self { Self::new() }
 }
 
 impl<T> AssetId<T> {
@@ -113,6 +111,22 @@ impl<T: AssetView> ARef<T> {
 	pub fn id(&self) -> AssetId<<T::Base as Asset>::Root> { self.inner.id }
 }
 
+impl<T: AssetView> Clone for ARef<T> {
+	fn clone(&self) -> Self {
+		Self {
+			inner: self.inner.clone(),
+		}
+	}
+}
+impl<T: AssetView> PartialEq for ARef<T> {
+	fn eq(&self, other: &Self) -> bool { Arc::ptr_eq(&self.inner, &other.inner) }
+}
+impl<T: AssetView> Eq for ARef<T> {}
+
+impl<T: AssetView> Hash for ARef<T> {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) { Arc::as_ptr(&self.inner).hash(state); }
+}
+
 /// A loaded asset view
 pub struct LARef<T: AssetView> {
 	inner: ARef<T>,
@@ -123,6 +137,23 @@ impl<T: AssetView> LARef<T> {
 
 	pub fn id(&self) -> AssetId<<T::Base as Asset>::Root> { self.inner.id() }
 }
+
+impl<T: AssetView> Clone for LARef<T> {
+	fn clone(&self) -> Self {
+		Self {
+			inner: self.inner.clone(),
+		}
+	}
+}
+
+impl<T: AssetView> Hash for LARef<T> {
+	fn hash<H: std::hash::Hasher>(&self, state: &mut H) { self.inner.hash(state); }
+}
+
+impl<T: AssetView> PartialEq for LARef<T> {
+	fn eq(&self, other: &Self) -> bool { self.inner == other.inner }
+}
+impl<T: AssetView> Eq for LARef<T> {}
 
 impl<T: AssetView> Deref for LARef<T> {
 	type Target = T;
@@ -136,9 +167,7 @@ pub struct AssetCache<T: AssetView> {
 }
 
 impl<T: AssetView> Default for AssetCache<T> {
-    fn default() -> Self {
-        Self::new()
-    }
+	fn default() -> Self { Self::new() }
 }
 
 impl<T: AssetView> AssetCache<T> {

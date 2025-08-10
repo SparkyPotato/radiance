@@ -16,15 +16,18 @@ use rad_core::{
 use rad_graph::{
 	cmd::CommandPool,
 	device::{Compute, Device, QueueWait},
-	resource::{AS, ASDesc, Buffer, BufferDesc, BufferType, Resource},
+	resource::{AS, ASDesc, Buffer, BufferDesc, BufferType, GpuPtr, Resource},
 	sync::{GlobalBarrier, UsageType, get_global_barrier},
 };
 use static_assertions::const_assert_eq;
 use tracing::trace_span;
-use vek::{Vec2, Vec3};
+use vek::{Aabb, Vec2, Vec3};
 
 use crate::{
-	assets::material::{Material, MaterialView},
+	assets::{
+		material::{Material, MaterialView},
+		mesh::virtual_mesh::aabb_default,
+	},
 	util::SliceWriter,
 };
 
@@ -62,6 +65,13 @@ pub struct RaytracingMeshView {
 	pub vertex_count: u32,
 	pub tri_count: u32,
 	pub material: LARef<MaterialView>,
+	pub aabb: Aabb<f32>,
+}
+
+impl RaytracingMeshView {
+	pub fn vertices(&self) -> GpuPtr<Vertex> { self.buffer.ptr() }
+
+	pub fn indices(&self) -> GpuPtr<u32> { self.vertices().offset(self.vertex_count as _).cast() }
 }
 
 impl AssetView for RaytracingMeshView {
@@ -245,12 +255,18 @@ impl AssetView for RaytracingMeshView {
 				as_
 			};
 
+			let aabb = m.vertices.iter().fold(aabb_default(), |aabb, v| Aabb {
+				min: Vec3::partial_min(aabb.min, v.position),
+				max: Vec3::partial_max(aabb.max, v.position),
+			});
+
 			Ok(Self {
 				buffer,
 				as_,
 				vertex_count: m.vertices.len() as _,
 				tri_count,
 				material: ARef::loaded(m.material)?,
+				aabb,
 			})
 		}
 	}

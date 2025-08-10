@@ -1,26 +1,26 @@
 use std::{
 	marker::PhantomData,
 	sync::{
-		atomic::{AtomicBool, AtomicU64, Ordering},
 		Arc,
 		Mutex,
+		atomic::{AtomicBool, AtomicU64, Ordering},
 	},
 	time::Duration,
 };
 
 use ash::vk::{self, Handle, TaggedStructure};
 use notify_debouncer_full::{
-	new_debouncer,
-	notify::{EventKind, RecommendedWatcher, RecursiveMode},
 	DebounceEventResult,
 	Debouncer,
 	FileIdMap,
+	new_debouncer,
+	notify::{EventKind, RecommendedWatcher, RecursiveMode},
 };
 
 use crate::{
-	device::{shader::compile::ShaderBuilder, Device},
-	resource::{Buffer, BufferDesc, BufferType, Resource},
 	Error,
+	device::{Device, shader::compile::ShaderBuilder},
+	resource::{Buffer, BufferDesc, BufferType, Resource},
 };
 
 mod compile;
@@ -233,11 +233,13 @@ impl GraphicsPipeline {
 		}
 	}
 
-	pub unsafe fn destroy(self) { unsafe {
-		self.1
-			.device()
-			.destroy_pipeline(vk::Pipeline::from_raw(self.0.swap(0, Ordering::Relaxed)), None);
-	}}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			self.1
+				.device()
+				.destroy_pipeline(vk::Pipeline::from_raw(self.0.swap(0, Ordering::Relaxed)), None);
+		}
+	}
 }
 
 impl ComputePipeline {
@@ -251,11 +253,13 @@ impl ComputePipeline {
 		}
 	}
 
-	pub unsafe fn destroy(self) { unsafe {
-		self.1
-			.device()
-			.destroy_pipeline(vk::Pipeline::from_raw(self.0.swap(0, Ordering::Relaxed)), None);
-	}}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			self.1
+				.device()
+				.destroy_pipeline(vk::Pipeline::from_raw(self.0.swap(0, Ordering::Relaxed)), None);
+		}
+	}
 }
 
 impl RtPipeline {
@@ -287,17 +291,19 @@ impl RtPipeline {
 		}
 	}
 
-	pub unsafe fn destroy(self) { unsafe {
-		let mut m = self.0.lock().unwrap();
-		self.1.device().destroy_pipeline(m.pipeline, None);
-		m.pipeline = vk::Pipeline::null();
-		std::mem::take(&mut m.sbt).destroy(&self.1);
-	}}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			let mut m = self.0.lock().unwrap();
+			self.1.device().destroy_pipeline(m.pipeline, None);
+			m.pipeline = vk::Pipeline::null();
+			std::mem::take(&mut m.sbt).destroy(&self.1);
+		}
+	}
 }
 
 enum PipelineData {
 	Graphics(GraphicsPipelineDescOwned, Arc<AtomicU64>),
-	Compute(ShaderInfo, Arc<AtomicU64>),
+	Compute(ShaderInfo, bool, Arc<AtomicU64>),
 	Rt(RtPipelineDescOwned, Arc<Mutex<RtPipelineData>>),
 }
 
@@ -373,21 +379,28 @@ impl PipelineCompiler {
 	}
 
 	#[track_caller]
-	fn compile_compute(&mut self, shader: ShaderInfo) -> Result<vk::Pipeline, Result<Error, String>> {
+	fn compile_compute(
+		&mut self, shader: ShaderInfo, force_wave_32: bool,
+	) -> Result<vk::Pipeline, Result<Error, String>> {
 		unsafe {
 			let (code, stage) = self.get_shader(shader).map_err(Err)?;
+			let mut info = vk::ShaderModuleCreateInfo::default().code(&code);
+			let mut stage = vk::PipelineShaderStageCreateInfo::default()
+				.stage(stage)
+				.name(c"main")
+				.push_next(&mut info);
+			let mut req_size =
+				vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo::default().required_subgroup_size(32);
+			if force_wave_32 {
+				stage = stage.push_next(&mut req_size);
+			}
 			self.device
 				.device()
 				.create_compute_pipelines(
 					vk::PipelineCache::null(),
 					&[vk::ComputePipelineCreateInfo::default()
 						.layout(self.device.layout())
-						.stage(
-							vk::PipelineShaderStageCreateInfo::default()
-								.stage(stage)
-								.name(c"main")
-								.push_next(&mut vk::ShaderModuleCreateInfo::default().code(&code)),
-						)],
+						.stage(stage)],
 					None,
 				)
 				.map(|x| x[0])
@@ -600,14 +613,15 @@ impl RuntimeShared {
 	}
 
 	#[track_caller]
-	fn create_compute_pipeline(&mut self, shader: ShaderInfo) -> crate::Result<ComputePipeline> {
-		let p = match self.compiler.compile_compute(shader) {
+	fn create_compute_pipeline(&mut self, shader: ShaderInfo, force_wave_32: bool) -> crate::Result<ComputePipeline> {
+		let p = match self.compiler.compile_compute(shader, force_wave_32) {
 			Ok(p) => p,
 			Err(Ok(e)) => return Err(e),
 			Err(Err(e)) => return Err(e.into()),
 		};
 		let inner = Arc::new(AtomicU64::new(p.as_raw()));
-		self.pipelines.push(PipelineData::Compute(shader, inner.clone()));
+		self.pipelines
+			.push(PipelineData::Compute(shader, force_wave_32, inner.clone()));
 
 		Ok(ComputePipeline(inner, self.compiler.device.clone()))
 	}
@@ -638,9 +652,11 @@ impl RuntimeShared {
 				PipelineData::Graphics(desc, out) => compiler.compile_graphics(desc).map(|x| {
 					out.swap(x.as_raw(), Ordering::Relaxed);
 				}),
-				PipelineData::Compute(shader, out) => compiler.compile_compute(*shader).map(|x| {
-					out.swap(x.as_raw(), Ordering::Relaxed);
-				}),
+				PipelineData::Compute(shader, force_wave_32, out) => {
+					compiler.compile_compute(*shader, *force_wave_32).map(|x| {
+						out.swap(x.as_raw(), Ordering::Relaxed);
+					})
+				},
 				PipelineData::Rt(desc, out) => compiler.compile_rt(desc).map(|data| {
 					*out.lock().unwrap() = data;
 				}),
@@ -721,8 +737,11 @@ impl ShaderRuntime {
 	}
 
 	#[track_caller]
-	pub fn create_compute_pipeline(&self, shader: ShaderInfo) -> crate::Result<ComputePipeline> {
-		self.shared.lock().unwrap().create_compute_pipeline(shader)
+	pub fn create_compute_pipeline(&self, shader: ShaderInfo, force_wave_32: bool) -> crate::Result<ComputePipeline> {
+		self.shared
+			.lock()
+			.unwrap()
+			.create_compute_pipeline(shader, force_wave_32)
 	}
 
 	#[track_caller]

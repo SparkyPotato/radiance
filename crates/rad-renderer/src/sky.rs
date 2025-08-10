@@ -1,11 +1,12 @@
 use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
+	Result,
 	device::{
-		descriptor::{ImageId, SamplerId},
 		Device,
 		SamplerDesc,
 		ShaderInfo,
+		descriptor::{ImageId, SamplerId},
 	},
 	graph::{Frame, ImageDesc, ImageUsage, PassBuilder, PassContext, Persist, Res},
 	resource::ImageView,
@@ -14,11 +15,10 @@ use rad_graph::{
 		pass::{Attachment, Load},
 		render::FullscreenPass,
 	},
-	Result,
 };
 use vek::Vec3;
 
-use crate::scene::{camera::CameraScene, light::LightScene, WorldRenderer};
+use crate::scene::{WorldRenderer, camera::CameraScene};
 
 pub struct SkyLuts {
 	transmittance: FullscreenPass<()>,
@@ -119,7 +119,6 @@ impl SkyLuts {
 
 	pub fn run<'pass>(&'pass self, frame: &mut Frame<'pass, '_>, rend: &mut WorldRenderer<'pass, '_>) -> SkySampler {
 		let camera = rend.get::<CameraScene>(frame);
-		let lights = rend.get::<LightScene>(frame);
 
 		frame.start_region("sky");
 		let format = Self::FORMAT;
@@ -210,7 +209,8 @@ impl SkyLuts {
 					scattering,
 					sampler: self.sampler,
 					cam_pos: camera.curr.transform.position,
-					sun_dir: -lights.sun_dir,
+					// TODO: fix
+					sun_dir: Vec3::zero(),
 				},
 				&[Attachment {
 					image: lut,
@@ -226,14 +226,17 @@ impl SkyLuts {
 			lut,
 			transmittance: trans,
 			sampler: self.sampler,
-			sun_dir: -lights.sun_dir,
-			sun_radiance: lights.sun_radiance,
+			// TODO: fix
+			sun_dir: Vec3::zero(),
+			sun_radiance: Vec3::zero(),
 		}
 	}
 
-	pub unsafe fn destroy(self) { unsafe {
-		self.transmittance.destroy();
-		self.scattering.destroy();
-		self.eval.destroy();
-	}}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			self.transmittance.destroy();
+			self.scattering.destroy();
+			self.eval.destroy();
+		}
+	}
 }

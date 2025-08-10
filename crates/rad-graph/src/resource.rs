@@ -3,19 +3,19 @@ use std::{ffi::CString, hash::Hash, marker::PhantomData, ops::BitOr, ptr::NonNul
 use ash::vk;
 use bytemuck::{NoUninit, Pod, Zeroable};
 use gpu_allocator::{
-	vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
 	MemoryLocation,
+	vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
 };
 
 use crate::{
-	device::{
-		descriptor::{ImageId, StorageImageId},
-		Device,
-		Queues,
-	},
-	graph,
 	Error,
 	Result,
+	device::{
+		Device,
+		Queues,
+		descriptor::{ImageId, StorageImageId},
+	},
+	graph,
 };
 
 pub trait ToNamed {
@@ -85,6 +85,8 @@ unsafe impl<T: NoUninit> Zeroable for GpuPtr<T> {}
 unsafe impl<T: NoUninit> Pod for GpuPtr<T> {}
 impl<T: NoUninit> GpuPtr<T> {
 	pub fn null() -> Self { Self(0, PhantomData) }
+
+	pub fn cast<U: NoUninit>(self) -> GpuPtr<U> { GpuPtr(self.0, PhantomData) }
 
 	pub fn addr(self) -> u64 { self.0 }
 
@@ -245,10 +247,12 @@ impl Resource for Buffer {
 		}
 	}
 
-	unsafe fn destroy(self, device: &Device) { unsafe {
-		let _ = device.allocator().free(self.alloc);
-		device.device().destroy_buffer(self.inner, None);
-	}}
+	unsafe fn destroy(self, device: &Device) {
+		unsafe {
+			let _ = device.allocator().free(self.alloc);
+			device.device().destroy_buffer(self.inner, None);
+		}
+	}
 }
 
 /// A description for an image.
@@ -395,10 +399,12 @@ impl Resource for Image {
 		}
 	}
 
-	unsafe fn destroy(self, device: &Device) { unsafe {
-		let _ = device.allocator().free(self.alloc);
-		device.device().destroy_image(self.inner, None);
-	}}
+	unsafe fn destroy(self, device: &Device) {
+		unsafe {
+			let _ = device.allocator().free(self.alloc);
+			device.device().destroy_image(self.inner, None);
+		}
+	}
 }
 
 /// The usage of an image view.
@@ -652,8 +658,10 @@ impl Resource for AS {
 		}
 	}
 
-	unsafe fn destroy(self, device: &Device) { unsafe {
-		device.as_ext().destroy_acceleration_structure(self.inner, None);
-		self.buffer.destroy(device);
-	}}
+	unsafe fn destroy(self, device: &Device) {
+		unsafe {
+			device.as_ext().destroy_acceleration_structure(self.inner, None);
+			self.buffer.destroy(device);
+		}
+	}
 }

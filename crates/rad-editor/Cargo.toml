@@ -16,6 +16,7 @@ bytemuck = { workspace = true }
 egui_plot = { workspace = true }
 gltf = { workspace = true }
 parking_lot = { workspace = true }
+rand = { workspace = true }
 rayon = { workspace = true }
 rfd = { workspace = true }
 rustc-hash = { workspace = true }

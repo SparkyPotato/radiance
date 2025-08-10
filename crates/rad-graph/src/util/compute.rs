@@ -3,10 +3,10 @@ use std::marker::PhantomData;
 use bytemuck::NoUninit;
 
 use crate::{
+	Result,
 	device::{ComputePipeline, Device, RtPipeline, RtPipelineDesc, ShaderInfo},
 	graph::{PassContext, Res},
 	resource::BufferHandle,
-	Result,
 };
 
 pub struct ComputePass<T> {
@@ -17,7 +17,14 @@ pub struct ComputePass<T> {
 impl<T: NoUninit> ComputePass<T> {
 	pub fn new(device: &Device, shader: ShaderInfo) -> Result<Self> {
 		Ok(Self {
-			pipeline: device.compute_pipeline(shader)?,
+			pipeline: device.compute_pipeline(shader, false)?,
+			_phantom: PhantomData,
+		})
+	}
+
+	pub fn with_wave_32(device: &Device, shader: ShaderInfo) -> Result<Self> {
+		Ok(Self {
+			pipeline: device.compute_pipeline(shader, true)?,
 			_phantom: PhantomData,
 		})
 	}
@@ -37,7 +44,11 @@ impl<T: NoUninit> ComputePass<T> {
 		pass.dispatch_indirect(buf, offset);
 	}
 
-	pub unsafe fn destroy(self) { unsafe { self.pipeline.destroy(); }}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			self.pipeline.destroy();
+		}
+	}
 }
 
 pub struct RtPass<T> {
@@ -69,5 +80,9 @@ impl<T: NoUninit> RtPass<T> {
 		self.pipeline.trace_rays_indirect(pass.buf, buf + offset as u64);
 	}
 
-	pub unsafe fn destroy(self) { unsafe { self.pipeline.destroy(); }}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			self.pipeline.destroy();
+		}
+	}
 }

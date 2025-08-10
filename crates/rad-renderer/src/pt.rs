@@ -1,30 +1,30 @@
 use ash::vk;
 use bytemuck::NoUninit;
 use rad_graph::{
+	Result,
 	device::{
-		descriptor::{ImageId, SamplerId, StorageImageId},
 		Device,
 		RtPipelineDesc,
 		RtShaderGroup,
 		SamplerDesc,
 		ShaderInfo,
+		descriptor::{ImageId, SamplerId, StorageImageId},
 	},
 	graph::{BufferUsage, Frame, ImageDesc, ImageUsage, Persist, Res},
 	resource::{GpuPtr, ImageView},
 	sync::Shader,
 	util::compute::RtPass,
-	Result,
 };
-use rand::{thread_rng, RngCore};
+use rand::{RngCore, thread_rng};
 use vek::{Vec2, Vec3};
 
 use crate::{
 	assets::image::{ImageAsset, ImageAssetView},
 	scene::{
+		WorldRenderer,
 		camera::{CameraScene, GpuCamera},
 		light::{GpuLight, LightScene},
 		rt_scene::{GpuRtInstance, RtScene},
-		WorldRenderer,
 	},
 	sky::{GpuSkySampler, SkySampler},
 };
@@ -120,7 +120,7 @@ impl PathTracer {
 	) -> (Res<ImageView>, u32) {
 		let rt = rend.get::<RtScene>(frame);
 		let camera = rend.get::<CameraScene>(frame);
-		let lights = rend.get::<LightScene>(frame);
+		rend.get::<LightScene>(frame);
 
 		let mut pass = frame.pass("path trace");
 
@@ -128,7 +128,6 @@ impl PathTracer {
 		pass.reference(rt.instances, read);
 		pass.reference(rt.as_, read);
 		pass.reference(camera.buf, read);
-		pass.reference(lights.buf, read);
 		info.sky.reference(&mut pass, Shader::RayTracing);
 
 		let out = pass.resource(
@@ -148,9 +147,10 @@ impl PathTracer {
 		);
 
 		if let Some(c) = self.cached
-			&& c != info.size {
-				self.samples = 0;
-			}
+			&& c != info.size
+		{
+			self.samples = 0;
+		}
 		self.cached = Some(info.size);
 
 		let s = self.samples;
@@ -162,8 +162,6 @@ impl PathTracer {
 			let out = pass.get(out);
 			let as_ = pass.get(rt.as_).ptr().offset(rt.as_offset);
 			let instances = pass.get(rt.instances).ptr();
-			let light_count = lights.count;
-			let lights = pass.get(lights.buf).ptr();
 			let camera = pass.get(camera.buf).ptr();
 			let sky = info.sky.to_gpu(&mut pass);
 
@@ -171,7 +169,7 @@ impl PathTracer {
 				&mut pass,
 				&PushConstants {
 					instances,
-					lights,
+					lights: GpuPtr::null(),
 					camera,
 					as_,
 					sampler: self.sampler,
@@ -179,7 +177,7 @@ impl PathTracer {
 					ggx_e_lut: self.ggx_e_lut.image_id(),
 					seed: thread_rng().next_u32(),
 					samples: self.samples,
-					light_count,
+					light_count: 0,
 					sky,
 					_pad: 0,
 				},
@@ -194,5 +192,9 @@ impl PathTracer {
 		(out, s)
 	}
 
-	pub unsafe fn destroy(self) { unsafe { self.pass.destroy(); }}
+	pub unsafe fn destroy(self) {
+		unsafe {
+			self.pass.destroy();
+		}
+	}
 }

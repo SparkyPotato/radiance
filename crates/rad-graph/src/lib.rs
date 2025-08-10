@@ -1,6 +1,5 @@
 #![feature(allocator_api)]
 #![feature(btreemap_alloc)]
-#![feature(let_chains)]
 #![feature(ptr_metadata)]
 #![feature(slice_ptr_get)]
 
@@ -10,7 +9,7 @@ use std::{
 };
 
 pub use ash;
-pub use gpu_allocator::{vulkan as alloc, MemoryLocation};
+pub use gpu_allocator::{MemoryLocation, vulkan as alloc};
 
 pub mod arena;
 pub mod cmd;

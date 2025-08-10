@@ -2,10 +2,10 @@ use std::ops::Deref;
 
 use rad_core::{Engine, EngineBuilder, Module};
 use rad_graph::{
+	Result,
 	ash::{khr, vk},
 	device::{Device, Graphics, Queues, SyncPoint},
 	graph::SwapchainImage,
-	Result,
 };
 pub use winit;
 use winit::{
@@ -87,7 +87,7 @@ pub struct Window {
 	old_swapchain: OldSwapchain,
 	swapchain: vk::SwapchainKHR,
 	images: Vec<vk::Image>,
-	sync: [(vk::Semaphore, vk::Semaphore, vk::Fence); 3],
+	sync: [(vk::Semaphore, vk::Semaphore, vk::Fence); 2],
 	curr_frame: usize,
 	format: vk::Format,
 	size: vk::Extent2D,
@@ -129,7 +129,6 @@ impl Window {
 			sync: [
 				(semaphore(device)?, semaphore(device)?, fence(device)?),
 				(semaphore(device)?, semaphore(device)?, fence(device)?),
-				(semaphore(device)?, semaphore(device)?, fence(device)?),
 			],
 			curr_frame: 0,
 			format: vk::Format::UNDEFINED,
@@ -164,7 +163,7 @@ impl Window {
 				self.remake_requested = false;
 			}
 
-			self.curr_frame = (self.curr_frame + 1) % 3;
+			self.curr_frame ^= 1;
 			let device: &Device = Engine::get().global();
 			let (available, rendered, fence) = self.sync[self.curr_frame];
 			device.device().wait_for_fences(&[fence], true, u64::MAX)?;

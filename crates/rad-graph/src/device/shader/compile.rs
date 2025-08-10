@@ -4,7 +4,7 @@ use ash::{util::read_spv, vk};
 use bytemuck::cast_slice;
 use rspirv::{
 	binary::Assemble,
-	dr::{load_words, Builder, Operand},
+	dr::{Builder, Operand, load_words},
 	spirv::{AddressingModel, Capability, ExecutionModel, MemoryModel},
 };
 use slang::{
@@ -59,7 +59,7 @@ impl ShaderBuilder {
 					.force_glsl_scalar_buffer_layout(true)])
 				.compiler_option_entries(&mut [
 					CompilerOptionEntry::new(CompilerOptionName::EMIT_SPIRV_DIRECTLY, 1),
-					// CompilerOptionEntry::new(CompilerOptionName::DEBUG_INFORMATION, 2),
+					CompilerOptionEntry::new(CompilerOptionName::DEBUG_INFORMATION, 2),
 					CompilerOptionEntry::new(CompilerOptionName::OPTIMIZATION, 2),
 				])
 				.file_system(fs)
