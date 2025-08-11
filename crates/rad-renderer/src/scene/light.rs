@@ -24,7 +24,10 @@ use rustc_hash::FxHashMap;
 use vek::Vec3;
 
 use crate::{
-	assets::mesh::{RaytracingMeshView, Vertex},
+	assets::{
+		material::GpuMaterial,
+		mesh::{RaytracingMeshView, Vertex},
+	},
 	components::light::LightComponent,
 	scene::{GpuScene, rt_scene::KnownRtInstances, should_scene_sync},
 	sort::GpuSorter,
@@ -49,7 +52,7 @@ impl GpuScene for LightScene {
 				frame.device(),
 				resource::BufferDesc {
 					name: "mesh light tree",
-					size: (32 * (n - 1)) as _,
+					size: (48 * (n - 1)) as _,
 					ty: BufferType::Gpu,
 				},
 			)
@@ -60,13 +63,15 @@ impl GpuScene for LightScene {
 			frame.start_region("build mesh light tree");
 
 			let mut push = BvhPushConstants {
-				bvh_nodes: handle.ptr(),
+				tree_nodes: handle.ptr(),
+				bvh_nodes: GpuPtr::null(),
 				atomic: GpuPtr::null(),
 				cluster_indices: GpuPtr::null(),
 				codes: GpuPtr::null(),
 				parent_ids: GpuPtr::null(),
 				vertices: mesh.vertices(),
 				indices: mesh.indices(),
+				material: mesh.material.gpu_ptr(),
 				root_bounds: [mesh.aabb.min, mesh.aabb.max],
 				tri_count: n,
 				_pad: 0,
@@ -95,13 +100,18 @@ impl GpuScene for LightScene {
 			let (codes, cluster_indices) = data.sorter.sort(frame, codes, cluster_indices, n);
 
 			let mut pass = frame.pass("build");
-			pass.resource(ExternalBuffer { handle }, BufferUsage::write(Shader::Compute));
+			let bvh_nodes = pass.resource(
+				BufferDesc::gpu((88 * (n - 1)) as _),
+				BufferUsage::read_write(Shader::Compute),
+			);
+			pass.resource(ExternalBuffer { handle }, BufferUsage::read_write(Shader::Compute));
 			pass.reference(atomic, BufferUsage::read_write(Shader::Compute));
 			pass.reference(cluster_indices, BufferUsage::read_write(Shader::Compute));
 			pass.reference(codes, BufferUsage::read(Shader::Compute));
 			pass.reference(parent_ids, BufferUsage::read_write(Shader::Compute));
 			let build = &data.build;
 			pass.build(move |mut pass| {
+				push.bvh_nodes = pass.get(bvh_nodes).ptr();
 				push.atomic = pass.get(atomic).ptr();
 				push.cluster_indices = pass.get(cluster_indices).ptr();
 				push.codes = pass.get(codes).ptr();
@@ -152,6 +162,7 @@ impl Resource for LightSceneData {}
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
 struct BvhPushConstants {
+	tree_nodes: GpuPtr<()>,
 	bvh_nodes: GpuPtr<()>,
 	atomic: GpuPtr<u32>,
 	cluster_indices: GpuPtr<u32>,
@@ -159,6 +170,7 @@ struct BvhPushConstants {
 	parent_ids: GpuPtr<u32>,
 	vertices: GpuPtr<Vertex>,
 	indices: GpuPtr<u32>,
+	material: GpuPtr<GpuMaterial>,
 	root_bounds: [Vec3<f32>; 2],
 	tri_count: u32,
 	_pad: u32,
@@ -171,7 +183,7 @@ impl LightSceneData {
 			sfc: ComputePass::new(
 				dev,
 				ShaderInfo {
-					shader: "scene.light_bvh.hploc_sfc",
+					shader: "scene.light_tree_build.hploc_sfc",
 					spec: &[],
 				},
 			)
@@ -179,7 +191,7 @@ impl LightSceneData {
 			build: ComputePass::with_wave_32(
 				dev,
 				ShaderInfo {
-					shader: "scene.light_bvh.hploc_build",
+					shader: "scene.light_tree_build.hploc_build",
 					spec: &[],
 				},
 			)

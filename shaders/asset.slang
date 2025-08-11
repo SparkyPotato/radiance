@@ -41,22 +41,7 @@ public struct Transform {
 	}
 
 	public f32x4x4 rot_mat() {
-		let x = this.rotation.x;
-		let y = this.rotation.y;
-		let z = this.rotation.z;
-		let w = this.rotation.w;
-		let x2 = x * x;
-		let y2 = y * y;
-		let z2 = z * z;
-
-		// clang-format off
-		return {
-			1.f - 2.f * (y2 + z2), 2.f * (x * y - z * w), 2.f * (x * z + y * w), 0.f,
-			2.f * (x * y + z * w), 1.f - 2.f * (x2 + z2), 2.f * (y * z - x * w), 0.f,
-			2.f * (x * z - y * w), 2.f * (y * z + x * w), 1.f - 2.f * (x2 + y2), 0.f,
-			0.f                  , 0.f                  , 0.f                  , 1.f
-		};
-		// clang-format on
+		return quat_to_mat(this.rotation);
 	}
 
 	public f32x4x4 scale_mat() {
