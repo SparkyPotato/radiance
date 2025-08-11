@@ -256,12 +256,13 @@ u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, in
 		}
 	}
 
-	let compacted_data_dst = WavePrefixCountBits(new_cluster_id != INVALID_ID);
+	let is_valid = new_cluster_id != INVALID_ID;
+	let compacted_data_dst = WavePrefixCountBits(is_valid);
+	let valid_lanes = WaveActiveCountBits(is_valid);
 	CachedNeighbors[compacted_data_dst] = wid;
 	workgroup_wave_sync_barrier();
 
-	let valid_lanes = WaveActiveBallot(new_cluster_id != INVALID_ID).x;
-	let compacted_id = find_nth_bit(valid_lanes, wid);
+	let compacted_id = CachedNeighbors[wid];
 	data = NodeData.wave_shuffle(data, compacted_id);
 	cluster_index = WaveShuffle(new_cluster_id, compacted_id);
 	cluster_index = compacted_id != INVALID_ID ? cluster_index : INVALID_ID;
