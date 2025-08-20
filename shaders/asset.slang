@@ -8,11 +8,6 @@ public struct Vertex {
 	public f32x2 uv;
 }
 
-public struct Aabb {
-	public f32x3 center;
-	public f32x3 half_extent;
-}
-
 public struct BvhNode {
 	public Aabb aabbs[8];
 	public f32x4 lod_bounds[8];

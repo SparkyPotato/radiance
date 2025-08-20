@@ -240,15 +240,16 @@ impl<'a> DeviceBuilder<'a> {
 			) -> u32 {
 				unsafe {
 					let cb = &*cb;
+					let bt = std::backtrace::Backtrace::force_capture();
 					match severity {
 						vk::DebugUtilsMessageSeverityFlagsEXT::WARNING => warn!(
-							"[{}][{}] {}",
+							"[{}][{}] {}\n{bt:#?}",
 							cb.message_id_number,
 							CStr::from_ptr(cb.p_message_id_name).to_str().unwrap(),
 							CStr::from_ptr(cb.p_message).to_str().unwrap(),
 						),
 						_ => error!(
-							"[{}][{}] {}",
+							"[{}][{}] {}\n{bt:#?}",
 							cb.message_id_number,
 							CStr::from_ptr(cb.p_message_id_name).to_str().unwrap(),
 							CStr::from_ptr(cb.p_message).to_str().unwrap(),

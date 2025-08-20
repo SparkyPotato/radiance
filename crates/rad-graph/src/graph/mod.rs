@@ -9,7 +9,7 @@ use std::{
 use ash::vk;
 use hashbrown::HashMap;
 use rustc_hash::FxHasher;
-use tracing::{span, Level};
+use tracing::{Level, span};
 
 pub use crate::graph::{
 	cache::Persist,
@@ -31,6 +31,7 @@ pub use crate::graph::{
 	},
 };
 use crate::{
+	Result,
 	arena::{Arena, IteratorAlloc, ToOwnedAlloc},
 	device::Device,
 	graph::{
@@ -41,7 +42,6 @@ use crate::{
 		virtual_resource::{ResourceLifetime, VirtualResourceData},
 	},
 	resource::{Buffer, Image, ImageView},
-	Result,
 };
 
 mod cache;
@@ -238,6 +238,7 @@ impl Frame<'_, '_> {
 					pass: i as u32,
 					resource_map: &mut resource_map,
 					caches: &mut graph.caches,
+					deleter: &mut graph.deleter,
 				}),
 			}
 		}
@@ -348,9 +349,12 @@ pub struct PassContext<'frame, 'graph> {
 	pass: u32,
 	resource_map: &'frame mut ResourceMap<'graph>,
 	caches: &'frame mut Caches,
+	deleter: &'frame mut Deleter,
 }
 
 impl<'frame, 'graph> PassContext<'frame, 'graph> {
+	pub fn delete(&mut self, res: impl Deletable) { self.deleter.push(res); }
+
 	pub fn desc<T: VirtualResource>(&mut self, res: Res<T>) -> T::Desc {
 		let id = res.id.wrapping_sub(self.base_id);
 		unsafe {

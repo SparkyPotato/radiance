@@ -1,126 +1,26 @@
-module light_bvh;
+module light_tree_build;
 
 import graph;
 import graph.util.color;
 
-import asset;
 import light_tree;
+import light_tree_build_interface;
+
+extern struct Interface : LightTreeBuildInterface;
 
 // [H-PLOC: Hierarchical Parallel Locally-Ordered Clustering for Bounding Volume Hierarchy Construction]
 // https://gist.github.com/natevm/6618402427ad6466bf555d67602adfa8
 // With several fixes and modified for light trees.
 
-f32x4 cone_union(f32x4 a, f32x4 b) {
-	let a_len = length(a.xyz);
-	let b_len = length(b.xyz);
-	if (a_len < 0.00001f || b_len < 0.00001f)
-		return f32x4(a.xyz, PI);
-
-	let theta_d = acos(clamp(dot(a.xyz, b.xyz), -1.f, 1.f));
-	if (min(theta_d + b.w, PI) <= a.w)
-		return a;
-	if (min(theta_d + a.w, PI) <= b.w)
-		return b;
-	let theta_o = (a.w + b.w + theta_d) * 0.5f;
-	if (theta_o >= PI)
-		return f32x4(a.xyz, PI);
-
-	let theta_r = theta_o - a.w;
-	let w_r = cross(a.xyz, b.xyz);
-	if (dot(w_r, w_r) < 0.00001f)
-		return f32x4(a.xyz, PI);
-
-	let axis = mul(quat_to_mat(axis_angle_to_quat(w_r, theta_r)), f32x4(a.xyz, 0.f)).xyz;
-	return f32x4(axis, theta_o);
-}
-
-struct NodeData {
-	f32x3 aabb_min;
-	f32x3 aabb_max;
-	f32x4 position;	 // variance is w
-	f32x3 power;
-	f32x3 normal_average;
-	f32x4 cone;
-
-	__init(f32x3 vertices[3], Material* material) {
-		let e1 = vertices[1] - vertices[0];
-		let e2 = vertices[2] - vertices[0];
-		let area2 = cross(e1, e2);
-		let normal = normalize(area2);
-		this.aabb_min = min3(vertices[0], vertices[1], vertices[2]);
-		this.aabb_max = max3(vertices[0], vertices[1], vertices[2]);
-		this.position.xyz = (vertices[0] + vertices[1] + vertices[2]) / 3.f;
-		let e1_l = length(e1);
-		let e2_l = length(e2);
-		this.position.w = (e1_l * e1_l + e2_l * e2_l - dot(e1, e2)) / 18.f;
-		this.power = material->emissive_factor * length(area2) * 0.5f * PI;
-		this.normal_average = normal * 0.5f;
-		this.cone = f32x4(normal, 0.f);
-	}
-
-	__init(NodeData left, NodeData right) {
-		let w_left = luminance_rec709(left.power) / luminance_rec709(left.power + right.power);
-		let w_right = 1.f - w_left;
-		this.aabb_min = min(left.aabb_min, right.aabb_min);
-		this.aabb_max = max(left.aabb_max, right.aabb_max);
-		this.position = left.position * w_left + right.position * w_right;
-		let pos_diff = left.position.xyz - right.position.xyz;
-		this.position.w += w_left * w_right * dot(pos_diff, pos_diff);
-		this.power = left.power + right.power;
-		this.normal_average = left.normal_average * w_left + right.normal_average * w_right;
-		this.cone = cone_union(left.cone, right.cone);
-	}
-
-	static NodeData wave_shuffle(NodeData data, u32 wid) {
-		NodeData ret;
-		ret.aabb_min = WaveShuffle(data.aabb_min, wid);
-		ret.aabb_max = WaveShuffle(data.aabb_max, wid);
-		ret.position = WaveShuffle(data.position, wid);
-		ret.power = WaveShuffle(data.power, wid);
-		ret.normal_average = WaveShuffle(data.normal_average, wid);
-		ret.cone = WaveShuffle(data.cone, wid);
-		return ret;
-	}
-}
-
-struct TempBvhNode {
-	NodeData data;
-	// LSB is if is inner node.
-	u32 L;
-	// LSB is if is inner node.
-	u32 R;
-
-	__init(u32 left, u32 right, NodeData data) {
-		this.data = data;
-		this.L = left;
-		this.R = right;
-	}
-
-	LightTreeNode to_light_tree() {
-		LightTreeNode ret;
-		ret.light.position = this.data.position.xyz;
-		ret.light.variance = this.data.position.w;
-		let sg = average_direction_to_sg_axis(this.data.normal_average);
-		ret.light.intensity = power_to_intensity(this.data.power, sg.w);
-		ret.light.axis = sg.xyz * sg.w;
-		ret.L = this.L;
-		ret.R = this.R;
-		return ret;
-	}
-}
-
 struct PushConstants {
-	LightTreeNode* tree_nodes;
+	Interface build;
 	TempBvhNode* bvh_nodes;
 	u32* atomic;
 	u32* cluster_indices;
 	u64* codes;
 	u32* parent_ids;
-	Vertex* vertices;
-	u32x3* indices;
-	Material* material;
 	f32x3 root_bounds[2];
-	u32 tri_count;
+	u32 prim_count;
 }
 
 [vk::push_constant]
@@ -132,12 +32,12 @@ static const u32 INVALID_ID = -1;
 [numthreads(128, 1, 1)]
 void hploc_sfc(u32x3 tid: SV_DispatchThreadID) {
 	let id = tid.x;
-	if (id >= Constants.tri_count)
+	if (id >= Constants.prim_count)
 		return;
 	if (id == 0)
 		*Constants.atomic = 0;
 
-	var center = load_triangle_center(id);
+	var center = Constants.build.load_leaf_center(id);
 	center = (center - Constants.root_bounds[0]) / (Constants.root_bounds[1] - Constants.root_bounds[0]);
 
 	Constants.codes[id] = morton64_encode(center);
@@ -150,7 +50,7 @@ void hploc_sfc(u32x3 tid: SV_DispatchThreadID) {
 [numthreads(32, 1, 1)]
 void hploc_build(u32x3 tid: SV_DispatchThreadID) {
 	var i = tid.x;
-	var N = Constants.tri_count;
+	var N = Constants.prim_count;
 	var L = i;
 	var R = i;
 	var lane_active = i < N;
@@ -178,7 +78,7 @@ void hploc_build(u32x3 tid: SV_DispatchThreadID) {
 
 		let size = R - L + 1;
 		let final = lane_active && size == N;
-		var wave_mask = WaveActiveBallot((lane_active && (size > 16)) || final).x;
+		var wave_mask = WaveActiveBallot((lane_active && size > 16) || final).x;
 		while (wave_mask != 0) {
 			let lane_id = firstbitlow(wave_mask);
 			ploc_merge(lane_id, L, R, split, final);
@@ -198,20 +98,21 @@ void ploc_merge(u32 lane_id, u32 L, u32 R, u32 split, bool final) {
 	var cluster_index = INVALID_ID;
 	let num_left = load_cluster_indices(l_start, l_end, cluster_index, 0);
 	let num_right = load_cluster_indices(r_start, r_end, cluster_index, num_left);
-	var num_prims = num_left + num_right;
+	let num_prims = num_left + num_right;
 
 	NodeData data;
-	data.aabb_min = f32x3(1.0 / 0.0);
-	data.aabb_max = f32x3(-1.0 / 0.0);
+	data.aabb_min = f32x3(FLT_MAX);
+	data.aabb_max = f32x3(-FLT_MAX);
 	if (cluster_index != INVALID_ID) {
 		data = load_node_data(cluster_index);
 	}
 
 	let threshold = WaveShuffle(final, lane_id) ? 1 : 16;
-	while (num_prims > threshold) {
-		num_prims = merge_clusters_to_create_bvh_node(num_prims, cluster_index, data);
+	var prims_left = num_prims;
+	while (prims_left > threshold) {
+		prims_left = merge_clusters_to_create_bvh_node(prims_left, cluster_index, data);
 	}
-	store_cluster_indices(num_left + num_right, cluster_index, l_start);
+	store_cluster_indices(num_prims, cluster_index, l_start);
 }
 
 u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, inout NodeData data) {
@@ -236,37 +137,39 @@ u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, in
 		allocated_count = atomic_add(*Constants.atomic, append_count);
 	allocated_count = WaveReadLaneFirst(allocated_count);
 
-	let base_node_offset = (Constants.tri_count - 1) - (append_count + allocated_count);
+	let base_node_offset = (Constants.prim_count - 1) - (append_count + allocated_count);
 	let bvh_index_prefix = WavePrefixCountBits(lane_is_creating);
 
-	var new_cluster_id = INVALID_ID;
+	var new_cluster_index = INVALID_ID;
 	if (lane_has_cluster) {
-		var new_cluster_id = cluster_index;
+		new_cluster_index = cluster_index;
 		if (symmetric_match_found) {
 			if (lane_is_creating) {
 				let bvh_index = base_node_offset + bvh_index_prefix;
 				data = NodeData(left_data, right_data);
+				new_cluster_index = (bvh_index << 1) | 1;
+
 				let bvh_node = TempBvhNode(left_cluster, right_cluster, data);
 				store(Constants.bvh_nodes, bvh_index, bvh_node, Scope.Queue);
-				Constants.tree_nodes[bvh_index] = bvh_node.to_light_tree();
-				new_cluster_id = (bvh_index << 1) | 1;
+				Constants.build.store_node(bvh_index, bvh_node);
 			} else {
-				new_cluster_id = INVALID_ID;
+				new_cluster_index = INVALID_ID;
 			}
 		}
 	}
 
-	let is_valid = new_cluster_id != INVALID_ID;
-	let compacted_data_dst = WavePrefixCountBits(is_valid);
-	let valid_lanes = WaveActiveCountBits(is_valid);
-	CachedNeighbors[compacted_data_dst] = wid;
+	CachedNeighbors[wid] = 0;
 	workgroup_wave_sync_barrier();
 
-	let compacted_id = CachedNeighbors[wid];
-	data = NodeData.wave_shuffle(data, compacted_id);
-	cluster_index = WaveShuffle(new_cluster_id, compacted_id);
-	cluster_index = compacted_id != INVALID_ID ? cluster_index : INVALID_ID;
-	return countbits(valid_lanes);
+	let is_lane_valid = new_cluster_index != INVALID_ID;
+	let compacted_data_dst = WavePrefixCountBits(is_lane_valid);
+	atomic_max(CachedNeighbors[compacted_data_dst], wid, Scope.Subgroup, Loc.Workgroup);
+	workgroup_wave_sync_barrier();
+
+	let compacted_data_src = CachedNeighbors[wid];
+	data = NodeData.wave_shuffle(data, compacted_data_src);
+	cluster_index = WaveShuffle(new_cluster_index, compacted_data_src);
+	return WaveActiveCountBits(is_lane_valid);
 }
 
 groupshared u32 CachedNeighbors[32];
@@ -289,9 +192,9 @@ u32 find_nearest_neighbor(u32 prim_count, NodeData data) {
 		let us_to_neighbor = new_area_i | encode_relative_offset(wid, neighbor);
 		let neighbor_to_us = new_area_i | encode_relative_offset(neighbor, wid);
 		min_area_index = min(min_area_index, us_to_neighbor);
-		atomic_min(CachedNeighbors[neighbor], neighbor_to_us, Scope.Workgroup);
+		atomic_min(CachedNeighbors[neighbor], neighbor_to_us, Scope.Subgroup, Loc.Workgroup);
 	}
-	atomic_min(CachedNeighbors[wid], min_area_index, Scope.Workgroup);
+	atomic_min(CachedNeighbors[wid], min_area_index, Scope.Subgroup, Loc.Workgroup);
 	workgroup_wave_sync_barrier();
 
 	return CachedNeighbors[wid];
@@ -391,39 +294,11 @@ u32 find_parent_id(i32 a, i32 b, u32 n) {
 		return a - 1;
 }
 
-u32 find_nth_bit(u32 mask, u32 n) {
-	var count = 0;
-	for (u32 i = 0; i < 32; i++) {
-		if ((mask & (1 << i)) != 0) {
-			if (count == n)
-				return i;
-			count++;
-		}
-	}
-	return INVALID_ID;
-}
-
-void load_triangle(u32 prim, out f32x3 v[3]) {
-	let tri = Constants.indices[prim];
-	v[0] = Constants.vertices[tri.x].position;
-	v[1] = Constants.vertices[tri.y].position;
-	v[2] = Constants.vertices[tri.z].position;
-}
-
-f32x3 load_triangle_center(u32 prim) {
-	f32x3 v[3];
-	load_triangle(prim, v);
-	return (v[0] + v[1] + v[2]) / 3.f;
-}
-
 NodeData load_node_data(u32 cluster) {
 	let is_bvh_node = (cluster & 1) == 1;
 	let index = cluster >> 1;
-	if (is_bvh_node) {
+	if (is_bvh_node)
 		return load(Constants.bvh_nodes, index, Scope.Queue).data;
-	} else {
-		f32x3 v[3];
-		load_triangle(index, v);
-		return NodeData(v, Constants.material);
-	}
+	else
+		return Constants.build.load_leaf(index);
 }

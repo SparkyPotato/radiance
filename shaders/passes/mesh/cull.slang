@@ -215,18 +215,6 @@ f32x4 normalize_plane(f32x4 p) {
 
 public extern static const bool EARLY = false;
 
-vector<T, N> min8<T : __BuiltinFloatingPointType, let N : int>(vector<T, N> p0, vector<T, N> p1, vector<T, N> p2,
-															   vector<T, N> p3, vector<T, N> p4, vector<T, N> p5,
-															   vector<T, N> p6, vector<T, N> p7) {
-	return min(p0, min(p1, min(p2, min(p3, min(p4, min(p5, min(p6, p7)))))));
-}
-
-vector<T, N> max8<T : __BuiltinFloatingPointType, let N : int>(vector<T, N> p0, vector<T, N> p1, vector<T, N> p2,
-															   vector<T, N> p3, vector<T, N> p4, vector<T, N> p5,
-															   vector<T, N> p6, vector<T, N> p7) {
-	return max(p0, max(p1, max(p2, max(p3, max(p4, max(p5, max(p6, p7)))))));
-}
-
 public struct ScreenAabb {
 	public f32x3 min;
 	public f32x3 max;

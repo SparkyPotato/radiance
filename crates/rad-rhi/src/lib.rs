@@ -14,6 +14,7 @@ impl Module for RhiModule {
 				.device_extensions(&[
 					ext::mesh_shader::NAME,
 					ext::shader_image_atomic_int64::NAME,
+					// rad_graph::ash::nv::ray_tracing_validation::NAME,
 					c"VK_KHR_shader_relaxed_extended_instruction",
 				])
 				.features(
