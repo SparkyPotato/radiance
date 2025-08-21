@@ -3,8 +3,10 @@ module gen;
 import graph;
 import graph.util.color;
 import graph.util.rng;
+
 import asset;
 import passes.bsdf;
+
 import common;
 
 Ray primary_ray(inout Rng rng, u32x2 pix) {

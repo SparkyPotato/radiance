@@ -149,9 +149,10 @@ u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, in
 				data = NodeData(left_data, right_data);
 				new_cluster_index = (bvh_index << 1) | 1;
 
-				let bvh_node = TempBvhNode(left_cluster, right_cluster, data);
+				let bvh_node = TempBvhNode(data, left_cluster, right_cluster);
+				let node = LightTreeNode(left_data, right_data, left_cluster, right_cluster);
 				store(Constants.bvh_nodes, bvh_index, bvh_node, Scope.Queue);
-				Constants.build.store_node(bvh_index, bvh_node);
+				Constants.build.store_node(bvh_index, node, data);
 			} else {
 				new_cluster_index = INVALID_ID;
 			}

@@ -1,8 +1,13 @@
+module hit;
+
 import graph;
 import graph.util.color;
 import graph.util.rng;
+
 import asset;
 import passes.bsdf;
+import scene.light_tree;
+
 import common;
 
 struct WorldVertex {
@@ -157,99 +162,21 @@ struct Hit {
 	}
 }
 
-struct LightSample {
-	f32x3 L;
-	f32x3 wi_world;
-	f32 t;
-	f32 pdf;
-	bool punctual;
-}
-
-f32 solid_angle_pdf(f32 theta) {
-	return 1.f / (2.f * PI * (1.f - cos(theta)));
-}
-
-[ForceInline]
-LightSample sample_emissive(inout Rng rng, Hit hit, u32 i) {
-	let instance = &Constants.instances[i];
-	let tri_count = instance->raw_tri_count;
-	let tri = min(u32(rng.sample() * tri_count), tri_count - 1);
-
-	let b = rng.sample2();
-	f32 u;
-	f32 v;
-	if (b.x < b.y) {
-		u = b.x / 2.f;
-		v = b.y - u;
-	} else {
-		v = b.y / 2.f;
-		u = b.x - v;
-	}
-	let thit = WorldTriHit(i, tri, f32x2(u, v));
-
-	let mat = instance->material;
-	let em = mat->emissive.get();
-	let emf = mat->emissive_factor;
-	let L = rec709_to_rec2020(em.sample_mip(Constants.sampler, thit.uv, 0.0, f32x4(1.f)).xyz * emf);
-
-	let r = thit.position - hit.position;
-	let t2 = dot(r, r);
-	let t = length(r);
-	let wi = r / t;
-	let d = abs(dot(thit.g_normal, -wi));
-	let pdf = (d != 0.f) ? (dot(wi, wi) / (thit.area * f32(tri_count) * d)) : 0.f;
-
-	return { L / t2, wi, t, pdf, false };
-}
-
-// TODO: shrample light (light tree) and triangles (by solid angle or area) better.
-LightSample sample_light(inout Rng rng, Hit hit, Light light) {
-	switch (light.ty) {
-		case LightType.Point: {
-			let pos = light.pos_or_dir;
-			let dir = pos - hit.position;
-			let t2 = dot(dir, dir);
-			let L = rec709_to_rec2020(light.radiance / t2);
-			let t = sqrt(t2);
-			let wi = dir / t;
-			return { L, wi, t, 1.f, true };
-		}
-		case LightType.Directional: {
-			// TODO: sample disk and figure out atmosphere transmittance correctly.
-			let dir = -light.pos_or_dir;
-			let L = rec709_to_rec2020(light.radiance * Constants.sky.sun_transmittance(hit.position, dir));
-			let disk_pdf = solid_angle_pdf(radians(0.5f));
-			return { L / disk_pdf, dir, 1e10f, 1.f, true };
-		}
-		case LightType.Emissive: {
-			let i = asuint(light.radiance.x);
-			return sample_emissive(rng, hit, i);
-		}
-	}
-
-	return { f32x3(0.f), f32x3(0.f), 0.f, 0.f, false };
-}
-
 LightSample sample_sky(inout Rng rng, Hit hit) {
 	let wi = rng.sample_cos_hemi();
 	let dir = hit.from_shading(wi);
 	let L = rec709_to_rec2020(Constants.sky.sample(hit.position, dir));
-	return { L, dir, 1e10f, wi.z / PI, false };
+	return LightSample(L, dir, 1e10f, wi.z / PI);
 }
 
 LightSample sample_one_light(inout Rng rng, Hit hit) {
-	let n = f32(Constants.light_count + 1);
-	let l = min(u32(rng.sample() * n), u32(n - 1.f));
-
-	LightSample ls;
-	if (l == Constants.light_count) {
-		ls = sample_sky(rng, hit);
-	} else {
-		ls = sample_light(rng, hit, Constants.lights[l]);
+	for (u32 i = 0; i < 10; i++) {
+		if (let ls = Constants.lights.sample(
+				rng, LightSamplePoint(Constants.sampler, hit.position, hit.from_shading(f32x3(0.f, 0.f, 1.f)),
+									  hit.params.base_color, hit.params.roughness, hit.params.metallic)))
+			return ls;
 	}
-
-	ls.pdf *= light_sample_pdf();
-	return ls;
+	return LightSample(f32x3(0.f), f32x3(0.f), 0.f, 0.f);
 }
 
 Ray shadow_ray(Hit hit, LightSample ls) {
@@ -265,17 +192,17 @@ LightEstimate estimate_with_light_sample(inout Rng rng, Hit hit, f32x3 wo) {
 	let ls = sample_one_light(rng, hit);
 	let ray = shadow_ray(hit, ls);
 	if (all(ls.L <= 0.f) || ls.pdf <= 0.f)
-		return { f32x3(0.f), ray };
+		return LightEstimate(f32x3(0.f), ray);
 	let wi = hit.to_shading(ls.wi_world);
 	let f = eval_bsdf(hit.params, wo, wi);
 	if (all(f <= 0.f))
-		return { f32x3(0.f), ray };
+		return LightEstimate(f32x3(0.f), ray);
 	var L = f * ls.L / ls.pdf;
-	if (!ls.punctual) {
+	if (false) {
 		let p_bounce = bsdf_pdf(hit.params, wo, wi);
 		L *= pow_heuristic_1(ls.pdf, p_bounce);	 // Should this be the other way around?
 	}
-	return { L, ray };
+	return LightEstimate(L, ray);
 }
 
 [shader("closesthit")]
@@ -287,8 +214,9 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	f32 w = 1.f;
 	if (!p.specular) {
 		// MIS for area light.
-		let p_light = light_sample_pdf() / (hit.area * f32(hit.tri_count));
-		w = pow_heuristic_1(p.p_bounce, p_light);
+		// let p_light = light_sample_pdf() / (hit.area * f32(hit.tri_count));
+		// w = pow_heuristic_1(p.p_bounce, p_light);
+		w = 0.f;
 	}
 	p.L += p.b * w * le;
 	// TODO: disable MIS if the ray hits a light without a bsdf?

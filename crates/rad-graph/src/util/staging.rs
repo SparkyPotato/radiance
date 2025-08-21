@@ -1,6 +1,6 @@
 use std::alloc::Allocator;
 
-use bytemuck::{cast_slice, NoUninit};
+use bytemuck::{NoUninit, bytes_of, cast_slice};
 
 use crate::{
 	graph::{BufferDesc, BufferUsage, Frame, ImageUsage, PassContext, Res, VirtualResourceDesc},
@@ -12,6 +12,12 @@ pub struct ByteReader<T, A: Allocator>(pub Vec<T, A>);
 
 impl<T: NoUninit, A: Allocator> AsRef<[u8]> for ByteReader<T, A> {
 	fn as_ref(&self) -> &[u8] { cast_slice(&self.0) }
+}
+
+pub struct BytesOf<T>(pub T);
+
+impl<T: NoUninit> AsRef<[u8]> for BytesOf<T> {
+	fn as_ref(&self) -> &[u8] { bytes_of(&self.0) }
 }
 
 impl<'pass, 'graph> Frame<'pass, 'graph> {

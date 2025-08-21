@@ -1,11 +1,11 @@
-use bytemuck::NoUninit;
+use bytemuck::{NoUninit, Zeroable};
 use rad_core::{Engine, asset::aref::LARef};
 use rad_graph::{
 	device::ShaderInfo,
-	graph::{BufferDesc, BufferUsage, ExternalBuffer, Frame},
-	resource::{self, Buffer, BufferType, GpuPtr, Resource as _},
+	graph::{BufferDesc, BufferUsage, ExternalBuffer, Frame, PassBuilder, PassContext, Res},
+	resource::{self, Buffer, BufferHandle, BufferType, GpuPtr, Resource as _},
 	sync::Shader,
-	util::compute::ComputePass,
+	util::{compute::ComputePass, staging::BytesOf},
 };
 use rad_world::{
 	TickStage,
@@ -33,8 +33,34 @@ use crate::{
 	sort::GpuSorter,
 };
 
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+pub struct GpuLightScene {
+	tlas: GpuPtr<()>,
+	blases: GpuPtr<GpuBlasInstance>,
+}
+
 #[derive(Copy, Clone)]
-pub struct LightScene {}
+pub struct LightScene {
+	tlas: Res<BufferHandle>,
+	blases: Option<Res<BufferHandle>>,
+}
+
+impl LightScene {
+	pub fn reference(&self, pass: &mut PassBuilder, shader: Shader) {
+		pass.reference(self.tlas, BufferUsage::read(shader));
+		if let Some(blases) = self.blases {
+			pass.reference(blases, BufferUsage::read(shader));
+		}
+	}
+
+	pub fn to_gpu(&self, pass: &mut PassContext) -> GpuLightScene {
+		GpuLightScene {
+			tlas: pass.get(self.tlas).ptr(),
+			blases: self.blases.map(|x| pass.get(x).ptr()).unwrap_or_default(),
+		}
+	}
+}
 
 impl GpuScene for LightScene {
 	type In = ();
@@ -52,7 +78,7 @@ impl GpuScene for LightScene {
 				frame.device(),
 				resource::BufferDesc {
 					name: "mesh light tree",
-					size: (48 * (n - 1)) as _,
+					size: (std::mem::size_of::<GpuLightTreeNode>() as u32 * (n - 1)) as _,
 					ty: BufferType::Gpu,
 				},
 			)
@@ -141,7 +167,20 @@ impl GpuScene for LightScene {
 
 		let n = data.meshes.len() as u32;
 		if n == 0 {
-			return Self {};
+			let tlas = frame.stage_buffer_new(
+				"upload dummy light tree",
+				BufferDesc::gpu(std::mem::size_of::<GpuLightTreeNode>() as _),
+				0,
+				BytesOf(GpuLightTreeNode {
+					left: GpuSgLight::zeroed(),
+					right: GpuSgLight::zeroed(),
+					l: u32::MAX,
+					r: u32::MAX,
+				}),
+			);
+			return Self { tlas, blases: None };
+		} else if n == 1 {
+			panic!("ruh roh");
 		}
 
 		let mut push = BvhPushConstants {
@@ -163,7 +202,7 @@ impl GpuScene for LightScene {
 
 		let mut pass = frame.pass("sfc");
 		let roots = pass.resource(
-			BufferDesc::upload((std::mem::size_of::<BlasInstance>() as u32 * n) as _),
+			BufferDesc::upload((std::mem::size_of::<GpuBlasInstance>() as u32 * n) as _),
 			BufferUsage::read(Shader::Compute),
 		);
 		let mut buf = |size: u64| {
@@ -183,7 +222,7 @@ impl GpuScene for LightScene {
 			pass.write_iter(
 				roots,
 				0,
-				meshes.iter().map(|(r, t)| BlasInstance {
+				meshes.iter().map(|(r, t)| GpuBlasInstance {
 					transform: *t,
 					blas: bvhs[r].1.ptr(),
 				}),
@@ -200,7 +239,7 @@ impl GpuScene for LightScene {
 
 		let mut pass = frame.pass("build");
 		let tree_nodes = pass.resource(
-			BufferDesc::gpu((48 * (n - 1)) as _),
+			BufferDesc::gpu((std::mem::size_of::<GpuLightTreeNode>() as u32 * (n - 1)) as _),
 			BufferUsage::read_write(Shader::Compute),
 		);
 		let bvh_nodes = pass.resource(
@@ -226,31 +265,11 @@ impl GpuScene for LightScene {
 
 		frame.end_region();
 
-		Self {}
+		Self {
+			tlas: tree_nodes,
+			blases: Some(roots),
+		}
 	}
-}
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(u32)]
-pub enum GpuLightType {
-	Point,
-	Directional,
-	Emissive,
-}
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-pub struct GpuLight {
-	pub ty: GpuLightType,
-	pub radiance: Vec3<f32>,
-	pub pos_or_dir: Vec3<f32>,
-}
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
-struct GpuLightUpdate {
-	index: u32,
-	light: GpuLight,
 }
 
 // TODO: global the pipeline.
@@ -269,8 +288,33 @@ impl Resource for LightSceneData {}
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
+struct GpuLightTreeNode {
+	left: GpuSgLight,
+	right: GpuSgLight,
+	l: u32,
+	r: u32,
+}
+
+#[derive(Copy, Clone, NoUninit, Zeroable)]
+#[repr(C)]
+struct GpuSgLight {
+	position: Vec3<f32>,
+	variance: f32,
+	intensity: Vec3<f32>,
+	axis: Vec3<f32>,
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
+struct GpuBlasInstance {
+	transform: GpuTransform,
+	blas: GpuPtr<()>,
+}
+
+#[derive(Copy, Clone, NoUninit)]
+#[repr(C)]
 struct Blas {
-	nodes: GpuPtr<()>,
+	nodes: GpuPtr<GpuLightTreeNode>,
 	vertices: GpuPtr<Vertex>,
 	indices: GpuPtr<u32>,
 	material: GpuPtr<GpuMaterial>,
@@ -279,16 +323,9 @@ struct Blas {
 
 #[derive(Copy, Clone, NoUninit)]
 #[repr(C)]
-struct BlasInstance {
-	transform: GpuTransform,
-	blas: GpuPtr<()>,
-}
-
-#[derive(Copy, Clone, NoUninit)]
-#[repr(C)]
 struct Tlas {
-	nodes: GpuPtr<()>,
-	roots: GpuPtr<BlasInstance>,
+	nodes: GpuPtr<GpuLightTreeNode>,
+	roots: GpuPtr<GpuBlasInstance>,
 }
 
 #[derive(Copy, Clone)]

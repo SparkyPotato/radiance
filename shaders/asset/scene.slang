@@ -3,30 +3,6 @@ module scene;
 import graph;
 import asset;
 
-struct LightUpdate {
-	u32 index;
-	Light light;
-}
-
-struct LightConstants {
-	Light* lights;
-	LightUpdate* updates;
-	u32 count;
-}
-
-[vk::push_constant]
-LightConstants LConstants;
-
-[shader("compute")]
-[numthreads(64, 1, 1)]
-void update_light(u32 id: SV_DispatchThreadID) {
-	if (id >= LConstants.count)
-		return;
-
-	let update = LConstants.updates[id];
-	LConstants.lights[update.index] = update.light;
-}
-
 struct VkAccelerationStructureInstanceKHR {
 	f32 transform[3][4];
 	u32 instanceCustomIndexAndMask;

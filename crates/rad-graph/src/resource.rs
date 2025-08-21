@@ -74,12 +74,15 @@ impl ToNamed for BufferDescUnnamed {
 	}
 }
 
-#[derive(Hash, PartialEq, Eq, Debug, Default)]
+#[derive(Hash, PartialEq, Eq, Debug)]
 #[repr(transparent)]
 pub struct GpuPtr<T: NoUninit>(pub u64, PhantomData<fn() -> T>);
 impl<T: NoUninit> Copy for GpuPtr<T> {}
 impl<T: NoUninit> Clone for GpuPtr<T> {
 	fn clone(&self) -> Self { *self }
+}
+impl<T: NoUninit> Default for GpuPtr<T> {
+	fn default() -> Self { Self::null() }
 }
 unsafe impl<T: NoUninit> Zeroable for GpuPtr<T> {}
 unsafe impl<T: NoUninit> Pod for GpuPtr<T> {}

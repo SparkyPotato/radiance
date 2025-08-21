@@ -131,18 +131,6 @@ public struct Meshlet {
 	}
 }
 
-public enum LightType {
-	Point,
-	Directional,
-	Emissive,
-}
-
-public struct Light {
-	public LightType ty;
-	public f32x3 radiance;	  // x value is bitcasted u32 if emissive.
-	public f32x3 pos_or_dir;  // pos for point, dir for directional.
-}
-
 public struct Camera {
 	public Transform transform;
 	public f32 w;

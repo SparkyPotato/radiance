@@ -23,7 +23,7 @@ use crate::{
 	scene::{
 		WorldRenderer,
 		camera::{CameraScene, GpuCamera},
-		light::{GpuLight, LightScene},
+		light::{GpuLightScene, LightScene},
 		rt_scene::{GpuRtInstance, RtScene},
 	},
 	sky::{GpuSkySampler, SkySampler},
@@ -48,7 +48,7 @@ pub struct RenderInfo {
 #[derive(Copy, Clone, NoUninit)]
 struct PushConstants {
 	instances: GpuPtr<GpuRtInstance>,
-	lights: GpuPtr<GpuLight>,
+	lights: GpuLightScene,
 	camera: GpuPtr<GpuCamera>,
 	as_: GpuPtr<u8>,
 	sampler: SamplerId,
@@ -56,9 +56,7 @@ struct PushConstants {
 	ggx_e_lut: ImageId,
 	seed: u32,
 	samples: u32,
-	light_count: u32,
 	sky: GpuSkySampler,
-	_pad: u32,
 }
 
 impl PathTracer {
@@ -120,7 +118,7 @@ impl PathTracer {
 	) -> (Res<ImageView>, u32) {
 		let rt = rend.get::<RtScene>(frame);
 		let camera = rend.get::<CameraScene>(frame);
-		rend.get::<LightScene>(frame);
+		let lights = rend.get::<LightScene>(frame);
 
 		let mut pass = frame.pass("path trace");
 
@@ -128,6 +126,7 @@ impl PathTracer {
 		pass.reference(rt.instances, read);
 		pass.reference(rt.as_, read);
 		pass.reference(camera.buf, read);
+		lights.reference(&mut pass, Shader::RayTracing);
 		info.sky.reference(&mut pass, Shader::RayTracing);
 
 		let out = pass.resource(
@@ -162,6 +161,7 @@ impl PathTracer {
 			let out = pass.get(out);
 			let as_ = pass.get(rt.as_).ptr().offset(rt.as_offset);
 			let instances = pass.get(rt.instances).ptr();
+			let lights = lights.to_gpu(&mut pass);
 			let camera = pass.get(camera.buf).ptr();
 			let sky = info.sky.to_gpu(&mut pass);
 
@@ -169,7 +169,7 @@ impl PathTracer {
 				&mut pass,
 				&PushConstants {
 					instances,
-					lights: GpuPtr::null(),
+					lights,
 					camera,
 					as_,
 					sampler: self.sampler,
@@ -177,9 +177,7 @@ impl PathTracer {
 					ggx_e_lut: self.ggx_e_lut.image_id(),
 					seed: thread_rng().next_u32(),
 					samples: self.samples,
-					light_count: 0,
 					sky,
-					_pad: 0,
 				},
 				out.size.width,
 				out.size.height,

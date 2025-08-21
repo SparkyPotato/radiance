@@ -1,4 +1,7 @@
+module shadow;
+
 import graph;
+
 import common;
 
 [shader("miss")]

@@ -12,7 +12,7 @@ public struct LightTreeBlasInterface : LightTreeBuildInterface {
 	LightTreeNode* tree_nodes;
 	Vertex* vertices;
 	u32x3* indices;
-	Material* material;
+	Material<NonUniform>* material;
 	LightBlas* root_data;
 
 	public NodeData load_leaf(u32 index) {
@@ -25,10 +25,10 @@ public struct LightTreeBlasInterface : LightTreeBuildInterface {
 		return (v[0] + v[1] + v[2]) / 3.f;
 	}
 
-	public void store_node(u32 index, TempBvhNode data) {
-		this.tree_nodes[index] = data.to_light_tree();
+	public void store_node(u32 index, LightTreeNode node, NodeData merged) {
+		this.tree_nodes[index] = node;
 		if (index == 0)
-			*this.root_data = LightBlas(this.tree_nodes, this.vertices, this.indices, this.material, data.data);
+			*this.root_data = LightBlas(this.tree_nodes, this.vertices, this.indices, this.material, merged);
 	}
 
 	f32x3[3] load_triangle(u32 prim) {
