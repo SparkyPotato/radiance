@@ -100,7 +100,7 @@ public struct HitPayload {
 		this.bounces++;
 
 		let q = max(0.05f, 1.f - luminance_rec2020(this.b));
-		if (this.rng.sample() < q || this.bounces >= 1)
+		if (this.rng.sample() < q || this.bounces >= 5)
 			return this.end_trace();
 
 		this.b /= 1.f - q;

@@ -25,7 +25,6 @@ public struct LightTree {
 	BlasInstance* blases;
 
 	public Optional<LightSample> sample(inout Rng rng, LightSamplePoint point) {
-		return none;
 		var p = rng.sample();
 		var index = 0;
 		var pdf = 1.f;
