@@ -170,7 +170,7 @@ LightSample sample_sky(inout Rng rng, Hit hit) {
 }
 
 LightSample sample_one_light(inout Rng rng, Hit hit) {
-	for (u32 i = 0; i < 10; i++) {
+	for (u32 i = 0; i < 1; i++) {
 		if (let ls = Constants.lights.sample(
 				rng, LightSamplePoint(Constants.sampler, hit.position, hit.from_shading(f32x3(0.f, 0.f, 1.f)),
 									  hit.params.base_color, hit.params.roughness, hit.params.metallic)))
@@ -221,28 +221,19 @@ void main(inout HitPayload p, BuiltInTriangleIntersectionAttributes attrs) {
 	p.L += p.b * w * le;
 	// TODO: disable MIS if the ray hits a light without a bsdf?
 
-	let wo = hit.to_shading(-p.ray.dir);
+	let wo = hit.to_shading(-Ray.from_api().dir);
 
-	let bs = sample_bsdf(p.rng, hit.params, wo);
-	let throughput = bs.f;
-	p.p_bounce = bs.pdf;
-	p.ray = Ray(hit.ray_origin(), hit.from_shading(bs.wi));
-	p.specular = bs.is_specular;
-
-	// Do this as late as possible to minimize the live state kept between the shadow ray trace.
+	// NEE
 	var el = estimate_with_light_sample(p.rng, hit, wo);
-	if (all(el.L <= 0.f))
-		el.shadow.t = 0.f;
-
-	// We use the same payload even though we only need a single bool
-	// because otherwise the payload would have to be stored as live state.
-	p.hit = true;
-	el.shadow.trace(RAY_FLAG_FORCE_OPAQUE | RAY_FLAG_ACCEPT_FIRST_HIT_AND_END_SEARCH | RAY_FLAG_SKIP_CLOSEST_HIT_SHADER,
-					1, p);
-	if (!p.hit) {
+	if (any(el.L > 0.f) && el.shadow.trace_unoccluded()) {
 		p.L += p.b * el.L;
-		p.hit = true;
 	}
 
-	p.b *= throughput;
+	// bounce
+	let bs = sample_bsdf(p.rng, hit.params, wo);
+	p.b *= bs.f;
+	p.p_bounce = bs.pdf;
+	p.specular = bs.is_specular;
+	let ray = Ray(hit.ray_origin(), hit.from_shading(bs.wi));
+	p.bounce(ray);
 }

@@ -10,9 +10,8 @@ import common;
 
 [shader("miss")]
 void main(inout HitPayload p) {
-	p.hit = false;
-
-	let le = rec709_to_rec2020(Constants.sky.sample_primary(p.ray.origin, p.ray.dir));
+	let ray = Ray.from_api();
+	let le = rec709_to_rec2020(Constants.sky.sample_primary(ray.origin, ray.dir));
 	f32 w = 1.f;
 	if (!p.specular) {
 		// MIS for the sky light.
@@ -21,4 +20,6 @@ void main(inout HitPayload p) {
 		w = 0.f;
 	}
 	p.L += p.b * w * le;
+
+	p.end_trace();
 }

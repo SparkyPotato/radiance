@@ -97,8 +97,9 @@ void ploc_merge(u32 lane_id, u32 L, u32 R, u32 split, bool final) {
 
 	var cluster_index = INVALID_ID;
 	let num_left = load_cluster_indices(l_start, l_end, cluster_index, 0);
-	let num_right = load_cluster_indices(r_start, r_end, cluster_index, num_left);
-	let num_prims = num_left + num_right;
+	let num_clusters = load_cluster_indices(r_start, r_end, cluster_index, num_left);
+	if (WaveIsFirstLane())
+		printf("num_clusters: %d (%d, %d, %d)", num_clusters, l_start, l_end, r_end);
 
 	NodeData data;
 	data.aabb_min = f32x3(FLT_MAX);
@@ -108,17 +109,21 @@ void ploc_merge(u32 lane_id, u32 L, u32 R, u32 split, bool final) {
 	}
 
 	let threshold = WaveShuffle(final, lane_id) ? 1 : 16;
-	var prims_left = num_prims;
-	while (prims_left > threshold) {
-		prims_left = merge_clusters_to_create_bvh_node(prims_left, cluster_index, data);
+	var clusters_left = num_clusters;
+	while (clusters_left > threshold) {
+		clusters_left = merge_clusters_to_create_bvh_node(clusters_left, cluster_index, data);
+		if (WaveIsFirstLane())
+			printf("clusters_left: %d", clusters_left);
 	}
-	store_cluster_indices(num_prims, cluster_index, l_start);
+	if (WaveIsFirstLane())
+		printf("merged");
+	store_cluster_indices(num_clusters, cluster_index, l_start);
 }
 
-u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, inout NodeData data) {
+u32 merge_clusters_to_create_bvh_node(u32 num_clusters, inout u32 cluster_index, inout NodeData data) {
 	let wid = WaveGetLaneIndex();
 
-	let nn = find_nearest_neighbor(num_prims, data);
+	let nn = find_nearest_neighbor(num_clusters, data);
 	let n_i = decode_relative_offset(wid, nn & PAYLOAD_MASK);
 	let n_i_n_i = decode_relative_offset(n_i, WaveShuffle(nn, n_i) & PAYLOAD_MASK);
 	let symmetric_match_found = wid == n_i_n_i;
@@ -129,13 +134,17 @@ u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, in
 	let left_data = data;
 	let right_data = NodeData.wave_shuffle(data, n_i);
 
-	let lane_has_cluster = wid < num_prims;
-	let lane_is_creating = lane_has_cluster && symmetric_match_found && lane_is_left_neighbor;
+	let lane_has_cluster = wid < num_clusters;
+	let other_lane_has_cluster = n_i < num_clusters;
+	let lane_is_creating = lane_has_cluster && other_lane_has_cluster && symmetric_match_found && lane_is_left_neighbor;
 	let append_count = WaveActiveCountBits(lane_is_creating);
 	u32 allocated_count;
 	if (WaveIsFirstLane())
 		allocated_count = atomic_add(*Constants.atomic, append_count);
 	allocated_count = WaveReadLaneFirst(allocated_count);
+
+	if (lane_has_cluster)
+		printf("%d = %d => %d, %d", wid, cluster_index, n_i, n_i_n_i);
 
 	let base_node_offset = (Constants.prim_count - 1) - (append_count + allocated_count);
 	let bvh_index_prefix = WavePrefixCountBits(lane_is_creating);
@@ -151,12 +160,20 @@ u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, in
 
 				let bvh_node = TempBvhNode(data, left_cluster, right_cluster);
 				let node = LightTreeNode(left_data, right_data, left_cluster, right_cluster);
-				store(Constants.bvh_nodes, bvh_index, bvh_node, Scope.Queue);
-				Constants.build.store_node(bvh_index, node, data);
+				if (bvh_index < Constants.prim_count - 1) {
+					store(Constants.bvh_nodes, bvh_index, bvh_node, Scope.Queue);
+					Constants.build.store_node(bvh_index, node, data);
+				}
 			} else {
 				new_cluster_index = INVALID_ID;
 			}
 		}
+	}
+
+	if (append_count + allocated_count > Constants.prim_count - 1) {
+		if (WaveIsFirstLane())
+			printf("overflow!");
+		return 0;
 	}
 
 	CachedNeighbors[wid] = 0;
@@ -164,13 +181,16 @@ u32 merge_clusters_to_create_bvh_node(u32 num_prims, inout u32 cluster_index, in
 
 	let is_lane_valid = new_cluster_index != INVALID_ID;
 	let compacted_data_dst = WavePrefixCountBits(is_lane_valid);
-	atomic_max(CachedNeighbors[compacted_data_dst], wid, Scope.Subgroup, Loc.Workgroup);
+	if (is_lane_valid)
+		CachedNeighbors[compacted_data_dst] = wid;
 	workgroup_wave_sync_barrier();
 
 	let compacted_data_src = CachedNeighbors[wid];
+	let valid_count = WaveActiveCountBits(is_lane_valid);
 	data = NodeData.wave_shuffle(data, compacted_data_src);
 	cluster_index = WaveShuffle(new_cluster_index, compacted_data_src);
-	return WaveActiveCountBits(is_lane_valid);
+	cluster_index = wid < valid_count ? cluster_index : INVALID_ID;
+	return valid_count;
 }
 
 groupshared u32 CachedNeighbors[32];
@@ -219,9 +239,8 @@ u32 load_cluster_indices(u32 start, u32 end, inout u32 cluster_index, u32 offset
 	let lane_active = index_id >= 0 && index_id < num_indices;
 	if (lane_active)
 		cluster_index = load(Constants.cluster_indices, start + index_id, Scope.Queue);
-	let num_valid = WaveActiveCountBits(lane_active);
-	num_indices = min(num_indices, num_valid);
-	return num_indices;
+	let num_valid = WaveActiveCountBits(cluster_index != INVALID_ID);
+	return num_valid;
 }
 
 void store_cluster_indices(u32 orig_num_prims, u32 cluster_index, u32 l_start) {

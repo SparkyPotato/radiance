@@ -25,6 +25,7 @@ public struct LightTree {
 	BlasInstance* blases;
 
 	public Optional<LightSample> sample(inout Rng rng, LightSamplePoint point) {
+		return none;
 		var p = rng.sample();
 		var index = 0;
 		var pdf = 1.f;
@@ -132,7 +133,7 @@ public struct LightTree {
 		let t = sqrt(t2);
 		let wi = r / t;
 		let d = abs(dot(g_normal, -wi));
-		// pdf /= area;
+		pdf /= area;
 
 		return LightSample(L * d / t2, wi, t, pdf);
 	}
@@ -186,7 +187,7 @@ static const f32 SG_LIGHT_MAX_SHARPNESS = 0x1.0p41;
 
 f32 weight_light(SgLight light, LightSamplePoint point) {
 	let light_sharpness = length(light.axis);
-	let axis = light.axis / light_sharpness;
+	let axis = light_sharpness > 0.00001f ? light.axis / light_sharpness : f32x3(0.f);
 
 	let dir = light.position - point.position;
 	let t2 = dot(dir, dir);
@@ -448,13 +449,17 @@ public struct NodeData {
 	}
 
 	public __init(NodeData left, NodeData right) {
-		let w_left = luminance_rec709(left.power) / luminance_rec709(left.power + right.power);
+		let w_left = luminance_rec709(left.power / (left.power + right.power));
 		let w_right = 1.f - w_left;
 		this.aabb_min = min(left.aabb_min, right.aabb_min);
 		this.aabb_max = max(left.aabb_max, right.aabb_max);
-		this.position = left.position * w_left + right.position * w_right;
-		let pos_diff = left.position.xyz - right.position.xyz;
-		this.position.w += w_left * w_right * dot(pos_diff, pos_diff);
+		this.position.xyz = left.position.xyz * w_left + right.position.xyz * w_right;
+
+		let r = length(this.aabb_max - this.aabb_min) * 0.5f;
+		// let pos_diff = left.position.xyz - right.position.xyz;
+		// this.position.w += w_left * w_right * dot(pos_diff, pos_diff);
+		this.position.w = r * r * 0.5f;
+
 		this.power = left.power + right.power;
 		this.normal_average = left.normal_average * w_left + right.normal_average * w_right;
 		this.cone = cone_union(left.cone, right.cone);
