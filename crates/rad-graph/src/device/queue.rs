@@ -3,17 +3,13 @@ use std::{
 	fmt::Debug,
 	iter,
 	marker::PhantomData,
-	sync::{
-		atomic::{AtomicU64, Ordering},
-		Mutex,
-		MutexGuard,
-	},
+	sync::{MappedMutexGuard, Mutex, MutexGuard},
 };
 
 use ash::vk;
-use tracing::{span, Level};
+use tracing::{Level, span};
 
-use crate::{arena::ToOwnedAlloc, device::Device, Result};
+use crate::{Result, arena::ToOwnedAlloc, device::Device};
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq, Debug, Default)]
 pub struct Graphics;
@@ -337,19 +333,25 @@ impl<A: Allocator> QueueWaitOwned<A> {
 	pub fn merge(&mut self, other: Self) {
 		match &mut self.graphics {
 			Some(g) => {
-				if let Some(x) = other.graphics { g.merge(x) }
+				if let Some(x) = other.graphics {
+					g.merge(x)
+				}
 			},
 			None => self.graphics = other.graphics,
 		}
 		match &mut self.compute {
 			Some(g) => {
-				if let Some(x) = other.compute { g.merge(x) }
+				if let Some(x) = other.compute {
+					g.merge(x)
+				}
 			},
 			None => self.compute = other.compute,
 		}
 		match &mut self.transfer {
 			Some(g) => {
-				if let Some(x) = other.transfer { g.merge(x) }
+				if let Some(x) = other.transfer {
+					g.merge(x)
+				}
 			},
 			None => self.transfer = other.transfer,
 		}
@@ -371,16 +373,15 @@ impl ToOwnedAlloc for QueueWait<'_> {
 }
 
 pub struct QueueData {
-	queue: Mutex<vk::Queue>,
+	queue: Mutex<(vk::Queue, u64)>,
 	family: u32,
 	semaphore: vk::Semaphore,
-	value: AtomicU64,
 }
 
 impl QueueData {
 	pub fn new(device: &ash::Device, family: u32) -> Result<Self> {
 		unsafe {
-			let queue = Mutex::new(device.get_device_queue(family, 0));
+			let queue = Mutex::new((device.get_device_queue(family, 0), 0));
 			let semaphore = device.create_semaphore(
 				&vk::SemaphoreCreateInfo::default().push_next(
 					&mut vk::SemaphoreTypeCreateInfo::default()
@@ -394,16 +395,15 @@ impl QueueData {
 				queue,
 				family,
 				semaphore,
-				value: AtomicU64::new(0),
 			})
 		}
 	}
 
 	pub fn family(&self) -> u32 { self.family }
 
-	pub fn queue(&self) -> MutexGuard<'_, vk::Queue> { self.queue.lock().unwrap() }
+	pub fn queue(&self) -> MappedMutexGuard<'_, vk::Queue> { MutexGuard::map(self.queue.lock().unwrap(), |x| &mut x.0) }
 
-	pub fn current<T: QueueType>(&self) -> SyncPoint<T> { SyncPoint(self.value.load(Ordering::Acquire), PhantomData) }
+	pub fn current<T: QueueType>(&self) -> SyncPoint<T> { SyncPoint(self.queue.lock().unwrap().1, PhantomData) }
 
 	pub fn submit<T: QueueType>(
 		&self, qs: &Queues<Self>, device: &Device, wait: QueueWait, bufs: &[vk::CommandBuffer],
@@ -424,11 +424,12 @@ impl QueueData {
 			.iter()
 			.map(|&b| vk::CommandBufferSubmitInfo::default().command_buffer(b))
 			.collect();
-		let v = self.value.fetch_add(1, Ordering::Release);
+		let mut q = self.queue.lock().unwrap();
+		q.1 += 1;
 		let signal: Vec<_> = iter::once(
 			vk::SemaphoreSubmitInfo::default()
 				.semaphore(self.semaphore)
-				.value(v + 1)
+				.value(q.1)
 				.stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS),
 		)
 		.chain(signal.iter().map(|x| x.info()))
@@ -437,18 +438,16 @@ impl QueueData {
 		unsafe {
 			let s = span!(Level::TRACE, "driver submit");
 			let _e = s.enter();
-			let q = self.queue.lock().unwrap();
 			device.device().queue_submit2(
-				*q,
+				q.0,
 				&[vk::SubmitInfo2::default()
 					.wait_semaphore_infos(&wait)
 					.command_buffer_infos(&infos)
 					.signal_semaphore_infos(&signal)],
 				vk::Fence::null(),
 			)?;
-
-			Ok(SyncPoint(v + 1, PhantomData))
 		}
+		Ok(SyncPoint(q.1, PhantomData))
 	}
 
 	pub fn destroy(&self, device: &ash::Device) {

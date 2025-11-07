@@ -5,12 +5,7 @@ use bincode::{Decode, Encode};
 use bytemuck::{Pod, Zeroable, cast_slice};
 use rad_core::{
 	Engine,
-	asset::{
-		AssetView,
-		BincodeAsset,
-		Uuid,
-		aref::{ARef, AssetId, LARef},
-	},
+	asset::{AssetView, BincodeAsset, Uuid},
 	uuid,
 };
 use rad_graph::{
@@ -23,13 +18,7 @@ use static_assertions::const_assert_eq;
 use tracing::trace_span;
 use vek::{Aabb, Vec2, Vec3};
 
-use crate::{
-	assets::{
-		material::{Material, MaterialView},
-		mesh::virtual_mesh::aabb_default,
-	},
-	util::SliceWriter,
-};
+use crate::{assets::mesh::virtual_mesh::aabb_default, util::SliceWriter};
 
 pub mod virtual_mesh;
 
@@ -52,7 +41,6 @@ const_assert_eq!(std::mem::align_of::<Vertex>(), 4);
 pub struct Mesh {
 	pub vertices: Vec<Vertex>,
 	pub indices: Vec<u32>,
-	pub material: AssetId<Material>,
 }
 
 impl BincodeAsset for Mesh {
@@ -64,7 +52,6 @@ pub struct RaytracingMeshView {
 	pub as_: AS,
 	pub vertex_count: u32,
 	pub tri_count: u32,
-	pub material: LARef<MaterialView>,
 	pub aabb: Aabb<f32>,
 }
 
@@ -265,7 +252,6 @@ impl AssetView for RaytracingMeshView {
 				as_,
 				vertex_count: m.vertices.len() as _,
 				tri_count,
-				material: ARef::loaded(m.material)?,
 				aabb,
 			})
 		}

@@ -3,7 +3,7 @@
 use std::{
 	cell::UnsafeCell,
 	mem::ManuallyDrop,
-	sync::{Arc, Mutex, MutexGuard},
+	sync::{Arc, MappedMutexGuard, Mutex, MutexGuard},
 };
 
 use ash::{ext, khr, vk};
@@ -157,7 +157,7 @@ impl Device {
 
 	pub fn queue_families(&self) -> Queues<u32> { self.inner.queues.map_ref(|data| data.family()) }
 
-	pub fn queue<TY: QueueType>(&self) -> MutexGuard<'_, vk::Queue> { self.inner.queues.get::<TY>().queue() }
+	pub fn queue<TY: QueueType>(&self) -> MappedMutexGuard<'_, vk::Queue> { self.inner.queues.get::<TY>().queue() }
 
 	pub fn current_sync_point<TY: QueueType>(&self) -> SyncPoint<TY> { self.inner.queues.get::<TY>().current() }
 

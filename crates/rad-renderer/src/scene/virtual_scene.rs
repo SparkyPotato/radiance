@@ -2,8 +2,8 @@ use std::sync::Mutex;
 
 use bytemuck::NoUninit;
 use rad_core::{
-	asset::aref::{ARef, LARef},
 	Engine,
+	asset::aref::{ARef, LARef},
 };
 use rad_graph::{
 	device::ShaderInfo,
@@ -13,6 +13,8 @@ use rad_graph::{
 	util::compute::ComputePass,
 };
 use rad_world::{
+	TickStage,
+	World,
 	bevy_ecs::{
 		batching::BatchingStrategy,
 		component::{Component, StorageType},
@@ -23,18 +25,16 @@ use rad_world::{
 	},
 	tick::Tick,
 	transform::Transform,
-	TickStage,
-	World,
 };
-use tracing::error;
+use tracing::warn;
 
 use crate::{
 	assets::{
-		material::GpuMaterial,
+		material::{GpuMaterial, MaterialView},
 		mesh::virtual_mesh::{GpuAabb, VirtualMeshView},
 	},
 	components::mesh::MeshComponent,
-	scene::{should_scene_sync, GpuScene, GpuTransform},
+	scene::{GpuScene, GpuTransform, should_scene_sync},
 	util::ResizableBuffer,
 };
 
@@ -172,7 +172,7 @@ impl VirtualSceneData {
 		}
 	}
 
-	fn push_instance(&mut self, index: u32, t: &Transform, m: &LARef<VirtualMeshView>) {
+	fn push_instance(&mut self, index: u32, t: &Transform, m: &LARef<VirtualMeshView>, mat: &LARef<MaterialView>) {
 		self.updates.push(GpuInstanceUpdate {
 			index,
 			_pad: 0,
@@ -182,14 +182,14 @@ impl VirtualSceneData {
 				aabb: m.gpu_aabb(),
 				last_updated_frame: 0,
 				mesh: m.gpu_ptr(),
-				material: m.material().gpu_ptr(),
+				material: mat.gpu_ptr(),
 			},
 		});
 		self.bvh_depth = self.bvh_depth.max(m.bvh_depth());
 	}
 }
 
-pub struct KnownVirtualInstances(pub Vec<(u32, LARef<VirtualMeshView>)>);
+pub struct KnownVirtualInstances(pub Vec<(u32, LARef<VirtualMeshView>, LARef<MaterialView>)>);
 impl Component for KnownVirtualInstances {
 	const STORAGE_TYPE: StorageType = StorageType::Table;
 }
@@ -208,10 +208,14 @@ fn sync_virtual_scene(
 			let x: Vec<_> = m
 				.inner
 				.iter()
-				.filter_map(|&m| {
-					ARef::loaded(m)
-						.map_err(|e| error!("failed to load mesh {:?}: {:?}", m, e))
-						.ok()
+				.filter_map(|&(m, mat)| {
+					let m = ARef::loaded(m)
+						.map_err(|e| warn!("failed to load mesh {:?}: {:?}", m, e))
+						.ok()?;
+					let mat = ARef::loaded(mat)
+						.map_err(|e| warn!("failed to load material {:?}: {:?}", mat, e))
+						.ok()?;
+					Some((m, mat))
 				})
 				.collect();
 			cache.lock().unwrap().push((e, t, x));
@@ -220,11 +224,11 @@ fn sync_virtual_scene(
 	for (e, t, inner) in cache.into_inner().unwrap() {
 		let inner = inner
 			.into_iter()
-			.map(|view| {
+			.map(|(view, material)| {
 				let index = r.instance_count;
 				r.instance_count += 1;
-				r.push_instance(index, t, &view);
-				(index, view)
+				r.push_instance(index, t, &view, &material);
+				(index, view, material)
 			})
 			.collect();
 		cmd.entity(e).insert(KnownVirtualInstances(inner));

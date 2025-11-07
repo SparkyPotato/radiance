@@ -1,5 +1,6 @@
 #![feature(allocator_api)]
 #![feature(btreemap_alloc)]
+#![feature(mapped_lock_guards)]
 #![feature(ptr_metadata)]
 #![feature(slice_ptr_get)]
 

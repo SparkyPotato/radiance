@@ -30,7 +30,8 @@ impl Module for RendererModule {
 		engine.asset_view::<assets::material::MaterialView>();
 
 		engine.component::<components::mesh::MeshComponent>();
-		engine.component_dep_type::<Vec<AssetId<assets::mesh::Mesh>>>();
+		engine.component_dep_type::<(AssetId<assets::mesh::Mesh>, AssetId<assets::material::Material>)>();
+		engine.component_dep_type::<Vec<(AssetId<assets::mesh::Mesh>, AssetId<assets::material::Material>)>>();
 		engine.component::<components::light::LightComponent>();
 		engine.component::<components::camera::CameraComponent>();
 		engine.component::<components::camera::PrimaryViewComponent>();

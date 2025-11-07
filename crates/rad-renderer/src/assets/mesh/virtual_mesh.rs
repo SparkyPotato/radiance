@@ -5,14 +5,9 @@ use bytemuck::{Pod, Zeroable};
 use meshopt::{VertexDataAdapter, VertexStream};
 use metis::Graph;
 use rad_core::{
-	asset::{
-		aref::{ARef, AssetId, LARef},
-		AssetView,
-		BincodeAsset,
-		CookedAsset,
-	},
-	uuid,
 	Engine,
+	asset::{AssetView, BincodeAsset, CookedAsset},
+	uuid,
 };
 use rad_graph::{
 	device::Device,
@@ -26,10 +21,7 @@ use tracing::{debug_span, field, trace_span};
 use vek::{Aabb, Sphere, Vec3, Vec4};
 
 use crate::{
-	assets::{
-		material::{Material, MaterialView},
-		mesh::{GpuVertex, Mesh, Vertex},
-	},
+	assets::mesh::{GpuVertex, Mesh, Vertex},
 	util::SliceWriter,
 };
 
@@ -92,9 +84,6 @@ pub struct VirtualMesh {
 	/// The AABB of the entire mesh.
 	#[bincode(with_serde)]
 	pub aabb: Aabb<f32>,
-	#[bincode(with_serde)]
-	/// Material of the mesh.
-	pub material: AssetId<Material>,
 }
 
 #[derive(Copy, Clone, Default, Pod, Zeroable)]
@@ -524,7 +513,7 @@ fn find_connections(range: &[u32], meshlets: &Meshlets, remap: &[u32]) -> Vec<Ve
 }
 
 fn convert_meshlets(
-	Mesh { vertices, material, .. }: &Mesh, meshlets: Meshlets, bvh: Vec<BvhNode>, bvh_depth: u32,
+	Mesh { vertices, .. }: &Mesh, meshlets: Meshlets, bvh: Vec<BvhNode>, bvh_depth: u32,
 ) -> VirtualMesh {
 	let mut outv = Vec::with_capacity(vertices.len());
 	let mut outi = Vec::with_capacity(meshlets.meshlets.len() * 124 * 3);
@@ -556,7 +545,6 @@ fn convert_meshlets(
 		bvh,
 		bvh_depth,
 		aabb,
-		material: *material,
 	}
 }
 
@@ -605,11 +593,7 @@ pub fn merge_spheres(a: Sphere<f32, f32>, b: Sphere<f32, f32>) -> Sphere<f32, f3
 	let br = a.radius.max(b.radius);
 	let len = (a.center - b.center).magnitude();
 	if len + sr <= br || sr == 0.0 || len == 0.0 {
-		if a.radius > b.radius {
-			a
-		} else {
-			b
-		}
+		if a.radius > b.radius { a } else { b }
 	} else {
 		let radius = (sr + br + len) / 2.0;
 		let center = (a.center + b.center + (a.radius - b.radius) * (a.center - b.center) / len) / 2.0;
@@ -901,7 +885,6 @@ pub struct VirtualMeshView {
 	buffer: Buffer,
 	bvh_depth: u32,
 	aabb: Aabb<f32>,
-	material: LARef<MaterialView>,
 }
 
 impl VirtualMeshView {
@@ -912,8 +895,6 @@ impl VirtualMeshView {
 	pub fn gpu_aabb(&self) -> GpuAabb { map_aabb(self.aabb) }
 
 	pub fn gpu_ptr(&self) -> GpuPtr<u8> { self.buffer.ptr() }
-
-	pub fn material(&self) -> &LARef<MaterialView> { &self.material }
 }
 
 impl AssetView for VirtualMeshView {
@@ -987,7 +968,6 @@ impl AssetView for VirtualMeshView {
 			buffer,
 			bvh_depth: m.bvh_depth,
 			aabb: m.aabb,
-			material: ARef::loaded(m.material)?,
 		})
 	}
 }

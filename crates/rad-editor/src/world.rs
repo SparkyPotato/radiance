@@ -1,19 +1,15 @@
 use std::io;
 
-use rad_core::{asset::aref::AssetId, Engine};
+use rad_core::{Engine, asset::aref::AssetId};
 use rad_renderer::{
-	assets::mesh::Mesh,
-	components::{
-		camera::{CameraComponent, PrimaryViewComponent},
-		mesh::MeshComponent,
-	},
+	components::camera::{CameraComponent, PrimaryViewComponent},
 	scene::register_all_gpu_scenes,
 };
 use rad_world::{
+	World,
 	bevy_ecs::{entity::Entity, world::EntityMut},
 	serde::DoNotSerialize,
 	tick::Tick,
-	World,
 };
 
 pub struct WorldContext {
@@ -35,14 +31,6 @@ impl WorldContext {
 
 	pub fn open(&mut self, id: AssetId<World>) -> Result<(), io::Error> {
 		self.edit = Engine::get().load_asset(id)?;
-		self.setup_world();
-
-		Ok(())
-	}
-
-	pub fn open_mesh(&mut self, id: AssetId<Mesh>) -> Result<(), io::Error> {
-		self.edit = World::new();
-		self.edit.spawn_empty().insert(MeshComponent::new(&[id]));
 		self.setup_world();
 
 		Ok(())

@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use rad_core::{asset::Asset, Engine};
+use rad_core::{Engine, asset::Asset};
 use rad_renderer::assets::{image::ImageAsset, material::Material, mesh::Mesh};
 use rad_ui::{
 	egui::{Button, Context, Grid, Key, KeyboardShortcut, Modifiers, RichText, ScrollArea, TopBottomPanel},
@@ -65,8 +65,8 @@ impl AssetTray {
 									info!("import: {:.2}%", x * 100.0);
 								})
 							}) {
-								error!("import error: {:?}", e);
-							}
+							error!("import error: {:?}", e);
+						}
 					}
 
 					ui.vertical(|ui| {
@@ -94,8 +94,16 @@ impl AssetTray {
 
 							if ui
 								.add(
-									Button::new(fs.root().as_ref().unwrap().iter().next_back().unwrap().to_string_lossy())
-										.frame(false),
+									Button::new(
+										fs.root()
+											.as_ref()
+											.unwrap()
+											.iter()
+											.next_back()
+											.unwrap()
+											.to_string_lossy(),
+									)
+									.frame(false),
 								)
 								.clicked()
 							{
@@ -185,16 +193,12 @@ impl AssetTray {
 															if let Err(e) = world.open(header.id.typed()) {
 																error!("failed to open world: {:?}", e);
 															}
-														} else if is_mesh {
-															if let Err(e) = world.open_mesh(header.id.typed()) {
-																error!("failed to open mesh: {:?}", e);
-															}
 														} else if is_image
 															&& let Err(e) =
 																self.image_previewer.add_preview(header.id.typed())
-															{
-																error!("failed to add image preview: {:?}", e);
-															}
+														{
+															error!("failed to add image preview: {:?}", e);
+														}
 													}
 												}
 												ui.label(n);

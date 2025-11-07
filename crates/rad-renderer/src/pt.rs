@@ -77,10 +77,6 @@ impl PathTracer {
 							spec: &[],
 						},
 						ShaderInfo {
-							shader: "passes.pt.shadow.main",
-							spec: &[],
-						},
-						ShaderInfo {
 							shader: "passes.pt.hit.main",
 							spec: &[],
 						},
@@ -88,13 +84,12 @@ impl PathTracer {
 					groups: &[
 						RtShaderGroup::General(0),
 						RtShaderGroup::General(1),
-						RtShaderGroup::General(2),
 						RtShaderGroup::Triangles {
-							closest_hit: Some(3),
+							closest_hit: Some(2),
 							any_hit: None,
 						},
 					],
-					recursion_depth: 2,
+					recursion_depth: 5,
 				},
 			)?,
 			sampler: device.sampler(SamplerDesc::default()),

@@ -25,7 +25,7 @@ use vek::{Aabb, Vec3};
 
 use crate::{
 	assets::{
-		material::GpuMaterial,
+		material::{GpuMaterial, MaterialView},
 		mesh::{RaytracingMeshView, Vertex, virtual_mesh::aabb_default},
 	},
 	components::light::LightComponent,
@@ -72,7 +72,7 @@ impl GpuScene for LightScene {
 	}
 
 	fn update<'pass>(frame: &mut Frame<'pass, '_>, data: &'pass mut LightSceneData, _: &Self::In) -> Self {
-		for mesh in data.mesh_build_queue.drain(..) {
+		for (mesh, material) in data.mesh_build_queue.drain(..) {
 			let n = mesh.tri_count;
 			let buffer = Buffer::create(
 				frame.device(),
@@ -100,7 +100,7 @@ impl GpuScene for LightScene {
 					nodes: handle.ptr(),
 					vertices: mesh.vertices(),
 					indices: mesh.indices(),
-					material: mesh.material.gpu_ptr(),
+					material: material.gpu_ptr(),
 					root: root_handle.ptr(),
 				},
 				bvh_nodes: GpuPtr::null(),
@@ -281,7 +281,7 @@ pub struct LightSceneData {
 	sorter: GpuSorter,
 	mesh_bvhs: FxHashMap<LARef<RaytracingMeshView>, (Buffer, Buffer)>,
 	meshes: Vec<(LARef<RaytracingMeshView>, GpuTransform)>,
-	mesh_build_queue: Vec<LARef<RaytracingMeshView>>,
+	mesh_build_queue: Vec<(LARef<RaytracingMeshView>, LARef<MaterialView>)>,
 	scene_aabb: Aabb<f32>,
 }
 impl Resource for LightSceneData {}
@@ -422,15 +422,15 @@ fn sync_lights(
 	unknown_emissive: Query<(Entity, &Transform, &KnownRtInstances), Without<KnownLight>>,
 ) {
 	for (e, t, m) in unknown_emissive.iter() {
-		for (_, mesh) in m.0.iter() {
-			if mesh.material.emissive_factor == Vec3::zero() {
+		for (_, mesh, material) in m.0.iter() {
+			if material.emissive_factor == Vec3::zero() {
 				continue;
 			}
 
 			let aabb = transform_aabb(mesh.aabb, t);
 			r.scene_aabb.min = Vec3::partial_min(r.scene_aabb.min, aabb.min);
 			r.scene_aabb.max = Vec3::partial_max(r.scene_aabb.max, aabb.max);
-			r.mesh_build_queue.push(mesh.clone());
+			r.mesh_build_queue.push((mesh.clone(), material.clone()));
 			r.meshes.push((mesh.clone(), (*t).into()));
 		}
 		cmd.entity(e).insert(KnownLight);

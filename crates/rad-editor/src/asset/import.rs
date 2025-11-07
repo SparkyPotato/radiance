@@ -4,22 +4,22 @@ use std::{
 	io::{self, BufReader},
 	path::{Path, PathBuf},
 	sync::{
-		atomic::{AtomicUsize, Ordering},
 		Arc,
+		atomic::{AtomicUsize, Ordering},
 	},
 };
 
 use gltf::{
+	Document,
+	Gltf,
 	buffer,
 	camera::Projection,
 	image::{self, Source},
-	Document,
-	Gltf,
 };
 use parking_lot::Mutex;
 use rad_core::{
-	asset::{aref::AssetId, Asset},
 	Engine,
+	asset::{Asset, aref::AssetId},
 };
 use rad_graph::ash::vk;
 use rad_renderer::{
@@ -35,10 +35,10 @@ use rad_renderer::{
 	},
 	vek::{Mat4, Quaternion, Vec2, Vec3, Vec4},
 };
-use rad_world::{transform::Transform, World};
+use rad_world::{World, transform::Transform};
 use rayon::iter::{IntoParallelIterator, ParallelBridge, ParallelIterator};
 use rustc_hash::FxHashMap;
-use tracing::{span, trace_span, Level};
+use tracing::{Level, span, trace_span};
 
 use crate::asset::fs::FsAssetSystem;
 
@@ -171,12 +171,14 @@ impl GltfImporter {
 					let s = trace_span!("import mesh", name = name);
 					let _e = s.enter();
 
-					let prims = self.conv_to_meshes(mesh, &materials).map_err(io::Error::other)?;
+					let gltf_prims = mesh.primitives();
+					let prims = self.conv_to_meshes(mesh).map_err(io::Error::other)?;
 					let c = prims.len();
 					let ids = prims
 						.into_iter()
 						.enumerate()
-						.map(|(i, m)| {
+						.zip(gltf_prims)
+						.map(|((i, m), p)| {
 							let id = AssetId::new();
 							let name = name.clone().unwrap_or_else(|| id.to_string());
 							let name = if c == 1 {
@@ -189,7 +191,7 @@ impl GltfImporter {
 
 							let path = Path::new("meshes").join(&name);
 							m.save(&mut sys.create(&path, id)?)?;
-							Ok::<_, io::Error>(id)
+							Ok::<_, io::Error>((id, materials[p.material().index().unwrap_or(materials.len() - 1)]))
 						})
 						.collect::<Result<Vec<_>, _>>()?;
 
@@ -265,7 +267,9 @@ impl GltfImporter {
 		})
 	}
 
-	fn scene(&self, name: &str, scene: gltf::Scene, meshes: &[Vec<AssetId<Mesh>>]) -> Result<World, gltf::Error> {
+	fn scene(
+		&self, name: &str, scene: gltf::Scene, meshes: &[Vec<(AssetId<Mesh>, AssetId<Material>)>],
+	) -> Result<World, gltf::Error> {
 		let s = span!(Level::INFO, "importing scene", name = name);
 		let _e = s.enter();
 
@@ -277,7 +281,10 @@ impl GltfImporter {
 		Ok(out)
 	}
 
-	fn node(&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[Vec<AssetId<Mesh>>], out: &mut World) {
+	fn node(
+		&self, node: gltf::Node, transform: Mat4<f32>, meshes: &[Vec<(AssetId<Mesh>, AssetId<Material>)>],
+		out: &mut World,
+	) {
 		// let name = node.name().unwrap_or("unnamed node").to_string();
 
 		let this_transform = Mat4::from_col_arrays(node.transform().matrix());
@@ -420,7 +427,7 @@ impl GltfImporter {
 		}
 	}
 
-	fn conv_to_meshes(&self, mesh: gltf::Mesh, materials: &[AssetId<Material>]) -> Result<Vec<Mesh>, io::Error> {
+	fn conv_to_meshes(&self, mesh: gltf::Mesh) -> Result<Vec<Mesh>, io::Error> {
 		let s = trace_span!("load mesh");
 		let _e = s.enter();
 
@@ -456,11 +463,7 @@ impl GltfImporter {
 					.map(|((position, normal), uv)| GpuVertex { position, normal, uv })
 					.collect();
 
-				Ok::<_, io::Error>(Mesh {
-					vertices,
-					indices,
-					material: materials[prim.material().index().unwrap_or(materials.len() - 1)],
-				})
+				Ok::<_, io::Error>(Mesh { vertices, indices })
 			})
 			.collect::<Result<Vec<_>, _>>()?;
 

@@ -3,17 +3,19 @@ use std::sync::Mutex;
 use ash::vk;
 use bytemuck::NoUninit;
 use rad_core::{
-	asset::aref::{ARef, LARef},
 	Engine,
+	asset::aref::{ARef, LARef},
 };
 use rad_graph::{
 	device::ShaderInfo,
 	graph::{BufferDesc, BufferUsage, BufferUsageType, ExternalBuffer, Frame, Res},
-	resource::{ASDesc, BufferHandle, GpuPtr, Resource as _, AS},
+	resource::{AS, ASDesc, BufferHandle, GpuPtr, Resource as _},
 	sync::Shader,
 	util::compute::ComputePass,
 };
 use rad_world::{
+	TickStage,
+	World,
 	bevy_ecs::{
 		batching::BatchingStrategy,
 		component::{Component, StorageType},
@@ -24,18 +26,16 @@ use rad_world::{
 	},
 	tick::Tick,
 	transform::Transform,
-	TickStage,
-	World,
 };
 use tracing::warn;
 
 use crate::{
 	assets::{
-		material::GpuMaterial,
+		material::{GpuMaterial, MaterialView},
 		mesh::{GpuVertex, RaytracingMeshView},
 	},
 	components::mesh::MeshComponent,
-	scene::{should_scene_sync, GpuScene, GpuTransform},
+	scene::{GpuScene, GpuTransform, should_scene_sync},
 	util::ResizableBuffer,
 };
 
@@ -261,9 +261,7 @@ pub struct RtSceneData {
 impl Resource for RtSceneData {}
 
 impl Default for RtSceneData {
-    fn default() -> Self {
-        Self::new()
-    }
+	fn default() -> Self { Self::new() }
 }
 
 impl RtSceneData {
@@ -293,20 +291,20 @@ impl RtSceneData {
 	}
 }
 
-fn map_instance(t: &Transform, m: &LARef<RaytracingMeshView>) -> (GpuRtInstance, u64) {
+fn map_instance(t: &Transform, m: &LARef<RaytracingMeshView>, mat: &LARef<MaterialView>) -> (GpuRtInstance, u64) {
 	(
 		GpuRtInstance {
 			transform: (*t).into(),
 			raw_mesh: m.buffer.ptr(),
 			raw_vertex_count: m.vertex_count,
 			raw_tri_count: m.tri_count,
-			material: m.material.gpu_ptr(),
+			material: mat.gpu_ptr(),
 		},
 		m.as_.addr(),
 	)
 }
 
-pub struct KnownRtInstances(pub Vec<(u32, LARef<RaytracingMeshView>)>);
+pub struct KnownRtInstances(pub Vec<(u32, LARef<RaytracingMeshView>, LARef<MaterialView>)>);
 impl Component for KnownRtInstances {
 	const STORAGE_TYPE: StorageType = StorageType::Table;
 }
@@ -325,10 +323,14 @@ fn sync_rt_scene(
 			let x: Vec<_> = m
 				.inner
 				.iter()
-				.filter_map(|&m| {
-					ARef::loaded(m)
+				.filter_map(|&(m, mat)| {
+					let m = ARef::loaded(m)
 						.map_err(|e| warn!("failed to load mesh {:?}: {:?}", m, e))
-						.ok()
+						.ok()?;
+					let mat = ARef::loaded(mat)
+						.map_err(|e| warn!("failed to load material {:?}: {:?}", mat, e))
+						.ok()?;
+					Some((m, mat))
 				})
 				.collect();
 			cache.lock().unwrap().push((e, t, x));
@@ -337,17 +339,17 @@ fn sync_rt_scene(
 	for (e, t, inner) in cache.into_inner().unwrap() {
 		let inner = inner
 			.into_iter()
-			.map(|view| {
+			.map(|(view, mat)| {
 				let index = r.instance_count;
 				r.instance_count += 1;
-				let (instance, as_) = map_instance(t, &view);
+				let (instance, as_) = map_instance(t, &view, &mat);
 				r.updates.push(GpuRtInstanceUpdate {
 					index,
 					_pad: 0,
 					as_,
 					instance,
 				});
-				(index, view)
+				(index, view, mat)
 			})
 			.collect();
 		cmd.entity(e).insert(KnownRtInstances(inner));
